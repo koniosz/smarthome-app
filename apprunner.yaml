@@ -1,0 +1,15 @@
+version: 1.0
+
+runtime: DOCKER
+
+build:
+  build-command: echo "Using Dockerfile"
+
+run:
+  runtime-version: latest
+  network:
+    port: 4001
+    env: PORT
+  env:
+    - name: NODE_ENV
+      value: production

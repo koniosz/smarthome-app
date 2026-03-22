@@ -1,0 +1,47 @@
+version: '3.9'
+
+services:
+  # ─── PostgreSQL Database ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: smarthome_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smarthome
+      POSTGRES_USER: smarthome
+      POSTGRES_PASSWORD: smarthome_dev_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smarthome"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── Backend + Frontend ───────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smarthome_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://smarthome:smarthome_dev_pass@postgres:5432/smarthome
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      PORT: 4001
+      NODE_ENV: production
+    ports:
+      - "4001:4001"
+    volumes:
+      # Persistent storage for uploaded files
+      - attachments_data:/app/backend/data/attachments
+
+volumes:
+  postgres_data:
+  attachments_data:

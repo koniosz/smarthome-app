@@ -1,0 +1,118 @@
+import dotenv from 'dotenv'
+import path from 'path'
+// Load .env from backend root regardless of process CWD
+dotenv.config({ path: path.resolve(__dirname, '..', '.env'), override: true })
+import express from 'express'
+import cors from 'cors'
+import fs from 'fs'
+import os from 'os'
+import projectsRouter from './routes/projects'
+import costsRouter from './routes/costs'
+import { updateCost, deleteCost } from './routes/costs'
+import laborRouter from './routes/labor'
+import { updateLabor, deleteLabor } from './routes/labor'
+import paymentsRouter, { updatePayment, deletePayment } from './routes/payments'
+import employeesRouter from './routes/employees'
+import dashboardRouter from './routes/dashboard'
+import attachmentsRouter from './routes/attachments'
+import authRouter from './routes/auth'
+import usersRouter from './routes/users'
+import aiQuotesRouter from './routes/ai-quotes'
+import productCatalogRouter from './routes/product-catalog'
+import extraCostsRouter, { updateExtraCost, deleteExtraCost } from './routes/extra-costs'
+import accessRequestsRouter from './routes/access-requests'
+import notificationsRouter from './routes/notifications'
+import { requireAuth } from './middleware/auth'
+
+const app = express()
+const PORT = process.env.PORT || 4001
+
+app.use(cors())
+app.use(express.json({ limit: '10mb' }))
+
+// Public routes
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+app.use('/api/auth', authRouter)
+
+// All routes below require authentication
+app.use('/api', requireAuth)
+
+// Dashboard
+app.use('/api/dashboard', dashboardRouter)
+
+// Projects
+app.use('/api/projects', projectsRouter)
+app.use('/api/projects/:projectId/costs', costsRouter)
+app.use('/api/projects/:projectId/labor', laborRouter)
+app.use('/api/projects/:projectId/payments', paymentsRouter)
+
+// Employees
+app.use('/api/employees', employeesRouter)
+
+// Attachments & file serving
+app.use('/api', attachmentsRouter)
+
+// Standalone update & delete
+app.put('/api/costs/:id', updateCost)
+app.delete('/api/costs/:id', deleteCost)
+app.put('/api/labor/:id', updateLabor)
+app.delete('/api/labor/:id', deleteLabor)
+app.put('/api/payments/:id', updatePayment)
+app.delete('/api/payments/:id', deletePayment)
+
+// Users & project members management (admin only)
+app.use('/api/users', usersRouter)
+app.use('/api', usersRouter)
+
+// AI Quotes & Product Catalog
+app.use('/api/projects/:projectId/ai-quotes', aiQuotesRouter)
+app.use('/api/product-catalog', productCatalogRouter)
+
+// Extra Costs (koszty dodatkowe)
+app.use('/api/projects/:projectId/extra-costs', extraCostsRouter)
+app.put('/api/extra-costs/:id', updateExtraCost)
+app.delete('/api/extra-costs/:id', deleteExtraCost)
+
+// Access requests & Notifications
+app.use('/api/access-requests', accessRequestsRouter)
+app.use('/api/notifications', notificationsRouter)
+
+// ── Serve frontend static files (production / network mode) ──────────────────
+const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist')
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR))
+  // SPA fallback — every non-API route returns index.html
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(DIST_DIR, 'index.html'))
+  })
+}
+
+// ── Determine local network IP ────────────────────────────────────────────────
+function getLocalIP(): string {
+  const ifaces = os.networkInterfaces()
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name] ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address
+      }
+    }
+  }
+  return 'localhost'
+}
+
+app.listen(Number(PORT), '0.0.0.0', () => {
+  const localIP = getLocalIP()
+  const hasFrontend = fs.existsSync(DIST_DIR)
+  console.log(`\n🏠 Smart Home Manager`)
+  console.log(`   Lokalnie:  http://localhost:${PORT}`)
+  if (localIP !== 'localhost') {
+    console.log(`   Sieć LAN:  http://${localIP}:${PORT}`)
+  }
+  if (!hasFrontend) {
+    console.log(`\n   ⚠️  Frontend nie jest zbudowany.`)
+    console.log(`   Uruchom: ./start-network.sh  aby zbudować i udostępnić w sieci.`)
+  }
+  console.log()
+})

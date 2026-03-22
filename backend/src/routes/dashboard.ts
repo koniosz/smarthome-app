@@ -1,0 +1,98 @@
+import { Router, Request, Response } from 'express'
+import db from '../db'
+
+const router = Router()
+
+router.get('/', async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user
+    let projects = await db.projects.all()
+
+    if (user && user.role === 'employee') {
+      const members = await db.project_members.forUser(user.id)
+      const memberProjectIds = new Set(members.map((m: any) => m.project_id))
+      projects = projects.filter((p: any) => memberProjectIds.has(p.id))
+    }
+
+    let totalBudget = 0
+    let totalCosts = 0
+    let totalPayments = 0
+    let activeCount = 0
+    const overBudget: any[] = []
+    const byStatus: Record<string, number> = {}
+    const byType: Record<string, number> = {}
+
+    for (const p of projects) {
+      const [costItems, laborEntries, payments] = await Promise.all([
+        db.cost_items.forProject(p.id),
+        db.labor_entries.forProject(p.id),
+        db.client_payments.forProject(p.id),
+      ])
+      const costTotal = costItems.reduce((s: number, i: any) => s + i.total_price, 0)
+        + laborEntries.reduce((s: number, e: any) => s + e.hours * e.hourly_rate, 0)
+      const paymentsTotal = payments.reduce((s: number, pay: any) => s + pay.amount, 0)
+      const revenue = Math.max(p.budget_amount, paymentsTotal)
+      const margin_pln = revenue - costTotal
+      const margin_pct = revenue > 0 ? (margin_pln / revenue) * 100 : 0
+
+      if (!['closing', 'cancelled'].includes(p.status)) {
+        totalBudget += p.budget_amount
+        totalCosts += costTotal
+        totalPayments += paymentsTotal
+        activeCount++
+      }
+
+      byStatus[p.status] = (byStatus[p.status] || 0) + 1
+      byType[p.project_type] = (byType[p.project_type] || 0) + 1
+
+      if (costTotal > revenue && revenue > 0) {
+        overBudget.push({
+          id: p.id, name: p.name, client_name: p.client_name,
+          status: p.status, budget_amount: p.budget_amount,
+          payments_total: paymentsTotal, cost_total: costTotal,
+          margin_pln, margin_pct,
+        })
+      }
+    }
+
+    const averageMargin = totalBudget > 0
+      ? ((totalBudget - totalCosts) / totalBudget) * 100
+      : 0
+
+    const recentProjects = await Promise.all(
+      [...projects]
+        .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))
+        .slice(0, 5)
+        .map(async (p: any) => {
+          const [costItems, laborEntries] = await Promise.all([
+            db.cost_items.forProject(p.id),
+            db.labor_entries.forProject(p.id),
+          ])
+          const cost_total = costItems.reduce((s: number, i: any) => s + i.total_price, 0)
+            + laborEntries.reduce((s: number, e: any) => s + e.hours * e.hourly_rate, 0)
+          const margin_pct = p.budget_amount > 0
+            ? ((p.budget_amount - cost_total) / p.budget_amount) * 100
+            : 0
+          return { ...p, cost_total, margin_pct }
+        })
+    )
+
+    res.json({
+      total_projects: projects.length,
+      active_projects: activeCount,
+      total_budget: totalBudget,
+      total_costs: totalCosts,
+      total_payments: totalPayments,
+      average_margin_pct: averageMargin,
+      over_budget_count: overBudget.length,
+      over_budget_projects: overBudget,
+      by_status: byStatus,
+      by_type: byType,
+      recent_projects: recentProjects,
+    })
+  } catch (e) {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
+export default router
