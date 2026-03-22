@@ -254,7 +254,7 @@ router.get('/manufacturers', async (_req: Request, res: Response) => {
     const items = await db.product_catalog.allIncludingInactive()
     const manufacturers: Record<string, string[]> = {}
     for (const item of items) {
-      const brand = item.brand
+      const brand = item.brand ?? 'Inne'
       const mfr = item.manufacturer || brand
       if (!manufacturers[brand]) manufacturers[brand] = []
       if (!manufacturers[brand].includes(mfr)) manufacturers[brand].push(mfr)

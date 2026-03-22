@@ -137,14 +137,25 @@ model ProductCatalog {
 }
 
 model AiQuote {
-  id           String   @id
-  project_id   String
-  name         String?
-  status       String   @default("draft")
-  discount_pct Float    @default(0)
-  items        Json?
-  description  Json?
-  created_at   String
+  id                   String   @id
+  project_id           String
+  name                 String?
+  status               String   @default("draft")
+  discount_pct         Float    @default(0)
+  labor_cost_pct       Float    @default(100)
+  items                Json?
+  description          Json?
+  rooms_detected       Json?
+  notes                String?
+  total_net            Float?
+  total_after_discount Float?
+  labor_cost           Float?
+  grand_total          Float?
+  floor_plan_filename  String?
+  ai_analysis_raw      String?
+  refine_history       Json?
+  created_at           String
+  updated_at           String?
 
   project      Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
 

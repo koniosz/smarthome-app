@@ -904,7 +904,7 @@ router.get('/:id/ets-export', async (req: Request, res: Response) => {
   const project = await db.projects.find(req.params.projectId)
   const projectName = project?.name ?? `Projekt_${req.params.projectId}`
 
-  const items: any[] = (quote.items ?? []).filter((i: any) => i.brand === 'KNX')
+  const items: any[] = ((quote.items as any[]) ?? []).filter((i: any) => i.brand === 'KNX')
   if (items.length === 0) {
     res.status(400).json({ error: 'Wycena nie zawiera elementów KNX' })
     return
