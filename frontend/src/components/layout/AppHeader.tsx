@@ -252,7 +252,7 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
 
         {/* Mobile view button */}
         <a
-          href={`http://${window.location.hostname}:8081`}
+          href={window.location.origin}
           target="_blank"
           rel="noopener noreferrer"
           className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
