@@ -25,6 +25,7 @@ RUN npm run build
 
 # ─── Stage 3: Production ─────────────────────────────────────────────────────
 FROM node:20-alpine AS production
+RUN apk add --no-cache openssl libc6-compat
 WORKDIR /app
 
 # Install only production deps
