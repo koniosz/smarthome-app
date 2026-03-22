@@ -6,7 +6,7 @@ COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ .
-RUN npm run build
+RUN NODE_OPTIONS="--max-old-space-size=2048" npm run build
 
 # ─── Stage 2: Build Backend ──────────────────────────────────────────────────
 FROM node:20-alpine AS backend-builder
@@ -52,4 +52,4 @@ EXPOSE 4001
 ENV NODE_ENV=production
 
 # Run migrations then start the server
-CMD sh -c "cd /app/backend && npx prisma migrate deploy && node dist/index.js"
+CMD sh -c "cd /app/backend && npx prisma db push && node dist/index.js"

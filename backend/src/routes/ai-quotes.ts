@@ -461,7 +461,7 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
     }
   }
 
-  if (!db.projects.find(projectId)) {
+  if (!await db.projects.find(projectId)) {
     cleanupFiles()
     res.status(404).json({ error: 'Projekt nie znaleziony' })
     return
@@ -643,7 +643,7 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
     }
 
     // Enrich items: try to match catalog items
-    const catalogItems = db.product_catalog.all()
+    const catalogItems = await db.product_catalog.all()
 
     const items = rawItems.map((item: any, index: number) => {
       const itemName = (item.name || '').toLowerCase()
@@ -706,7 +706,7 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
       created_by: (req as any).user?.id || '',
     }
 
-    db.ai_quotes.insert(quote)
+    await db.ai_quotes.insert(quote)
 
     // Return without the heavy raw field
     const { ai_analysis_raw: _raw, ...quoteToReturn } = quote
@@ -721,9 +721,10 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
 
 // ─── POST /manual ──────────────────────────────────────────────────────────────
 // Create a quote manually from wizard-selected catalog items (no AI)
-router.post('/manual', (req: Request, res: Response) => {
+router.post('/manual', async (req: Request, res: Response) => {
+  try {
   const projectId = req.params.projectId
-  if (!db.projects.find(projectId)) {
+  if (!await db.projects.find(projectId)) {
     res.status(404).json({ error: 'Projekt nie znaleziony' })
     return
   }
@@ -780,107 +781,127 @@ router.post('/manual', (req: Request, res: Response) => {
     created_by: (req as any).user?.id || '',
   }
 
-  db.ai_quotes.insert(quote)
+  await db.ai_quotes.insert(quote)
   res.status(201).json(quote)
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
 })
 
 // ─── GET /  ────────────────────────────────────────────────────────────────────
-router.get('/', (req: Request, res: Response) => {
-  const quotes = db.ai_quotes.forProject(req.params.projectId)
-  // Strip heavy raw field from list
-  res.json(quotes.map((q: any) => {
-    const { ai_analysis_raw: _raw, ...rest } = q
-    return rest
-  }))
+router.get('/', async (req: Request, res: Response) => {
+  try {
+    const quotes = await db.ai_quotes.forProject(req.params.projectId)
+    // Strip heavy raw field from list
+    res.json(quotes.map((q: any) => {
+      const { ai_analysis_raw: _raw, ...rest } = q
+      return rest
+    }))
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
 })
 
 // ─── GET /:id ──────────────────────────────────────────────────────────────────
-router.get('/:id', (req: Request, res: Response) => {
-  const quote = db.ai_quotes.find(req.params.id)
-  if (!quote || quote.project_id !== req.params.projectId) {
-    res.status(404).json({ error: 'Wycena nie znaleziona' })
-    return
+router.get('/:id', async (req: Request, res: Response) => {
+  try {
+    const quote = await db.ai_quotes.find(req.params.id)
+    if (!quote || quote.project_id !== req.params.projectId) {
+      res.status(404).json({ error: 'Wycena nie znaleziona' })
+      return
+    }
+    const { ai_analysis_raw: _raw, ...rest } = quote
+    res.json(rest)
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
   }
-  const { ai_analysis_raw: _raw, ...rest } = quote
-  res.json(rest)
 })
 
 // ─── PUT /:id ──────────────────────────────────────────────────────────────────
-router.put('/:id', (req: Request, res: Response) => {
-  const quote = db.ai_quotes.find(req.params.id)
-  if (!quote || quote.project_id !== req.params.projectId) {
-    res.status(404).json({ error: 'Wycena nie znaleziona' })
-    return
+router.put('/:id', async (req: Request, res: Response) => {
+  try {
+    const quote = await db.ai_quotes.find(req.params.id)
+    if (!quote || quote.project_id !== req.params.projectId) {
+      res.status(404).json({ error: 'Wycena nie znaleziona' })
+      return
+    }
+
+    const { status, notes, items, rooms_detected, discount_pct, labor_cost_pct } = req.body
+    const patch: any = { updated_at: now() }
+
+    if (status !== undefined) patch.status = status
+    if (notes !== undefined) patch.notes = notes
+    if (rooms_detected !== undefined) patch.rooms_detected = rooms_detected
+    if (discount_pct !== undefined) patch.discount_pct = Math.max(-100, Math.min(100, Number(discount_pct) || 0))
+    if (labor_cost_pct !== undefined) patch.labor_cost_pct = Math.max(0, Math.min(500, Number(labor_cost_pct) || 0))
+
+    const currentQuote: any = await db.ai_quotes.find(req.params.id)
+    const effectiveItems = items !== undefined ? items : currentQuote?.items ?? []
+    const effectiveDiscount = patch.discount_pct ?? currentQuote?.discount_pct ?? 0
+    const effectiveLabor = patch.labor_cost_pct ?? currentQuote?.labor_cost_pct ?? 100
+
+    if (items !== undefined) {
+      const enriched = (items as any[]).map((item: any) => {
+        const qty = Number(item.qty) || 0
+        const unit_price = Number(item.unit_price) || 0
+        const disc = Math.max(0, Math.min(100, Number(item.discount_pct) || 0))
+        return { ...item, qty, unit_price, discount_pct: disc, total: qty * unit_price * (1 - disc / 100) }
+      })
+      patch.items = enriched
+      patch.total_net = computeTotal(enriched)
+    } else if (discount_pct !== undefined || labor_cost_pct !== undefined) {
+      patch.total_net = computeTotal(effectiveItems)
+    }
+
+    const totalNet = patch.total_net ?? currentQuote?.total_net ?? 0
+    const { total_after_discount, labor_cost, grand_total } = computeGrandTotal(totalNet, effectiveDiscount, effectiveLabor)
+    patch.total_after_discount = total_after_discount
+    patch.labor_cost = labor_cost
+    patch.grand_total = grand_total
+
+    await db.ai_quotes.update(req.params.id, patch)
+    const updated: any = await db.ai_quotes.find(req.params.id)
+    const { ai_analysis_raw: _raw, ...rest } = updated
+    res.json(rest)
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
   }
-
-  const { status, notes, items, rooms_detected, discount_pct, labor_cost_pct } = req.body
-  const patch: any = { updated_at: now() }
-
-  if (status !== undefined) patch.status = status
-  if (notes !== undefined) patch.notes = notes
-  if (rooms_detected !== undefined) patch.rooms_detected = rooms_detected
-  if (discount_pct !== undefined) patch.discount_pct = Math.max(-100, Math.min(100, Number(discount_pct) || 0))
-  if (labor_cost_pct !== undefined) patch.labor_cost_pct = Math.max(0, Math.min(500, Number(labor_cost_pct) || 0))
-
-  const currentQuote: any = db.ai_quotes.find(req.params.id)
-  const effectiveItems = items !== undefined ? items : currentQuote?.items ?? []
-  const effectiveDiscount = patch.discount_pct ?? currentQuote?.discount_pct ?? 0
-  const effectiveLabor = patch.labor_cost_pct ?? currentQuote?.labor_cost_pct ?? 100
-
-  if (items !== undefined) {
-    const enriched = (items as any[]).map((item: any) => {
-      const qty = Number(item.qty) || 0
-      const unit_price = Number(item.unit_price) || 0
-      const disc = Math.max(0, Math.min(100, Number(item.discount_pct) || 0))
-      return { ...item, qty, unit_price, discount_pct: disc, total: qty * unit_price * (1 - disc / 100) }
-    })
-    patch.items = enriched
-    patch.total_net = computeTotal(enriched)
-  } else if (discount_pct !== undefined || labor_cost_pct !== undefined) {
-    patch.total_net = computeTotal(effectiveItems)
-  }
-
-  const totalNet = patch.total_net ?? currentQuote?.total_net ?? 0
-  const { total_after_discount, labor_cost, grand_total } = computeGrandTotal(totalNet, effectiveDiscount, effectiveLabor)
-  patch.total_after_discount = total_after_discount
-  patch.labor_cost = labor_cost
-  patch.grand_total = grand_total
-
-  db.ai_quotes.update(req.params.id, patch)
-  const updated: any = db.ai_quotes.find(req.params.id)
-  const { ai_analysis_raw: _raw, ...rest } = updated
-  res.json(rest)
 })
 
 // ─── DELETE /:id ───────────────────────────────────────────────────────────────
-router.delete('/:id', (req: Request, res: Response) => {
-  const quote = db.ai_quotes.find(req.params.id)
-  if (!quote || quote.project_id !== req.params.projectId) {
-    res.status(404).json({ error: 'Wycena nie znaleziona' })
-    return
-  }
-
-  // Delete floor plan file
-  if (quote.floor_plan_filename) {
-    const fp = path.join(UPLOADS_DIR, quote.floor_plan_filename)
-    if (fs.existsSync(fp)) {
-      try { fs.unlinkSync(fp) } catch {}
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const quote = await db.ai_quotes.find(req.params.id)
+    if (!quote || quote.project_id !== req.params.projectId) {
+      res.status(404).json({ error: 'Wycena nie znaleziona' })
+      return
     }
-  }
 
-  db.ai_quotes.delete(req.params.id)
-  res.json({ success: true })
+    // Delete floor plan file
+    if (quote.floor_plan_filename) {
+      const fp = path.join(UPLOADS_DIR, quote.floor_plan_filename)
+      if (fs.existsSync(fp)) {
+        try { fs.unlinkSync(fp) } catch {}
+      }
+    }
+
+    await db.ai_quotes.delete(req.params.id)
+    res.json({ success: true })
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
 })
 
 // ─── GET /:id/ets-export ───────────────────────────────────────────────────────
 router.get('/:id/ets-export', async (req: Request, res: Response) => {
-  const quote = db.ai_quotes.find(req.params.id)
+  try {
+  const quote = await db.ai_quotes.find(req.params.id)
   if (!quote || quote.project_id !== req.params.projectId) {
     res.status(404).json({ error: 'Wycena nie znaleziona' })
     return
   }
 
-  const project = db.projects.find(req.params.projectId)
+  const project = await db.projects.find(req.params.projectId)
   const projectName = project?.name ?? `Projekt_${req.params.projectId}`
 
   const items: any[] = (quote.items ?? []).filter((i: any) => i.brand === 'KNX')
@@ -1053,11 +1074,14 @@ ${gaRangesXml}
   res.setHeader('Content-Type', 'application/octet-stream')
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
   res.send(zipBuffer)
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
 })
 
 // ─── POST /:id/refine — AI applies user suggestion to existing quote ───────────
 router.post('/:id/refine', async (req: Request, res: Response) => {
-  const quote = db.ai_quotes.find(req.params.id)
+  const quote = await db.ai_quotes.find(req.params.id)
   if (!quote || quote.project_id !== req.params.projectId) {
     res.status(404).json({ error: 'Wycena nie znaleziona' }); return
   }
@@ -1156,7 +1180,7 @@ FORMAT ODPOWIEDZI:
       }
     }
 
-    const catalogItems = db.product_catalog.all()
+    const catalogItems = await db.product_catalog.all()
     const newItems = rawItems.map((item: any, index: number) => {
       const itemName = (item.name || '').toLowerCase()
       const catalogMatch = catalogItems.find((c: any) =>
@@ -1207,7 +1231,7 @@ FORMAT ODPOWIEDZI:
       refine_history: [...prevHistory, historyEntry].slice(-20), // keep last 20
     }
 
-    db.ai_quotes.update(req.params.id, updated)
+    await db.ai_quotes.update(req.params.id, updated)
     const { ai_analysis_raw: _raw, ...toReturn } = updated as any
     res.json(toReturn)
 

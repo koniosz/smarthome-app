@@ -249,108 +249,136 @@ export const CATALOG_SEED = [
 ]
 
 // GET /api/product-catalog/manufacturers — list known manufacturers grouped by brand (any auth user)
-router.get('/manufacturers', (_req: Request, res: Response) => {
-  const items = db.product_catalog.allIncludingInactive()
-  const manufacturers: Record<string, string[]> = {}
-  for (const item of items) {
-    const brand = item.brand
-    const mfr = item.manufacturer || brand
-    if (!manufacturers[brand]) manufacturers[brand] = []
-    if (!manufacturers[brand].includes(mfr)) manufacturers[brand].push(mfr)
+router.get('/manufacturers', async (_req: Request, res: Response) => {
+  try {
+    const items = await db.product_catalog.allIncludingInactive()
+    const manufacturers: Record<string, string[]> = {}
+    for (const item of items) {
+      const brand = item.brand
+      const mfr = item.manufacturer || brand
+      if (!manufacturers[brand]) manufacturers[brand] = []
+      if (!manufacturers[brand].includes(mfr)) manufacturers[brand].push(mfr)
+    }
+    res.json(manufacturers)
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
   }
-  res.json(manufacturers)
 })
 
 // GET /api/product-catalog — active items only (any auth user), optional ?brand= and ?manufacturer=
-router.get('/', (req: Request, res: Response) => {
-  const brand = req.query.brand as string | undefined
-  const manufacturer = req.query.manufacturer as string | undefined
-  let items = db.product_catalog.all()
-  if (brand) items = items.filter((p: any) => p.brand === brand)
-  if (manufacturer) items = items.filter((p: any) => (p.manufacturer || p.brand) === manufacturer)
-  res.json(items)
+router.get('/', async (req: Request, res: Response) => {
+  try {
+    const brand = req.query.brand as string | undefined
+    const manufacturer = req.query.manufacturer as string | undefined
+    let items = await db.product_catalog.all()
+    if (brand) items = items.filter((p: any) => p.brand === brand)
+    if (manufacturer) items = items.filter((p: any) => (p.manufacturer || p.brand) === manufacturer)
+    res.json(items)
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
 })
 
 // GET /api/product-catalog/all — including inactive (wszyscy zalogowani)
-router.get('/all', (_req: Request, res: Response) => {
-  res.json(db.product_catalog.allIncludingInactive())
+router.get('/all', async (_req: Request, res: Response) => {
+  try {
+    res.json(await db.product_catalog.allIncludingInactive())
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
 })
 
 // POST /api/product-catalog/seed — insert default catalog (admin only)
-router.post('/seed', requireAdmin, (_req: Request, res: Response) => {
-  const existing = db.product_catalog.count()
-  if (existing > 0) {
-    res.json({ already_seeded: true, count: existing })
-    return
+router.post('/seed', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const existing = await db.product_catalog.count()
+    if (existing > 0) {
+      res.json({ already_seeded: true, count: existing })
+      return
+    }
+    const seeded = CATALOG_SEED.map(item => ({
+      ...item,
+      id: uuidv4(),
+      manufacturer: (item as any).manufacturer || (item.brand === 'KNX' ? 'HDL' : item.brand),
+      active: true,
+      created_at: now(),
+      updated_at: now(),
+    }))
+    await db.product_catalog.seed(seeded)
+    res.json({ seeded: seeded.length })
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
   }
-  const seeded = CATALOG_SEED.map(item => ({
-    ...item,
-    id: uuidv4(),
-    manufacturer: (item as any).manufacturer || (item.brand === 'KNX' ? 'HDL' : item.brand),
-    active: true,
-    created_at: now(),
-    updated_at: now(),
-  }))
-  db.product_catalog.seed(seeded)
-  res.json({ seeded: seeded.length })
 })
 
 // POST /api/product-catalog — każdy zalogowany może dodać produkt
-router.post('/', (req: Request, res: Response) => {
-  const { sku, brand, manufacturer, category, name, unit, unit_price, description } = req.body
-  if (!name || !brand || !unit || unit_price === undefined) {
-    res.status(400).json({ error: 'Wymagane: name, brand, unit, unit_price' })
-    return
+router.post('/', async (req: Request, res: Response) => {
+  try {
+    const { sku, brand, manufacturer, category, name, unit, unit_price, description } = req.body
+    if (!name || !brand || !unit || unit_price === undefined) {
+      res.status(400).json({ error: 'Wymagane: name, brand, unit, unit_price' })
+      return
+    }
+    const item = {
+      id: uuidv4(),
+      sku: sku || '',
+      brand,
+      manufacturer: manufacturer || (brand === 'KNX' ? 'HDL' : brand),
+      category: category || '',
+      name,
+      unit,
+      unit_price: parseFloat(unit_price) || 0,
+      description: description || '',
+      active: true,
+      created_at: now(),
+      updated_at: now(),
+    }
+    await db.product_catalog.insert(item)
+    res.status(201).json(item)
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
   }
-  const item = {
-    id: uuidv4(),
-    sku: sku || '',
-    brand,
-    manufacturer: manufacturer || (brand === 'KNX' ? 'HDL' : brand),
-    category: category || '',
-    name,
-    unit,
-    unit_price: parseFloat(unit_price) || 0,
-    description: description || '',
-    active: true,
-    created_at: now(),
-    updated_at: now(),
-  }
-  db.product_catalog.insert(item)
-  res.status(201).json(item)
 })
 
 // PUT /api/product-catalog/:id (admin only)
-router.put('/:id', requireAdmin, (req: Request, res: Response) => {
-  const existing = db.product_catalog.find(req.params.id)
-  if (!existing) {
-    res.status(404).json({ error: 'Produkt nie znaleziony' })
-    return
+router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const existing = await db.product_catalog.find(req.params.id)
+    if (!existing) {
+      res.status(404).json({ error: 'Produkt nie znaleziony' })
+      return
+    }
+    const { sku, brand, manufacturer, category, name, unit, unit_price, description, active } = req.body
+    const patch: any = { updated_at: now() }
+    if (sku !== undefined) patch.sku = sku
+    if (brand !== undefined) patch.brand = brand
+    if (manufacturer !== undefined) patch.manufacturer = manufacturer
+    if (category !== undefined) patch.category = category
+    if (name !== undefined) patch.name = name
+    if (unit !== undefined) patch.unit = unit
+    if (unit_price !== undefined) patch.unit_price = parseFloat(unit_price) || 0
+    if (description !== undefined) patch.description = description
+    if (active !== undefined) patch.active = active
+    await db.product_catalog.update(req.params.id, patch)
+    res.json(await db.product_catalog.find(req.params.id))
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
   }
-  const { sku, brand, manufacturer, category, name, unit, unit_price, description, active } = req.body
-  const patch: any = { updated_at: now() }
-  if (sku !== undefined) patch.sku = sku
-  if (brand !== undefined) patch.brand = brand
-  if (manufacturer !== undefined) patch.manufacturer = manufacturer
-  if (category !== undefined) patch.category = category
-  if (name !== undefined) patch.name = name
-  if (unit !== undefined) patch.unit = unit
-  if (unit_price !== undefined) patch.unit_price = parseFloat(unit_price) || 0
-  if (description !== undefined) patch.description = description
-  if (active !== undefined) patch.active = active
-  db.product_catalog.update(req.params.id, patch)
-  res.json(db.product_catalog.find(req.params.id))
 })
 
 // DELETE /api/product-catalog/:id — soft delete (admin only)
-router.delete('/:id', requireAdmin, (req: Request, res: Response) => {
-  const existing = db.product_catalog.find(req.params.id)
-  if (!existing) {
-    res.status(404).json({ error: 'Produkt nie znaleziony' })
-    return
+router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const existing = await db.product_catalog.find(req.params.id)
+    if (!existing) {
+      res.status(404).json({ error: 'Produkt nie znaleziony' })
+      return
+    }
+    await db.product_catalog.delete(req.params.id)
+    res.json({ success: true })
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
   }
-  db.product_catalog.delete(req.params.id)
-  res.json({ success: true })
 })
 
 const IMPORT_SYSTEM_PROMPT = `Jesteś ekspertem od analizy cenników produktów automatyki budynkowej (KNX, Control4, Hikvision, Satel i inne).
@@ -466,13 +494,13 @@ router.post('/import', requireAdmin, importUpload.single('file'), async (req: Re
     }
 
     // Count existing items that will be replaced
-    const existing = db.product_catalog.allIncludingInactive()
+    const existing = await db.product_catalog.allIncludingInactive()
     const toReplace = existing.filter((i: any) => i.brand === brand && (i.manufacturer || i.brand) === manufacturer)
     const replacedCount = toReplace.length
 
     // Soft-delete (actually hard-delete) existing items for this brand+manufacturer
     for (const item of toReplace) {
-      db.product_catalog.delete(item.id)
+      await db.product_catalog.delete(item.id)
     }
 
     // Insert new items
@@ -497,7 +525,7 @@ router.post('/import', requireAdmin, importUpload.single('file'), async (req: Re
       }))
 
     for (const item of newItems) {
-      db.product_catalog.insert(item)
+      await db.product_catalog.insert(item)
     }
 
     res.json({
