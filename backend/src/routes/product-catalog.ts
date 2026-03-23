@@ -7,6 +7,7 @@ import XLSX from 'xlsx'
 import Anthropic from '@anthropic-ai/sdk'
 import db from '../db'
 import { requireAdmin, requireAuth } from '../middleware/auth'
+import { jsonrepair } from 'jsonrepair'
 
 const ATTACHMENTS_DIR = path.join(__dirname, '..', 'data', 'attachments')
 if (!fs.existsSync(ATTACHMENTS_DIR)) fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true })
@@ -466,7 +467,7 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-5',
-      max_tokens: 4096,
+      max_tokens: 8192,
       system: IMPORT_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: messageContent }],
     })
@@ -503,15 +504,12 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
 
     let parsedItems: any[]
     try {
-      parsedItems = JSON.parse(jsonString)
-    } catch {
-      // Auto-naprawa: usuń trailing commas
-      try {
-        parsedItems = JSON.parse(jsonString.replace(/,(\s*[}\]])/g, '$1'))
-      } catch {
-        res.status(422).json({ error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.' })
-        return
-      }
+      parsedItems = JSON.parse(jsonrepair(jsonString))
+    } catch (err: any) {
+      console.error('[Import] Błąd parsowania JSON:', err.message)
+      console.error('[Import] jsonString (pierwsze 500 znaków):\n', jsonString.slice(0, 500))
+      res.status(422).json({ error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.' })
+      return
     }
 
     if (!Array.isArray(parsedItems) || parsedItems.length === 0) {

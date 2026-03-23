@@ -6,6 +6,7 @@ import fs from 'fs'
 import Anthropic from '@anthropic-ai/sdk'
 import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
+import { jsonrepair } from 'jsonrepair'
 import db from '../db'
 
 const router = Router({ mergeParams: true })
@@ -609,27 +610,16 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
 
     let parsed: any
     try {
-      parsed = JSON.parse(jsonString)
-    } catch (firstErr: any) {
-      // Attempt auto-repair: replace unescaped " inside string values (e.g. 5" screen → 5\")
-      // Strategy: replace inch-marks " that appear after digits or letters mid-string
-      let repaired = jsonString
-        // Replace inch symbol " after digit (e.g. 5") with escaped \"
-        .replace(/(\d)"/g, '$1\\"')
-        // Remove trailing commas before } or ]
-        .replace(/,(\s*[}\]])/g, '$1')
-      try {
-        parsed = JSON.parse(repaired)
-        console.log('[AI Quote] JSON naprawiony auto-repair')
-      } catch (secondErr: any) {
-        console.error('[AI Quote] Błąd JSON.parse (po repair):', secondErr.message)
-        console.error('[AI Quote] Podgląd (500 znaków):\n', jsonString.slice(0, 500))
-        res.status(422).json({
-          error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.',
-          hint: firstErr.message,
-        })
-        return
-      }
+      parsed = JSON.parse(jsonrepair(jsonString))
+      console.log('[AI Quote] JSON sparsowany poprawnie (jsonrepair)')
+    } catch (err: any) {
+      console.error('[AI Quote] Błąd JSON.parse po jsonrepair:', err.message)
+      console.error('[AI Quote] jsonString (pierwsze 800 znaków):\n', jsonString.slice(0, 800))
+      res.status(422).json({
+        error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.',
+        hint: err.message,
+      })
+      return
     }
 
     const rooms: string[] = Array.isArray(parsed.rooms) ? parsed.rooms : []
@@ -1167,17 +1157,11 @@ FORMAT ODPOWIEDZI:
 
     let rawItems: any[]
     try {
-      const parsed = JSON.parse(jsonString)
+      const parsed = JSON.parse(jsonrepair(jsonString))
       rawItems = Array.isArray(parsed) ? parsed : parsed.line_items ?? []
-    } catch {
-      // Auto-repair: trailing commas and inch marks
-      const repaired = jsonString.replace(/(\d)"/g, '$1\\"').replace(/,(\s*[}\]])/g, '$1')
-      try {
-        const parsed = JSON.parse(repaired)
-        rawItems = Array.isArray(parsed) ? parsed : parsed.line_items ?? []
-      } catch (e: any) {
-        res.status(422).json({ error: 'Błąd parsowania odpowiedzi AI.', hint: e.message }); return
-      }
+    } catch (e: any) {
+      console.error('[AI Refine] Błąd parsowania JSON:', e.message)
+      res.status(422).json({ error: 'Błąd parsowania odpowiedzi AI.', hint: e.message }); return
     }
 
     const catalogItems = await db.product_catalog.all()
