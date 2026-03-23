@@ -556,7 +556,7 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8192,
+      max_tokens: 32000,
       system: SYSTEM_PROMPT,
       messages: [
         {
@@ -568,6 +568,15 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
         },
       ],
     })
+
+    // Capture token usage for cost estimation
+    const usage = {
+      input_tokens:  message.usage?.input_tokens  ?? 0,
+      output_tokens: message.usage?.output_tokens ?? 0,
+    }
+    // claude-sonnet-4-5: $3/MTok input, $15/MTok output (2025)
+    const cost_usd = (usage.input_tokens * 3 + usage.output_tokens * 15) / 1_000_000
+    console.log(`[AI Quote] Tokeny: input=${usage.input_tokens} output=${usage.output_tokens} koszt=${cost_usd.toFixed(4)} USD`)
 
     // Extract JSON — multiple strategies for robustness
     const rawText = message.content[0].type === 'text' ? message.content[0].text : ''
@@ -704,9 +713,12 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
 
     await db.ai_quotes.insert(quote)
 
-    // Return without the heavy raw field
+    // Return without the heavy raw field but include token usage
     const { ai_analysis_raw: _raw, ...quoteToReturn } = quote
-    res.status(201).json(quoteToReturn)
+    res.status(201).json({
+      ...quoteToReturn,
+      _usage: { ...usage, cost_usd: parseFloat(cost_usd.toFixed(4)) },
+    })
 
   } catch (err: any) {
     cleanupFiles()
