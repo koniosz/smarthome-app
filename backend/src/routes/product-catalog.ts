@@ -493,12 +493,12 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
         { type: 'text', text: `Przeanalizuj ten cennik (producent: ${manufacturer}, marka: ${brand}) i wyodrębnij listę produktów zgodnie z instrukcją. Zwróć TYLKO tablicę JSON.` },
       ]
 
-      const message = await client.messages.create({
+      const message = await client.messages.stream({
         model: 'claude-sonnet-4-5',
         max_tokens: 32000,
         system: IMPORT_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: messageContent }],
-      })
+      }).finalMessage()
       const rawText = message.content.find(c => c.type === 'text')?.text ?? ''
       console.log('[Import PDF] stop_reason:', message.stop_reason, '| długość:', rawText.length)
       const items = extractJsonArray(rawText)
@@ -540,7 +540,7 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
 
           console.log(`[Import Excel] Chunk: ${chunkLabel} (${chunkRows.length} wierszy)`)
 
-          const chunkMessage = await client.messages.create({
+          const chunkMessage = await client.messages.stream({
             model: 'claude-sonnet-4-5',
             max_tokens: 32000,
             system: IMPORT_SYSTEM_PROMPT,
@@ -548,7 +548,7 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
               role: 'user',
               content: `Poniżej fragment cennika CSV (producent: ${manufacturer}, marka: ${brand}, ${chunkLabel}).\nWyodrębnij produkty i zwróć TYLKO tablicę JSON:\n\n${chunkCsv}\n\nZwróć TYLKO tablicę JSON.`,
             }],
-          })
+          }).finalMessage()
 
           const rawText = chunkMessage.content.find(c => c.type === 'text')?.text ?? ''
           console.log(`[Import Excel] Chunk stop_reason: ${chunkMessage.stop_reason} | długość: ${rawText.length}`)

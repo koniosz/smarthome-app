@@ -554,7 +554,9 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
       userNotesInstruction,
     ].filter(Boolean).join('\n\n')
 
-    const message = await client.messages.create({
+    // Używamy stream().finalMessage() zamiast create() — wymagane przy max_tokens > ~4096
+    // bo Anthropic SDK rzuca błąd "Streaming is required for long operations"
+    const message = await client.messages.stream({
       model: 'claude-sonnet-4-5',
       max_tokens: 32000,
       system: SYSTEM_PROMPT,
@@ -567,7 +569,7 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
           ] as ContentBlock[],
         },
       ],
-    })
+    }).finalMessage()
 
     // Capture token usage for cost estimation
     const usage = {
@@ -1146,12 +1148,12 @@ FORMAT ODPOWIEDZI:
 ]
 \`\`\``
 
-    const message = await client.messages.create({
+    const message = await client.messages.stream({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8192,
+      max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: refinePrompt }],
-    })
+    }).finalMessage()
 
     const rawText = message.content[0].type === 'text' ? message.content[0].text : ''
     console.log('[AI Refine] stop_reason:', message.stop_reason, '| długość:', rawText.length)
