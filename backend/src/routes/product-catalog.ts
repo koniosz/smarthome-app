@@ -6,7 +6,7 @@ import fs from 'fs'
 import XLSX from 'xlsx'
 import Anthropic from '@anthropic-ai/sdk'
 import db from '../db'
-import { requireAdmin } from '../middleware/auth'
+import { requireAdmin, requireAuth } from '../middleware/auth'
 
 const ATTACHMENTS_DIR = path.join(__dirname, '..', 'data', 'attachments')
 if (!fs.existsSync(ATTACHMENTS_DIR)) fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true })
@@ -404,8 +404,8 @@ Zasady:
 - Nie dodawaj komentarzy, zwróć TYLKO tablicę JSON bez żadnego innego tekstu
 - Jeśli cennik jest pusty lub nieczytelny, zwróć pustą tablicę []`
 
-// POST /api/product-catalog/import — import pricelist from Excel or PDF (admin only)
-router.post('/import', requireAdmin, importUpload.single('file'), async (req: Request, res: Response) => {
+// POST /api/product-catalog/import — import pricelist from Excel or PDF (każdy zalogowany user)
+router.post('/import', requireAuth, importUpload.single('file'), async (req: Request, res: Response) => {
   if (!req.file) {
     res.status(400).json({ error: 'Brak pliku. Prześlij plik Excel (.xlsx, .xls) lub PDF.' })
     return

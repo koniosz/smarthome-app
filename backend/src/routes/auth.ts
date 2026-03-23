@@ -140,4 +140,36 @@ router.get('/me', requireAuth, (req: Request, res: Response) => {
   res.json(req.user)
 })
 
+// POST /api/auth/change-password — zmiana własnego hasła (każdy zalogowany user)
+router.post('/change-password', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { current_password, new_password } = req.body
+    if (!current_password || !new_password) {
+      res.status(400).json({ error: 'Wymagane pola: current_password, new_password' }); return
+    }
+    if (new_password.length < 6) {
+      res.status(400).json({ error: 'Nowe hasło musi mieć co najmniej 6 znaków' }); return
+    }
+
+    const user = await db.users.find(req.user!.id)
+    if (!user) {
+      res.status(404).json({ error: 'Użytkownik nie istnieje' }); return
+    }
+    if (!user.password_hash) {
+      res.status(400).json({ error: 'Konto Azure AD — zmiana hasła nie jest możliwa tą metodą' }); return
+    }
+
+    const valid = await bcrypt.compare(current_password, user.password_hash)
+    if (!valid) {
+      res.status(401).json({ error: 'Obecne hasło jest nieprawidłowe' }); return
+    }
+
+    const hash = await bcrypt.hash(new_password, 10)
+    await db.users.update(user.id, { password_hash: hash })
+    res.json({ success: true })
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
 export default router

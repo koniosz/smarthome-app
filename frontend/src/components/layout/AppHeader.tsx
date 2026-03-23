@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import axios from 'axios'
 import GlobalSearch from './GlobalSearch'
 import { useAuth } from '../../auth/AuthContext'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
@@ -129,7 +130,7 @@ function NotificationsPanel({
 
 // ─── Main AppHeader ───────────────────────────────────────────────────────────
 export default function AppHeader({ darkMode, onToggleDark, activeView, onNavigate }: AppHeaderProps) {
-  const { user, logout } = useAuth()
+  const { user, token, logout } = useAuth()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
@@ -137,6 +138,41 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
   const [unreadCount, setUnreadCount] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
   const notifRef = useRef<HTMLDivElement>(null)
+
+  // Zmiana hasła
+  const [showChangePwd, setShowChangePwd] = useState(false)
+  const [cpCurrent, setCpCurrent] = useState('')
+  const [cpNew, setCpNew] = useState('')
+  const [cpConfirm, setCpConfirm] = useState('')
+  const [cpLoading, setCpLoading] = useState(false)
+  const [cpError, setCpError] = useState('')
+  const [cpSuccess, setCpSuccess] = useState(false)
+
+  function openChangePwd() {
+    setMenuOpen(false)
+    setCpCurrent(''); setCpNew(''); setCpConfirm('')
+    setCpError(''); setCpSuccess(false)
+    setShowChangePwd(true)
+  }
+
+  async function handleChangePwd(e: React.FormEvent) {
+    e.preventDefault()
+    if (cpNew !== cpConfirm) { setCpError('Nowe hasła nie są identyczne'); return }
+    if (cpNew.length < 6) { setCpError('Hasło musi mieć co najmniej 6 znaków'); return }
+    setCpLoading(true); setCpError('')
+    try {
+      await axios.post('/api/auth/change-password',
+        { current_password: cpCurrent, new_password: cpNew },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      setCpSuccess(true)
+      setTimeout(() => setShowChangePwd(false), 2000)
+    } catch (err: any) {
+      setCpError(err?.response?.data?.error ?? 'Błąd zmiany hasła')
+    } finally {
+      setCpLoading(false)
+    }
+  }
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -202,6 +238,7 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
     : '?'
 
   return (
+    <>
     <header className="flex items-center justify-between px-6 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 shadow-sm flex-shrink-0 gap-4">
       <div className="flex items-center gap-3 flex-shrink-0">
         <div className="bg-slate-800 rounded-xl px-4 py-1.5">
@@ -334,6 +371,12 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                   </button>
                 )}
                 <button
+                  onClick={openChangePwd}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+                >
+                  🔒 Zmień hasło
+                </button>
+                <button
                   onClick={handleLogout}
                   className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors flex items-center gap-2 border-t border-gray-100 dark:border-gray-800"
                 >
@@ -345,5 +388,72 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
         )}
       </div>
     </header>
+
+    {/* Modal zmiany hasła */}
+    {showChangePwd && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 w-full max-w-sm p-6">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">🔒 Zmień hasło</h2>
+            <button onClick={() => setShowChangePwd(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">✕</button>
+          </div>
+
+          {cpSuccess ? (
+            <div className="text-center py-4">
+              <div className="text-4xl mb-3">✅</div>
+              <p className="text-sm font-medium text-green-600 dark:text-green-400">Hasło zostało zmienione!</p>
+            </div>
+          ) : (
+            <form onSubmit={handleChangePwd} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Obecne hasło</label>
+                <input
+                  type="password" required
+                  value={cpCurrent} onChange={e => setCpCurrent(e.target.value)}
+                  placeholder="Wpisz obecne hasło"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm outline-none focus:border-violet-400 dark:focus:border-violet-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Nowe hasło</label>
+                <input
+                  type="password" required minLength={6}
+                  value={cpNew} onChange={e => setCpNew(e.target.value)}
+                  placeholder="Minimum 6 znaków"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm outline-none focus:border-violet-400 dark:focus:border-violet-600"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Powtórz nowe hasło</label>
+                <input
+                  type="password" required minLength={6}
+                  value={cpConfirm} onChange={e => setCpConfirm(e.target.value)}
+                  placeholder="Powtórz nowe hasło"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm outline-none focus:border-violet-400 dark:focus:border-violet-600"
+                />
+              </div>
+
+              {cpError && (
+                <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded-lg px-3 py-2">
+                  ❌ {cpError}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setShowChangePwd(false)} disabled={cpLoading}
+                  className="flex-1 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50">
+                  Anuluj
+                </button>
+                <button type="submit" disabled={cpLoading}
+                  className="flex-1 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
+                  {cpLoading ? 'Zapisuję…' : 'Zmień hasło'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    )}
+  </>
   )
 }
