@@ -411,7 +411,15 @@ Zwróć TYLKO tablicę JSON z produktami w formacie:
   }
 ]
 
-Zasady:
+WAŻNE — WYBÓR CENY (SRP / Katalogowa):
+- Pobieraj WYŁĄCZNIE cenę katalogową SRP (Suggested Retail Price / cena detaliczna / cena katalogowa / MSRP / cena końcowa)
+- IGNORUJ ceny integratorskie / dealerskie / partnerskie / hurtowe / rabatowane (często oznaczone jako: Integrator Price, Dealer Price, Partner Price, cena dla integratorów, cena zakupu, net price for resellers, itp.)
+- Jeśli w cenniku są kolumny np. "SRP", "RRP", "MSRP", "Cena katalogowa", "Retail" — użyj tej kolumny
+- Jeśli są kolumny np. "Integrator", "Dealer", "Partner", "Reseller", "Net", "Distributor" — POMIŃ te kolumny
+- Jeśli cennik ma tylko jedną kolumnę cenową — użyj jej (to prawdopodobnie SRP)
+- Jeśli nie możesz jednoznacznie określić która cena to SRP, wybierz WYŻSZĄ cenę
+
+Zasady ogólne:
 - unit_price musi być liczbą dziesiętną PLN netto (bez symboli walut, tylko wartość numeryczna)
 - Jeśli cena jest w EUR, przelicz kurs 4.30; jeśli USD kurs 4.00
 - Pomiń produkty bez ceny lub z ceną = 0
