@@ -133,6 +133,11 @@ model ProductCatalog {
   unit         String   @default("szt.")
   unit_price   Float    @default(0)
   active       Boolean  @default(true)
+  description  String?
+  created_at   String?
+  updated_at   String?
+  last_import  String?
+  sort_order   Int?
 
   @@map("product_catalog")
 }
@@ -153,10 +158,14 @@ model AiQuote {
   labor_cost           Float?
   grand_total          Float?
   floor_plan_filename  String?
+  floor_plan_filenames Json?
+  floor_plan_original  String?
+  floor_plan_originals Json?
   ai_analysis_raw      String?
   refine_history       Json?
   created_at           String
   updated_at           String?
+  created_by           String?
 
   project      Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
