@@ -311,6 +311,19 @@ export default function ProductCatalogPage() {
     setShowImport(true)
   }
 
+  const handleDeletePricelist = async (brand: QuoteBrand, manufacturer: string) => {
+    const cnt = items.filter(i => i.brand === brand && (i.manufacturer || i.brand) === manufacturer && i.active !== false).length
+    if (!confirm(`Usunąć cały cennik "${manufacturer}" (${brand})?\n\nZostanie trwale usuniętych ${cnt} produktów. Tej operacji nie można cofnąć.`)) return
+    try {
+      const res = await productCatalogApi.deletePricelist(brand, manufacturer)
+      alert(`✓ Usunięto ${res.deleted} produktów producenta ${manufacturer}.`)
+      if (mfrFilter === manufacturer) setMfrFilter('all')
+      load()
+    } catch (err: any) {
+      alert(`Błąd: ${err?.response?.data?.error ?? err?.message ?? 'Nie udało się usunąć cennika'}`)
+    }
+  }
+
   const startEdit = (item: ProductCatalogItem) => { setEditingId(item.id); setEditBuf({ ...item }) }
   const cancelEdit = () => { setEditingId(null); setEditBuf({}) }
 
@@ -589,6 +602,13 @@ export default function ProductCatalogPage() {
                     onClick={e => { e.stopPropagation(); openImport(brandFilter, mfr) }}
                     className="opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity cursor-pointer"
                   >📥</span>
+                  {cnt > 0 && (
+                    <span
+                      title={`Usuń cennik ${mfr} (${cnt} produktów)`}
+                      onClick={e => { e.stopPropagation(); handleDeletePricelist(brandFilter, mfr) }}
+                      className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity cursor-pointer"
+                    >🗑️</span>
+                  )}
                 </button>
               )
             })}
@@ -611,6 +631,11 @@ export default function ProductCatalogPage() {
                     onClick={e => { e.stopPropagation(); openImport(brandFilter, mfr) }}
                     className="opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-opacity cursor-pointer"
                   >📥</span>
+                  <span
+                    title={`Usuń cennik ${mfr}`}
+                    onClick={e => { e.stopPropagation(); handleDeletePricelist(brandFilter, mfr) }}
+                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity cursor-pointer"
+                  >🗑️</span>
                 </button>
               ))
             }

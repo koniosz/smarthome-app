@@ -186,6 +186,10 @@ export const productCatalogApi = {
   delete: (id: string) =>
     api.delete(`/product-catalog/${id}`).then(r => r.data),
 
+  deletePricelist: (brand: string, manufacturer: string) =>
+    api.delete('/product-catalog/pricelist', { params: { brand, manufacturer } })
+      .then(r => r.data as { success: boolean; deleted: number; brand: string; manufacturer: string }),
+
   seed: () =>
     api.post<{ seeded?: number; already_seeded?: boolean; count?: number }>('/product-catalog/seed').then(r => r.data),
 

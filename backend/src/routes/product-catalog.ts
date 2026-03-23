@@ -367,6 +367,21 @@ router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
   }
 })
 
+// DELETE /api/product-catalog/pricelist?brand=KNX&manufacturer=HDL — usuń cały cennik (admin only)
+router.delete('/pricelist', requireAdmin, async (req: Request, res: Response) => {
+  const { brand, manufacturer } = req.query as { brand?: string; manufacturer?: string }
+  if (!brand || !manufacturer) {
+    res.status(400).json({ error: 'Wymagane parametry: brand, manufacturer' })
+    return
+  }
+  try {
+    const result = await db.product_catalog.hardDeleteByBrandManufacturer(brand, manufacturer)
+    res.json({ success: true, deleted: (result as any).count, brand, manufacturer })
+  } catch {
+    res.status(500).json({ error: 'Błąd serwera podczas usuwania cennika' })
+  }
+})
+
 // DELETE /api/product-catalog/:id — soft delete (admin only)
 router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
