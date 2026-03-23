@@ -480,6 +480,7 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
   const selectedFeatures: string[] = req.body.features
     ? (Array.isArray(req.body.features) ? req.body.features : [req.body.features])
     : []
+  const userNotes: string = typeof req.body.user_notes === 'string' ? req.body.user_notes.trim() : ''
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
@@ -541,12 +542,17 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
     const featuresInstruction = selectedFeatures.length > 0
       ? `WAŻNE: Uwzględnij TYLKO następujące instalacje/funkcje: ${selectedFeatures.join(', ')}. Nie dodawaj urządzeń ani funkcji spoza tej listy.`
       : ''
+    const userNotesInstruction = userNotes
+      ? `WYTYCZNE KLIENTA / PROJEKTANTA (traktuj jako priorytetowe wskazówki): ${userNotes}`
+      : ''
+
     const userInstruction = [
       `Przeanalizuj ${files.length > 1 ? 'te pliki (rzuty i/lub dane): ' + fileLabel : 'ten rzut'} i zwróć JSON zgodnie z instrukcją systemową.`,
       'Uwzględnij wszystkie pomieszczenia ze wszystkich plików.',
       systemsInstruction,
       featuresInstruction,
-    ].filter(Boolean).join(' ')
+      userNotesInstruction,
+    ].filter(Boolean).join('\n\n')
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-5',

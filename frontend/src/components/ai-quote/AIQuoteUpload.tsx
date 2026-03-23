@@ -74,6 +74,7 @@ export default function AIQuoteUpload({ projectId, onCreated, compact = false }:
   const [dragging, setDragging] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [selectedScope, setSelectedScope] = useState<Set<string>>(new Set(ALL_IDS))
+  const [userNotes, setUserNotes] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validateFile = (f: File) => {
@@ -131,6 +132,7 @@ export default function AIQuoteUpload({ projectId, onCreated, compact = false }:
         pct => { setUploadPct(pct); if (pct >= 100) setState('analyzing') },
         undefined,
         features,
+        userNotes.trim() || undefined,
       )
       onCreated(quote)
       setState('idle')
@@ -239,6 +241,33 @@ export default function AIQuoteUpload({ projectId, onCreated, compact = false }:
           ))}
         </div>
       )}
+
+      {/* ── Wytyczne / dodatkowe instrukcje ───────────────────────────────── */}
+      <div className="mt-4">
+        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-1.5">
+          📝 Wytyczne dla AI <span className="normal-case font-normal text-gray-400">(opcjonalne)</span>
+        </label>
+        <textarea
+          value={userNotes}
+          onChange={e => setUserNotes(e.target.value)}
+          rows={4}
+          placeholder={`Opisz czego oczekujesz od projektu, np.:\n• Dom 250m² z garażem, 4 sypialnie\n• Klient chce sterowanie DALI + rolety zewnętrzne na każdym oknie\n• Brak audio, priorytet: bezpieczeństwo Satel + kamery Hikvision\n• Budżet ok. 80 000 zł netto`}
+          className="w-full px-3 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 focus:ring-1 focus:ring-violet-300 dark:focus:ring-violet-700 resize-none transition-colors"
+        />
+        {userNotes.trim().length > 0 && (
+          <div className="flex items-center justify-between mt-1">
+            <p className="text-xs text-violet-600 dark:text-violet-400">
+              ✓ Wytyczne zostaną uwzględnione w analizie AI
+            </p>
+            <button
+              onClick={() => setUserNotes('')}
+              className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+            >
+              Wyczyść
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* ── Scope selector ─────────────────────────────────────────────────── */}
       <div className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">

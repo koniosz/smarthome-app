@@ -103,12 +103,14 @@ export const aiQuotesApi = {
     onProgress?: (pct: number) => void,
     systems?: string[],
     features?: string[],
+    userNotes?: string,
   ): Promise<AiQuote> => {
     const form = new FormData()
     const fileList = Array.isArray(files) ? files : [files]
     for (const f of fileList) form.append('floor_plans', f)
     if (systems?.length) systems.forEach(s => form.append('systems', s))
     if (features?.length) features.forEach(f => form.append('features', f))
+    if (userNotes) form.append('user_notes', userNotes)
     return api.post<AiQuote>(
       `/projects/${projectId}/ai-quotes/analyze`,
       form,
