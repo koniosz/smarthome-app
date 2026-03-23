@@ -517,36 +517,43 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
       return
     }
 
-    // Count existing items that will be replaced
-    const existing = await db.product_catalog.allIncludingInactive()
-    const toReplace = existing.filter((i: any) => i.brand === brand && (i.manufacturer || i.brand) === manufacturer)
-    const replacedCount = toReplace.length
+    // Hard-delete (fizyczne usunięcie) istniejących rekordów dla tej marki+producenta
+    // Soft-delete zostawiałby rekordy z SKU → UNIQUE constraint failure przy ponownym imporcie
+    const replacedCount = await db.product_catalog.hardDeleteByBrandManufacturer(brand, manufacturer)
+      .then((r: any) => r.count)
 
-    // Soft-delete (actually hard-delete) existing items for this brand+manufacturer
-    for (const item of toReplace) {
-      await db.product_catalog.delete(item.id)
-    }
-
-    // Insert new items
+    // Buduj nowe produkty z deduplikacją SKU
     const importedAt = now()
+    const seenSkus = new Set<string>()
+
     const newItems = parsedItems
-      .filter((p: any) => p.name && p.unit_price > 0)
-      .map((p: any, idx: number) => ({
-        id: uuidv4(),
-        sku: String(p.sku || '').trim(),
-        brand,
-        manufacturer,
-        category: String(p.category || '').trim(),
-        name: String(p.name || '').trim(),
-        unit: String(p.unit || 'szt.').trim(),
-        unit_price: parseFloat(String(p.unit_price)) || 0,
-        description: '',
-        active: true,
-        created_at: importedAt,
-        updated_at: importedAt,
-        last_import: importedAt,
-        sort_order: idx,
-      }))
+      .filter((p: any) => p.name && Number(p.unit_price) > 0)
+      .map((p: any, idx: number) => {
+        // Pusty lub brakujący SKU → null (PostgreSQL pozwala na wiele NULL przy UNIQUE)
+        let sku: string | null = String(p.sku || '').trim() || null
+        // Duplikat SKU w tym samym imporcie → unikalnij dodając suffix
+        if (sku && seenSkus.has(sku)) {
+          sku = `${sku}-${idx}`
+        }
+        if (sku) seenSkus.add(sku)
+
+        return {
+          id: uuidv4(),
+          sku,
+          brand,
+          manufacturer,
+          category: String(p.category || '').trim(),
+          name: String(p.name || '').trim(),
+          unit: String(p.unit || 'szt.').trim(),
+          unit_price: parseFloat(String(p.unit_price)) || 0,
+          description: '',
+          active: true,
+          created_at: importedAt,
+          updated_at: importedAt,
+          last_import: importedAt,
+          sort_order: idx,
+        }
+      })
 
     for (const item of newItems) {
       await db.product_catalog.insert(item)

@@ -132,6 +132,8 @@ export const db = {
       prisma.productCatalog.update({ where: { id }, data: patch }),
     delete: (id: string) =>
       prisma.productCatalog.update({ where: { id }, data: { active: false } }),
+    hardDeleteByBrandManufacturer: (brand: string, manufacturer: string) =>
+      prisma.productCatalog.deleteMany({ where: { brand, manufacturer } }),
     seed: async (items: any[]) => {
       const count = await prisma.productCatalog.count()
       if (count === 0) {
