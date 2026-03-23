@@ -432,8 +432,42 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
     const client = new Anthropic({ apiKey: anthropicKey })
     let messageContent: Anthropic.MessageParam['content']
 
+    // ── Pomocnicza funkcja: wyekstrahuj JSON z odpowiedzi AI ─────────────────
+    const extractJsonArray = (rawText: string): any[] | null => {
+      let jsonString: string | null = null
+
+      // Strategia 1: ```json ... ```
+      const codeBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch?.[1]?.trim().startsWith('[')) {
+        jsonString = codeBlockMatch[1].trim()
+      }
+      // Strategia 2: surowa tablica [ ... ]
+      if (!jsonString) {
+        const arrayMatch = rawText.match(/\[[\s\S]*\]/)
+        if (arrayMatch) jsonString = arrayMatch[0]
+      }
+      // Strategia 3: otwierający blok bez zamknięcia (obcięty przez max_tokens)
+      if (!jsonString) {
+        const openBlock = rawText.match(/```(?:json)?\s*\n?([\s\S]+)$/)
+        if (openBlock?.[1]?.trim().startsWith('[')) {
+          jsonString = openBlock[1].replace(/\n?```\s*$/, '').trim()
+        }
+      }
+      if (!jsonString) return null
+      try {
+        const parsed = JSON.parse(jsonrepair(jsonString))
+        return Array.isArray(parsed) ? parsed : null
+      } catch {
+        return null
+      }
+    }
+
+    // ── Wysyłanie do AI z obsługą chunków dla dużych plików ──────────────────
+    const CHUNK_ROWS = 120   // max wierszy danych na jeden request AI
+    let allParsedItems: any[] = []
+
     if (ext === '.pdf') {
-      // PDF: send as base64 document to Claude
+      // PDF: wyślij jako base64 – jeden request (PDFy nie da się chunkowć)
       const pdfData = fs.readFileSync(filePath)
       const base64 = pdfData.toString('base64')
       messageContent = [
@@ -443,78 +477,79 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
         } as any,
         { type: 'text', text: `Przeanalizuj ten cennik (producent: ${manufacturer}, marka: ${brand}) i wyodrębnij listę produktów zgodnie z instrukcją. Zwróć TYLKO tablicę JSON.` },
       ]
+
+      const message = await client.messages.create({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 32000,
+        system: IMPORT_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: messageContent }],
+      })
+      const rawText = message.content.find(c => c.type === 'text')?.text ?? ''
+      console.log('[Import PDF] stop_reason:', message.stop_reason, '| długość:', rawText.length)
+      const items = extractJsonArray(rawText)
+      if (!items) {
+        console.error('[Import PDF] Brak JSON. Pełna odpowiedź:\n', rawText)
+        res.status(422).json({ error: 'AI nie zwróciło poprawnej listy produktów. Sprawdź format cennika.' })
+        return
+      }
+      allParsedItems = items
+
     } else {
-      // Excel: read with xlsx and convert to text table
+      // Excel: podziel na chunki po CHUNK_ROWS wierszy → procesuj każdy osobno
       const workbook = XLSX.readFile(filePath)
-      let textContent = ''
+
+      // Zbierz wszystkie wiersze ze wszystkich arkuszy jako tablice wartości
+      type Row = (string | number | null | undefined)[]
+      const allSheetRows: { sheetName: string; header: Row; rows: Row[] }[] = []
+
       for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName]
-        const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
-        if (csv.trim().length > 10) {
-          textContent += `\n=== Arkusz: ${sheetName} ===\n${csv}\n`
+        const matrix = XLSX.utils.sheet_to_json<Row>(sheet, { header: 1, blankrows: false, defval: '' })
+        if (matrix.length < 2) continue          // pusty lub tylko nagłówek
+        const [header, ...dataRows] = matrix
+        allSheetRows.push({ sheetName, header, rows: dataRows })
+      }
+
+      if (allSheetRows.length === 0) {
+        res.status(422).json({ error: 'Plik Excel jest pusty lub nie zawiera danych.' })
+        return
+      }
+
+      // Dla każdego arkusza: rozbij na chunki i wyślij do AI
+      for (const { sheetName, header, rows } of allSheetRows) {
+        const headerCsv = header.join(',')
+        for (let start = 0; start < rows.length; start += CHUNK_ROWS) {
+          const chunkRows = rows.slice(start, start + CHUNK_ROWS)
+          const chunkCsv = [headerCsv, ...chunkRows.map(r => r.join(','))].join('\n')
+          const chunkLabel = `${sheetName} wiersze ${start + 1}–${start + chunkRows.length}`
+
+          console.log(`[Import Excel] Chunk: ${chunkLabel} (${chunkRows.length} wierszy)`)
+
+          const chunkMessage = await client.messages.create({
+            model: 'claude-sonnet-4-5',
+            max_tokens: 32000,
+            system: IMPORT_SYSTEM_PROMPT,
+            messages: [{
+              role: 'user',
+              content: `Poniżej fragment cennika CSV (producent: ${manufacturer}, marka: ${brand}, ${chunkLabel}).\nWyodrębnij produkty i zwróć TYLKO tablicę JSON:\n\n${chunkCsv}\n\nZwróć TYLKO tablicę JSON.`,
+            }],
+          })
+
+          const rawText = chunkMessage.content.find(c => c.type === 'text')?.text ?? ''
+          console.log(`[Import Excel] Chunk stop_reason: ${chunkMessage.stop_reason} | długość: ${rawText.length}`)
+
+          const items = extractJsonArray(rawText)
+          if (items && items.length > 0) {
+            allParsedItems.push(...items)
+            console.log(`[Import Excel] Chunk dodał ${items.length} produktów (łącznie: ${allParsedItems.length})`)
+          }
         }
       }
-      // Limit to ~100k chars to avoid token overload
-      if (textContent.length > 100000) textContent = textContent.slice(0, 100000) + '\n... (plik przycięty)'
 
-      messageContent = [
-        {
-          type: 'text',
-          text: `Poniżej dane cennika w formacie CSV (producent: ${manufacturer}, marka: ${brand}). Wyodrębnij produkty:\n\n${textContent}\n\nZwróć TYLKO tablicę JSON.`,
-        },
-      ]
-    }
-
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 8192,
-      system: IMPORT_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: messageContent }],
-    })
-
-    const rawText = message.content.find(c => c.type === 'text')?.text ?? ''
-    console.log('[Import] AI odpowiedź (pierwsze 300 znaków):', rawText.slice(0, 300))
-
-    // Strategia 1: JSON w bloku kodu ```json ... ```
-    let jsonString: string | null = null
-    const codeBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
-    if (codeBlockMatch?.[1]?.trim().startsWith('[')) {
-      jsonString = codeBlockMatch[1].trim()
-    }
-
-    // Strategia 2: szukaj tablicy [ ... ] w surowym tekście
-    if (!jsonString) {
-      const arrayMatch = rawText.match(/\[[\s\S]*\]/)
-      if (arrayMatch) jsonString = arrayMatch[0]
-    }
-
-    // Strategia 3: otwierający blok kodu bez zamknięcia
-    if (!jsonString) {
-      const openBlock = rawText.match(/```(?:json)?\s*\n?([\s\S]+)$/)
-      if (openBlock?.[1]?.trim().startsWith('[')) {
-        jsonString = openBlock[1].replace(/\n?```\s*$/, '').trim()
+      if (allParsedItems.length === 0) {
+        res.status(422).json({ error: 'AI nie znalazło żadnych produktów w pliku Excel. Sprawdź format cennika.' })
+        return
       }
-    }
-
-    if (!jsonString) {
-      console.error('[Import] Brak JSON w odpowiedzi AI. Pełna odpowiedź:\n', rawText)
-      res.status(422).json({ error: 'AI nie zwróciło poprawnej listy produktów. Sprawdź format cennika.' })
-      return
-    }
-
-    let parsedItems: any[]
-    try {
-      parsedItems = JSON.parse(jsonrepair(jsonString))
-    } catch (err: any) {
-      console.error('[Import] Błąd parsowania JSON:', err.message)
-      console.error('[Import] jsonString (pierwsze 500 znaków):\n', jsonString.slice(0, 500))
-      res.status(422).json({ error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.' })
-      return
-    }
-
-    if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
-      res.status(422).json({ error: 'Nie znaleziono żadnych produktów w cenniku. Sprawdź format pliku.' })
-      return
     }
 
     // Hard-delete (fizyczne usunięcie) istniejących rekordów dla tej marki+producenta
@@ -526,7 +561,7 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
     const importedAt = now()
     const seenSkus = new Set<string>()
 
-    const newItems = parsedItems
+    const newItems = allParsedItems
       .filter((p: any) => p.name && Number(p.unit_price) > 0)
       .map((p: any, idx: number) => {
         // Pusty lub brakujący SKU → null (PostgreSQL pozwala na wiele NULL przy UNIQUE)
