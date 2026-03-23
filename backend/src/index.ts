@@ -102,7 +102,7 @@ function getLocalIP(): string {
   return 'localhost'
 }
 
-app.listen(Number(PORT), '0.0.0.0', () => {
+const server = app.listen(Number(PORT), '0.0.0.0', () => {
   const localIP = getLocalIP()
   const hasFrontend = fs.existsSync(DIST_DIR)
   console.log(`\n🏠 Smart Home Manager`)
@@ -116,3 +116,10 @@ app.listen(Number(PORT), '0.0.0.0', () => {
   }
   console.log()
 })
+
+// Zwiększ timeout dla długich zapytań AI (rzuty, cenniki)
+// Render free ma 30s timeout w proxy — to nie obejdzie limitu Render,
+// ale zapobiega przedwczesnemu zamknięciu połączenia od strony Node.js
+server.timeout = 120000        // 2 minuty
+server.keepAliveTimeout = 120000
+server.headersTimeout = 125000

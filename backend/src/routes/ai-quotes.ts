@@ -548,8 +548,8 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
     ].filter(Boolean).join(' ')
 
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 16384,
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 8192,
       system: SYSTEM_PROMPT,
       messages: [
         {
@@ -1139,7 +1139,7 @@ FORMAT ODPOWIEDZI:
 \`\`\``
 
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 8192,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: refinePrompt }],

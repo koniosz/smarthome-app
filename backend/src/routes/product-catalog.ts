@@ -465,27 +465,53 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req: Req
     }
 
     const message = await client.messages.create({
-      model: 'claude-opus-4-5',
-      max_tokens: 8192,
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 4096,
       system: IMPORT_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: messageContent }],
     })
 
-    const rawText = message.content.find(c => c.type === 'text')?.text ?? '[]'
+    const rawText = message.content.find(c => c.type === 'text')?.text ?? ''
+    console.log('[Import] AI odpowiedź (pierwsze 300 znaków):', rawText.slice(0, 300))
 
-    // Extract JSON array from response
-    const jsonMatch = rawText.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) {
+    // Strategia 1: JSON w bloku kodu ```json ... ```
+    let jsonString: string | null = null
+    const codeBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+    if (codeBlockMatch?.[1]?.trim().startsWith('[')) {
+      jsonString = codeBlockMatch[1].trim()
+    }
+
+    // Strategia 2: szukaj tablicy [ ... ] w surowym tekście
+    if (!jsonString) {
+      const arrayMatch = rawText.match(/\[[\s\S]*\]/)
+      if (arrayMatch) jsonString = arrayMatch[0]
+    }
+
+    // Strategia 3: otwierający blok kodu bez zamknięcia
+    if (!jsonString) {
+      const openBlock = rawText.match(/```(?:json)?\s*\n?([\s\S]+)$/)
+      if (openBlock?.[1]?.trim().startsWith('[')) {
+        jsonString = openBlock[1].replace(/\n?```\s*$/, '').trim()
+      }
+    }
+
+    if (!jsonString) {
+      console.error('[Import] Brak JSON w odpowiedzi AI. Pełna odpowiedź:\n', rawText)
       res.status(422).json({ error: 'AI nie zwróciło poprawnej listy produktów. Sprawdź format cennika.' })
       return
     }
 
     let parsedItems: any[]
     try {
-      parsedItems = JSON.parse(jsonMatch[0])
+      parsedItems = JSON.parse(jsonString)
     } catch {
-      res.status(422).json({ error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.' })
-      return
+      // Auto-naprawa: usuń trailing commas
+      try {
+        parsedItems = JSON.parse(jsonString.replace(/,(\s*[}\]])/g, '$1'))
+      } catch {
+        res.status(422).json({ error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.' })
+        return
+      }
     }
 
     if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
