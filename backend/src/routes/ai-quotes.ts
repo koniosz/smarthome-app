@@ -654,13 +654,29 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
 
     const items = rawItems.map((item: any, index: number) => {
       const itemName = (item.name || '').toLowerCase()
-      const catalogMatch = catalogItems.find((c: any) =>
-        c.brand === item.brand &&
-        itemName.length > 8 &&
-        c.name.toLowerCase().includes(itemName.slice(0, Math.min(itemName.length, 20)))
-      )
+      const itemSku  = (item.sku  || '').trim().toLowerCase()
+
+      const catalogMatch = catalogItems.find((c: any) => {
+        // 1. dopasowanie po SKU (najdokładniejsze)
+        if (itemSku && c.sku && c.sku.toLowerCase() === itemSku) return true
+        // 2. dopasowanie po marce + fragmentcie nazwy
+        const cName = (c.name || '').toLowerCase()
+        return (
+          c.brand === item.brand &&
+          itemName.length > 6 &&
+          (
+            cName.includes(itemName.slice(0, Math.min(itemName.length, 25))) ||
+            itemName.includes(cName.slice(0, Math.min(cName.length, 25)))
+          )
+        )
+      })
+
       const qty = Number(item.qty) || 1
-      const unit_price = Number(item.unit_price) || 0
+      // Jeśli znaleziono produkt w katalogu → użyj ceny KATALOGOWEJ
+      // AI może mieć nieaktualne lub wymyślone ceny
+      const unit_price = catalogMatch
+        ? catalogMatch.unit_price
+        : (Number(item.unit_price) || 0)
       const discount_pct = 0
       const total = qty * unit_price * (1 - discount_pct / 100)
 
@@ -669,7 +685,7 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
         room: item.room || '',
         brand: item.brand || 'KNX',
         category: item.category || '',
-        name: item.name || '',
+        name: catalogMatch ? catalogMatch.name : (item.name || ''),
         qty,
         unit: item.unit || 'szt.',
         unit_price,
@@ -1190,20 +1206,33 @@ FORMAT ODPOWIEDZI:
     const catalogItems = await db.product_catalog.all()
     const newItems = rawItems.map((item: any, index: number) => {
       const itemName = (item.name || '').toLowerCase()
-      const catalogMatch = catalogItems.find((c: any) =>
-        c.brand === item.brand &&
-        itemName.length > 8 &&
-        c.name.toLowerCase().includes(itemName.slice(0, Math.min(itemName.length, 20)))
-      )
+      const itemSku  = (item.sku  || '').trim().toLowerCase()
+
+      const catalogMatch = catalogItems.find((c: any) => {
+        if (itemSku && c.sku && c.sku.toLowerCase() === itemSku) return true
+        const cName = (c.name || '').toLowerCase()
+        return (
+          c.brand === item.brand &&
+          itemName.length > 6 &&
+          (
+            cName.includes(itemName.slice(0, Math.min(itemName.length, 25))) ||
+            itemName.includes(cName.slice(0, Math.min(cName.length, 25)))
+          )
+        )
+      })
+
       const qty = Number(item.qty) || 1
-      const unit_price = Number(item.unit_price) || 0
+      // Zawsze używaj ceny katalogowej gdy produkt zostanie dopasowany
+      const unit_price = catalogMatch
+        ? catalogMatch.unit_price
+        : (Number(item.unit_price) || 0)
       const discount_pct = Math.max(0, Math.min(100, Number(item.discount_pct) || 0))
       return {
         id: uuidv4(),
         room: item.room || '',
         brand: item.brand || 'KNX',
         category: item.category || '',
-        name: item.name || '',
+        name: catalogMatch ? catalogMatch.name : (item.name || ''),
         qty,
         unit: item.unit || 'szt.',
         unit_price,
