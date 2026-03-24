@@ -261,28 +261,44 @@ export default function AIQuoteUpload({ projectId, onCreated, compact = false }:
   return (
     <div className={compact ? '' : 'py-4'}>
 
-      {/* ── 1. WYTYCZNE ────────────────────────────────────────────────────── */}
-      <div className="mb-4">
-        <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-1.5">
-          📝 Wytyczne projektu
-        </label>
-        <textarea
-          value={userNotes}
-          onChange={e => setUserNotes(e.target.value)}
-          rows={5}
-          placeholder={`Opisz projekt i oczekiwania klienta, np.:\n• Dom jednorodzinny 280m², 2 piętra, garaż\n• Sterowanie DALI, rolety zewnętrzne na każdym oknie, alarm Satel\n• Klient chce Control4 z pilotem SR-260 i nagłośnienie w salonie\n• Budżet ok. 90 000 zł netto — priorytet jakość, nie cena\n• Brak systemu audio w pokojach dziecięcych`}
-          className="w-full px-3 py-2.5 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 placeholder-gray-300 dark:placeholder-gray-600 focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 focus:ring-1 focus:ring-violet-300 dark:focus:ring-violet-700 resize-none transition-colors"
-        />
-        {userNotes.trim().length > 0 && (
-          <div className="flex items-center justify-between mt-1">
-            <p className="text-xs text-violet-600 dark:text-violet-400">
-              ✓ Wytyczne uwzględnione w analizie
-            </p>
-            <button onClick={() => setUserNotes('')} className="text-xs text-gray-400 hover:text-red-500 transition-colors">
-              Wyczyść
-            </button>
+      {/* ── 1. WYTYCZNE / PROMPT DO CLAUDE ──────────────────────────────────── */}
+      <div className="mb-5 rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/20 overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 bg-violet-100 dark:bg-violet-900/30 border-b border-violet-200 dark:border-violet-800">
+          <span className="text-lg">🤖</span>
+          <div>
+            <div className="text-sm font-bold text-violet-800 dark:text-violet-200">
+              Wiadomość do Claude
+            </div>
+            <div className="text-xs text-violet-600 dark:text-violet-400">
+              Opisz projekt — Claude uwzględni to przy generowaniu wyceny
+            </div>
           </div>
-        )}
+        </div>
+        <div className="p-3">
+          <textarea
+            value={userNotes}
+            onChange={e => setUserNotes(e.target.value)}
+            rows={compact ? 4 : 6}
+            placeholder={`Opisz projekt i oczekiwania klienta, np.:\n• Dom jednorodzinny 280m², 2 piętra, garaż\n• Sterowanie DALI, rolety zewnętrzne na każdym oknie, alarm Satel\n• Klient chce Control4 z pilotem SR-260 i nagłośnienie w salonie\n• Budżet ok. 90 000 zł netto — priorytet jakość, nie cena\n• Brak systemu audio w pokojach dziecięcych`}
+            className="w-full px-3 py-2.5 text-sm rounded-lg border border-violet-200 dark:border-violet-700 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:border-violet-500 dark:focus:border-violet-500 focus:ring-2 focus:ring-violet-200 dark:focus:ring-violet-800 resize-none transition-colors"
+          />
+          <div className="flex items-center justify-between mt-2">
+            {userNotes.trim().length > 0 ? (
+              <p className="text-xs text-violet-700 dark:text-violet-300 font-medium">
+                ✓ Wytyczne zostaną przesłane do Claude razem z plikami
+              </p>
+            ) : (
+              <p className="text-xs text-violet-500 dark:text-violet-500">
+                Opcjonalne — wycena powstanie też bez opisu
+              </p>
+            )}
+            {userNotes.trim().length > 0 && (
+              <button onClick={() => setUserNotes('')} className="text-xs text-gray-400 hover:text-red-500 transition-colors ml-2 shrink-0">
+                Wyczyść
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── 2. PLIKI ───────────────────────────────────────────────────────── */}
