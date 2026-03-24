@@ -163,6 +163,9 @@ model AiQuote {
   floor_plan_originals Json?
   ai_analysis_raw      String?
   refine_history       Json?
+  tokens_input         Int?
+  tokens_output        Int?
+  cost_usd             Float?
   created_at           String
   updated_at           String?
   created_by           String?

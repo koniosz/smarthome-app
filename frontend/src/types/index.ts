@@ -278,6 +278,10 @@ export interface AiQuote {
   labor_cost: number
   grand_total: number
   notes: string
+  tokens_input?: number | null
+  tokens_output?: number | null
+  cost_usd?: number | null
+  name?: string | null
   created_at: string
   updated_at: string
   created_by: string

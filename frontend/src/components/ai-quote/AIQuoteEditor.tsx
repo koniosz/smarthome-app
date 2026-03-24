@@ -888,6 +888,29 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
         </div>
       )}
 
+      {/* AI Token usage badge */}
+      {(quote.tokens_input || quote.tokens_output) && (() => {
+        const tin  = quote.tokens_input  ?? 0
+        const tout = quote.tokens_output ?? 0
+        const costUsd = quote.cost_usd ?? (tin * 3 + tout * 15) / 1_000_000
+        const costPln = costUsd * 4.0
+        return (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-100 dark:border-violet-900/40 bg-violet-50 dark:bg-violet-950/20 text-xs text-violet-700 dark:text-violet-300 flex-wrap">
+            <span className="font-semibold text-violet-500 dark:text-violet-400">🤖 AI</span>
+            <span className="text-gray-400 dark:text-gray-600">|</span>
+            <span>Wejście: <span className="font-semibold">{tin.toLocaleString('pl-PL')}</span> tok.</span>
+            <span className="text-gray-400 dark:text-gray-600">|</span>
+            <span>Wyjście: <span className="font-semibold">{tout.toLocaleString('pl-PL')}</span> tok.</span>
+            <span className="text-gray-400 dark:text-gray-600">|</span>
+            <span>Łącznie: <span className="font-semibold text-violet-600 dark:text-violet-300">{(tin + tout).toLocaleString('pl-PL')}</span> tok.</span>
+            <span className="text-gray-400 dark:text-gray-600">|</span>
+            <span>Koszt: <span className="font-semibold text-green-600 dark:text-green-400">~{costPln.toFixed(2)} PLN</span>
+              <span className="text-gray-400 ml-1">(${costUsd.toFixed(4)})</span>
+            </span>
+          </div>
+        )
+      })()}
+
       {/* Discount + Labor panel */}
       <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
         <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50 text-xs font-semibold text-gray-600 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
