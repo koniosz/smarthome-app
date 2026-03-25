@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import ExcelJS from 'exceljs'
 import type { AiQuote, AiQuoteItem, QuoteBrand, ProductCatalogItem } from '../../types'
 import { QUOTE_BRAND_COLORS, QUOTE_BRANDS, QUOTE_STATUS_LABELS } from '../../types'
-import { aiQuotesApi, productCatalogApi } from '../../api/client'
+import { aiQuotesApi, productCatalogApi, api } from '../../api/client'
 
 interface AIQuoteEditorProps {
   projectId: string
@@ -46,6 +46,17 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
   const [refineError, setRefineError] = useState<string | null>(null)
   const [refineHistory, setRefineHistory] = useState<Array<{ suggestion: string; appliedAt: string; itemsBefore: number; itemsAfter: number }>>([])
   const [refineHistoryOpen, setRefineHistoryOpen] = useState(false)
+
+  // ── Approve as example ────────────────────────────────────────────────────
+  const [approveModalOpen, setApproveModalOpen] = useState(false)
+  const [approveForm, setApproveForm] = useState({
+    title: '',
+    project_type: 'residential',
+    area_m2: '',
+    human_notes: '',
+  })
+  const [approveSaving, setApproveSaving] = useState(false)
+  const [approveSuccess, setApproveSuccess] = useState(false)
 
   // ── Services Panel ────────────────────────────────────────────────────────
   const [servicesCatalog, setServicesCatalog] = useState<ProductCatalogItem[]>([])
@@ -653,6 +664,37 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
     }
   }
 
+  const handleApproveAsExample = async () => {
+    if (!approveForm.title.trim()) return
+    setApproveSaving(true)
+    try {
+      const brands = Array.from(new Set(items.map(i => i.brand).filter(Boolean)))
+      await api.post('/api/ai-quote-examples', {
+        title: approveForm.title.trim(),
+        project_type: approveForm.project_type,
+        brands,
+        area_m2: approveForm.area_m2 ? Number(approveForm.area_m2) : null,
+        rooms_count: Array.from(new Set(items.map(i => i.room))).length,
+        ai_prompt: quote.notes || null,
+        ai_items: null,
+        final_items: items,
+        final_total_net: totalEquipment,
+        human_notes: approveForm.human_notes.trim() || null,
+        source_quote_id: quote.id,
+      })
+      setApproveSuccess(true)
+      setTimeout(() => {
+        setApproveModalOpen(false)
+        setApproveSuccess(false)
+        setApproveForm({ title: '', project_type: 'residential', area_m2: '', human_notes: '' })
+      }, 1500)
+    } catch {
+      alert('Błąd zapisu wzorca. Spróbuj ponownie.')
+    } finally {
+      setApproveSaving(false)
+    }
+  }
+
   const handleRefine = async () => {
     const text = refineSuggestion.trim()
     if (!text) return
@@ -731,6 +773,12 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
           <button onClick={handleSave} disabled={saving}
             className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-lg transition-colors">
             {saving ? 'Zapisuję…' : '💾 Zapisz'}
+          </button>
+          <button
+            onClick={() => setApproveModalOpen(true)}
+            title="Zatwierdź tę wycenę jako wzorzec dla przyszłych wycen AI"
+            className="px-3 py-1.5 text-xs border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg transition-colors">
+            🧠 Wzorzec AI
           </button>
           <button onClick={handleDelete} disabled={deleting}
             className="px-3 py-1.5 text-xs border border-red-200 dark:border-red-900 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors disabled:opacity-50">
@@ -1280,6 +1328,104 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
           </div>
         </div>
       </div>
+
+      {/* ── Modal: Zatwierdź jako wzorzec AI ──────────────────────────────── */}
+      {approveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 dark:border-gray-700">
+            <div className="p-5 border-b border-gray-100 dark:border-gray-800">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                🧠 Zatwierdź jako wzorzec AI
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Ta wycena ({items.length} pozycji) zostanie zapisana jako przykład dla przyszłych wycen AI.
+                Claude będzie z niej korzystał przy kolejnych projektach.
+              </p>
+            </div>
+
+            {approveSuccess ? (
+              <div className="p-8 text-center">
+                <div className="text-4xl mb-2">✅</div>
+                <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Wzorzec zapisany!</p>
+                <p className="text-xs text-gray-500 mt-1">Claude użyje go przy następnych wycenach.</p>
+              </div>
+            ) : (
+              <div className="p-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Tytuł wzorca <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="np. Dom jednorodzinny 280m² KNX + Satel + Control4"
+                    value={approveForm.title}
+                    onChange={e => setApproveForm(f => ({ ...f, title: e.target.value }))}
+                    className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Typ projektu</label>
+                    <select
+                      value={approveForm.project_type}
+                      onChange={e => setApproveForm(f => ({ ...f, project_type: e.target.value }))}
+                      className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                    >
+                      <option value="residential">Dom jednorodzinny</option>
+                      <option value="apartment">Apartament / mieszkanie</option>
+                      <option value="commercial">Biuro / komercyjny</option>
+                      <option value="other">Inny</option>
+                    </select>
+                  </div>
+                  <div className="w-28">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Powierzchnia m²</label>
+                    <input
+                      type="number"
+                      placeholder="np. 280"
+                      value={approveForm.area_m2}
+                      onChange={e => setApproveForm(f => ({ ...f, area_m2: e.target.value }))}
+                      className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Co poprawiłeś i dlaczego? <span className="text-gray-400">(opcjonalne, ale cenne dla AI)</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="np. AI pominęło sterowanie żaluzjami i alarm Satel. Dodałem ręcznie 8 siłowników żaluzji i centralę alarmową z klawiaturami."
+                    value={approveForm.human_notes}
+                    onChange={e => setApproveForm(f => ({ ...f, human_notes: e.target.value }))}
+                    className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Te uwagi trafią bezpośrednio do Claude jako wskazówki na co zwrócić uwagę.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={() => setApproveModalOpen(false)}
+                    className="flex-1 px-4 py-2 text-sm border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                  >
+                    Anuluj
+                  </button>
+                  <button
+                    onClick={handleApproveAsExample}
+                    disabled={approveSaving || !approveForm.title.trim()}
+                    className="flex-1 px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                  >
+                    {approveSaving ? 'Zapisuję…' : '🧠 Zapisz wzorzec'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

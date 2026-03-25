@@ -160,6 +160,19 @@ export const db = {
       prisma.aiQuote.delete({ where: { id } }),
   },
 
+  ai_quote_examples: {
+    all: () =>
+      prisma.aiQuoteExample.findMany({ orderBy: { created_at: 'desc' } }),
+    recent: (limit = 5) =>
+      prisma.aiQuoteExample.findMany({ orderBy: { created_at: 'desc' }, take: limit }),
+    find: (id: string) =>
+      prisma.aiQuoteExample.findUnique({ where: { id } }),
+    insert: (item: any) =>
+      prisma.aiQuoteExample.create({ data: item }),
+    delete: (id: string) =>
+      prisma.aiQuoteExample.delete({ where: { id } }),
+  },
+
   extra_costs: {
     forProject: (projectId: string) =>
       prisma.extraCost.findMany({

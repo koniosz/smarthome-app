@@ -8,6 +8,7 @@ import EmployeesView from './components/employees/EmployeesView'
 import LoginPage from './pages/LoginPage'
 import AdminView from './pages/AdminView'
 import ProductCatalogPage from './pages/ProductCatalogPage'
+import AiExamplesPage from './pages/AiExamplesPage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
@@ -69,6 +70,9 @@ function AppContent() {
               <AdminRoute><AdminView /></AdminRoute>
             } />
             <Route path="/product-catalog" element={<ProductCatalogPage />} />
+            <Route path="/ai-examples" element={
+              <AdminRoute><AiExamplesPage /></AdminRoute>
+            } />
           </Routes>
         </main>
       </div>

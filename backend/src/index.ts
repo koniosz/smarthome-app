@@ -22,6 +22,7 @@ import productCatalogRouter from './routes/product-catalog'
 import extraCostsRouter, { updateExtraCost, deleteExtraCost } from './routes/extra-costs'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
+import aiQuoteExamplesRouter from './routes/ai-quote-examples'
 import { requireAuth } from './middleware/auth'
 
 const app = express()
@@ -69,6 +70,7 @@ app.use('/api', usersRouter)
 // AI Quotes & Product Catalog
 app.use('/api/projects/:projectId/ai-quotes', aiQuotesRouter)
 app.use('/api/product-catalog', productCatalogRouter)
+app.use('/api/ai-quote-examples', aiQuoteExamplesRouter)
 
 // Extra Costs (koszty dodatkowe)
 app.use('/api/projects/:projectId/extra-costs', extraCostsRouter)

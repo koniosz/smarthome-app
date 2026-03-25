@@ -546,12 +546,37 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
       ? `WYTYCZNE KLIENTA / PROJEKTANTA (traktuj jako priorytetowe wskazówki): ${userNotes}`
       : ''
 
+    // Pobierz wzorce few-shot (max 3 ostatnie) i wstrzyknij do promptu
+    const examples = await db.ai_quote_examples.recent(3)
+    let examplesInstruction = ''
+    if (examples.length > 0) {
+      const exampleBlocks = examples.map((ex: any, i: number) => {
+        const items = (ex.final_items as any[]) || []
+        const topItems = items.slice(0, 15) // max 15 pozycji z każdego wzorca żeby nie puchnąć prompt
+        const itemsSummary = topItems
+          .map((it: any) => `  - [${it.room || '?'}] ${it.name} | ${it.qty}x ${it.unit_price} PLN`)
+          .join('\n')
+        const more = items.length > 15 ? `\n  ... i ${items.length - 15} więcej pozycji` : ''
+        return `### Wzorzec ${i + 1}: "${ex.title}" (${ex.project_type}, ~${ex.area_m2 || '?'}m²)
+Łącznie netto: ${ex.final_total_net ? ex.final_total_net.toFixed(0) + ' PLN' : '?'}
+${ex.human_notes ? 'Uwagi autora: ' + ex.human_notes : ''}
+Przykładowe pozycje wyceny:
+${itemsSummary}${more}`
+      }).join('\n\n')
+
+      examplesInstruction = `PRZYKŁADY NASZYCH POPRZEDNICH WYCEN (użyj jako wzorzec do doboru urządzeń i zakresu):
+${exampleBlocks}
+
+Na podstawie powyższych wzorców dobierz podobny zakres i typy urządzeń dla nowego projektu.`
+    }
+
     const userInstruction = [
       `Przeanalizuj ${files.length > 1 ? 'te pliki (rzuty i/lub dane): ' + fileLabel : 'ten rzut'} i zwróć JSON zgodnie z instrukcją systemową.`,
       'Uwzględnij wszystkie pomieszczenia ze wszystkich plików.',
       systemsInstruction,
       featuresInstruction,
       userNotesInstruction,
+      examplesInstruction,
     ].filter(Boolean).join('\n\n')
 
     // Używamy stream().finalMessage() zamiast create() — wymagane przy max_tokens > ~4096

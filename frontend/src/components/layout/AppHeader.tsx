@@ -363,12 +363,20 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                   </div>
                 </div>
                 {user.role === 'admin' && (
-                  <button
-                    onClick={() => { setMenuOpen(false); navigate('/admin') }}
-                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
-                  >
-                    ⚙️ Panel admina
-                  </button>
+                  <>
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/admin') }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+                    >
+                      ⚙️ Panel admina
+                    </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/ai-examples') }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+                    >
+                      🧠 Wzorce AI
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={openChangePwd}

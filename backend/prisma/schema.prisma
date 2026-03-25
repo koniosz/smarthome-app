@@ -226,6 +226,27 @@ model Notification {
   @@map("notifications")
 }
 
+// Wzorce AI — zatwierdzone przez człowieka oferty używane jako few-shot examples
+model AiQuoteExample {
+  id              String   @id
+  title           String                        // np. "Dom 280m² KNX+Satel+Control4"
+  project_type    String   @default("residential") // residential / commercial / apartment
+  brands          Json     @default("[]")       // ["KNX","Satel","Control4"]
+  area_m2         Float?                        // powierzchnia domu w m²
+  rooms_count     Int?                          // liczba pomieszczeń
+  ai_prompt       String?                       // oryginalny opis/prompt który dostał AI
+  ai_items        Json?                         // lista pozycji jaką AI pierwotnie wygenerowało
+  final_items     Json                          // finalna lista po poprawkach człowieka
+  final_total_net Float?                        // łączna wartość netto
+  human_notes     String?                       // co poprawiłeś i dlaczego (opcjonalne)
+  approved_by     String?                       // ID usera który zatwierdził
+  approved_by_name String?                      // imię dla wyświetlania
+  source_quote_id String?                       // ID oryginalnej wyceny AI (AiQuote)
+  created_at      String
+
+  @@map("ai_quote_examples")
+}
+
 model CostAuditLog {
   id          String   @id
   project_id  String
