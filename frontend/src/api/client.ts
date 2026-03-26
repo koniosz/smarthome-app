@@ -6,7 +6,7 @@ import type {
 
 const BASE = '/api'
 
-const api = axios.create({ baseURL: BASE })
+export const api = axios.create({ baseURL: BASE })
 
 // Attach JWT token to every request
 api.interceptors.request.use(config => {
