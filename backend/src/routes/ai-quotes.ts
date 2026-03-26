@@ -1200,6 +1200,12 @@ router.post('/:id/refine', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'ANTHROPIC_API_KEY nie jest skonfigurowany' }); return
   }
 
+  // Zwróć jobId natychmiast — refine trwa w tle (unika timeout 120s)
+  const jobId = uuidv4()
+  analysisJobs.set(jobId, { status: 'processing', createdAt: Date.now() })
+  res.status(202).json({ jobId })
+
+  ;(async () => {
   try {
     const client = new Anthropic({ apiKey })
 
@@ -1344,12 +1350,13 @@ FORMAT ODPOWIEDZI:
 
     await db.ai_quotes.update(req.params.id, updated)
     const { ai_analysis_raw: _raw, ...toReturn } = updated as any
-    res.json(toReturn)
+    analysisJobs.set(jobId, { status: 'done', result: toReturn, createdAt: Date.now() })
 
   } catch (err: any) {
     const msg = err?.error?.message || err?.message || 'Nieznany błąd'
-    res.status(500).json({ error: `Błąd AI: ${msg}` })
+    analysisJobs.set(jobId, { status: 'error', error: `Błąd AI: ${msg}`, createdAt: Date.now() })
   }
+  })()
 })
 
 export default router

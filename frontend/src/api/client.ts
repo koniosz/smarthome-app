@@ -145,12 +145,26 @@ export const aiQuotesApi = {
   exportEts: (projectId: string, quoteId: string): Promise<Blob> =>
     api.get(`/projects/${projectId}/ai-quotes/${quoteId}/ets-export`, { responseType: 'blob' }).then(r => r.data),
 
-  refine: (projectId: string, quoteId: string, suggestion: string): Promise<AiQuote> =>
-    api.post<AiQuote>(
+  refine: async (projectId: string, quoteId: string, suggestion: string): Promise<AiQuote> => {
+    // Backend zwraca jobId natychmiast (HTTP 202), potem pollujemy
+    const { data: { jobId } } = await api.post(
       `/projects/${projectId}/ai-quotes/${quoteId}/refine`,
       { suggestion },
-      { timeout: 120_000 },
-    ).then(r => r.data),
+    )
+    return pollJob(`/projects/${projectId}/ai-quotes/jobs/${jobId}`)
+  },
+}
+
+// Polling helper — odpytuje /jobs/:id co 3s max 5 minut
+async function pollJob(url: string, maxMs = 5 * 60 * 1000): Promise<any> {
+  const started = Date.now()
+  while (Date.now() - started < maxMs) {
+    const { data } = await api.get(url)
+    if (data.status === 'error') throw new Error(data.error || 'Błąd AI')
+    if (data.status === 'done') return data.quote ?? data.result
+    await new Promise(r => setTimeout(r, 3000))
+  }
+  throw new Error('Operacja trwa zbyt długo. Spróbuj ponownie.')
 }
 
 export const extraCostsApi = {
