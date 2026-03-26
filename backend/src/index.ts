@@ -37,6 +37,10 @@ app.get('/api/health', (_req, res) => {
 })
 app.use('/api/auth', authRouter)
 
+// Publiczne serwowanie załączników (pliki mają losowe nazwy — bezpieczeństwo przez obscurity)
+// MUSI być przed requireAuth, bo przeglądarka otwierając link w nowej karcie nie wysyła JWT
+app.use('/api', attachmentsRouter)
+
 // All routes below require authentication
 app.use('/api', requireAuth)
 
@@ -51,9 +55,6 @@ app.use('/api/projects/:projectId/payments', paymentsRouter)
 
 // Employees
 app.use('/api/employees', employeesRouter)
-
-// Attachments & file serving
-app.use('/api', attachmentsRouter)
 
 // Standalone update & delete
 app.put('/api/costs/:id', updateCost)
