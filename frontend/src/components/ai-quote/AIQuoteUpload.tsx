@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { aiQuotesApi } from '../../api/client'
+import { aiQuotesApi, api } from '../../api/client'
 
 interface AIQuoteUploadProps {
   projectId: string
@@ -128,13 +128,13 @@ export default function AIQuoteUpload({ projectId, onCreated, compact = false }:
     setState('uploading')
     setUploadPct(0)
 
-    // Map selected scope IDs to human-readable feature names for the AI prompt
     const features = SCOPE_ITEMS
       .filter(s => selectedScope.has(s.id))
       .map(s => s.label)
 
     try {
-      const result = await aiQuotesApi.analyze(
+      // 1. Wyślij pliki — backend zwraca jobId natychmiast (HTTP 202)
+      const { jobId } = await aiQuotesApi.analyze(
         projectId,
         selectedFiles,
         pct => { setUploadPct(pct); if (pct >= 100) setState('analyzing') },
@@ -143,22 +143,48 @@ export default function AIQuoteUpload({ projectId, onCreated, compact = false }:
         userNotes.trim() || undefined,
       ) as any
 
-      // Capture token usage if returned by backend
-      if (result._usage) {
-        setUsageStats(result._usage)
-        setState('done')
-        setTimeout(() => {
+      if (!jobId) throw new Error('Brak jobId w odpowiedzi serwera')
+
+      // 2. Polling co 3 sekundy dopóki status !== done/error
+      const pollInterval = 3000
+      const maxWait = 5 * 60 * 1000 // max 5 minut
+      const started = Date.now()
+
+      const pollJobUrl = `/api/projects/${projectId}/ai-quotes/jobs/${jobId}`
+
+      const poll = async (): Promise<void> => {
+        if (Date.now() - started > maxWait) {
+          throw new Error('Analiza trwa zbyt długo. Spróbuj z mniejszym plikiem.')
+        }
+        const { data } = await api.get(pollJobUrl)
+        if (data.status === 'processing') {
+          await new Promise(r => setTimeout(r, pollInterval))
+          return poll()
+        }
+        if (data.status === 'error') {
+          throw new Error(data.error || 'Błąd analizy AI')
+        }
+        // done
+        const result = data.quote
+        if (result?._usage) {
+          setUsageStats(result._usage)
+          setState('done')
+          setTimeout(() => {
+            onCreated(result)
+            setState('idle')
+            setSelectedFiles([])
+            setUserNotes('')
+          }, 3000)
+        } else {
           onCreated(result)
           setState('idle')
           setSelectedFiles([])
           setUserNotes('')
-        }, 3000)
-      } else {
-        onCreated(result)
-        setState('idle')
-        setSelectedFiles([])
-        setUserNotes('')
+        }
       }
+
+      await poll()
+
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.message || 'Błąd analizy'
       setError(msg)
@@ -201,7 +227,8 @@ export default function AIQuoteUpload({ projectId, onCreated, compact = false }:
         <div className="text-sm font-medium text-gray-700 dark:text-gray-300">AI analizuje pliki…</div>
         <div className="text-xs text-gray-400 text-center max-w-xs">
           Wykrywam pomieszczenia i dobieram komponenty KNX, Control4, Hikvision, Satel.<br />
-          Może to potrwać ~20–90 sekund.
+          Przy wielu plikach PDF może to potrwać <strong>1–3 minuty</strong>.<br/>
+          Strona sprawdza wynik automatycznie co kilka sekund.
         </div>
       </div>
     )

@@ -9,6 +9,24 @@ import JSZip from 'jszip'
 import { jsonrepair } from 'jsonrepair'
 import db from '../db'
 
+// ─── Job queue (in-memory) dla długich operacji AI ───────────────────────────
+// Zapobiega 502 timeout Rendera przy analizie wielu plików PDF
+interface AnalysisJob {
+  status: 'processing' | 'done' | 'error'
+  result?: any
+  error?: string
+  createdAt: number
+}
+const analysisJobs = new Map<string, AnalysisJob>()
+
+// Czyść stare joby co 30 minut (starsze niż 1h)
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000
+  for (const [id, job] of analysisJobs) {
+    if (job.createdAt < cutoff) analysisJobs.delete(id)
+  }
+}, 30 * 60 * 1000)
+
 const router = Router({ mergeParams: true })
 
 function now() {
@@ -451,6 +469,27 @@ FORMAT ODPOWIEDZI (ścisły JSON, bez żadnego tekstu poza tym blokiem):
 \`\`\`
 `
 
+// ─── GET /jobs/:jobId — sprawdź status analizy AI ──────────────────────────
+router.get('/jobs/:jobId', (req: Request, res: Response) => {
+  const job = analysisJobs.get(req.params.jobId)
+  if (!job) {
+    res.status(404).json({ error: 'Job nie znaleziony lub wygasł' })
+    return
+  }
+  if (job.status === 'processing') {
+    res.json({ status: 'processing' })
+    return
+  }
+  if (job.status === 'error') {
+    res.status(500).json({ status: 'error', error: job.error })
+    return
+  }
+  // done — zwróć wynik i usuń z pamięci
+  const result = job.result
+  analysisJobs.delete(req.params.jobId)
+  res.json({ status: 'done', quote: result })
+})
+
 // ─── POST /analyze ─────────────────────────────────────────────────────────────
 router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, res: Response) => {
   const projectId = req.params.projectId
@@ -489,6 +528,13 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
     return
   }
 
+  // Zwróć jobId natychmiast — analiza trwa w tle (unika 502 timeout Rendera)
+  const jobId = uuidv4()
+  analysisJobs.set(jobId, { status: 'processing', createdAt: Date.now() })
+  res.status(202).json({ jobId })
+
+  // Kontynuuj asynchronicznie (nie blokuj HTTP response)
+  ;(async () => {
   try {
     const client = new Anthropic({ apiKey })
 
@@ -759,18 +805,22 @@ Na podstawie powyższych wzorców dobierz podobny zakres i typy urządzeń dla n
 
     await db.ai_quotes.insert(quote)
 
-    // Return without the heavy raw field but include token usage
     const { ai_analysis_raw: _raw, ...quoteToReturn } = quote
-    res.status(201).json({
-      ...quoteToReturn,
-      _usage: { ...usage, cost_usd: parseFloat(cost_usd.toFixed(4)) },
+    analysisJobs.set(jobId, {
+      status: 'done',
+      createdAt: Date.now(),
+      result: {
+        ...quoteToReturn,
+        _usage: { ...usage, cost_usd: parseFloat(cost_usd.toFixed(4)) },
+      },
     })
 
   } catch (err: any) {
     cleanupFiles()
     const errorMessage = err?.error?.message || err?.message || 'Nieznany błąd analizy AI'
-    res.status(500).json({ error: `Błąd analizy AI: ${errorMessage}` })
+    analysisJobs.set(jobId, { status: 'error', error: `Błąd analizy AI: ${errorMessage}`, createdAt: Date.now() })
   }
+  })()
 })
 
 // ─── POST /manual ──────────────────────────────────────────────────────────────
