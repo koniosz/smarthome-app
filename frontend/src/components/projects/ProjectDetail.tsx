@@ -384,7 +384,9 @@ export default function ProjectDetail() {
         {(tab === 'materials' || tab === 'subcontractor' || tab === 'other') && (
           <CostTable
             items={filterCostItems(tab)}
+            projectId={project.id}
             onDeleted={(itemId) => setProject(p => p ? { ...p, cost_items: p.cost_items.filter(i => i.id !== itemId) } : p)}
+            onUpdated={(updated) => setProject(p => p ? { ...p, cost_items: p.cost_items.map(i => i.id === updated.id ? updated : i) } : p)}
           />
         )}
       </div>

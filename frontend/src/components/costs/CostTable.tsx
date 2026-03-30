@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { CostItem } from '../../types'
 import { COST_CATEGORY_LABELS } from '../../types'
 import { costsApi, attachmentsApi } from '../../api/client'
+import AddCostModal from './AddCostModal'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -9,6 +10,7 @@ function fmt(n: number) {
 
 interface Props {
   items: CostItem[]
+  projectId: string
   onDeleted: (id: string) => void
   onUpdated?: (item: CostItem) => void
 }
@@ -136,8 +138,9 @@ function AttachmentCell({ item, onUpdated }: { item: CostItem; onUpdated?: (i: C
   )
 }
 
-export default function CostTable({ items, onDeleted, onUpdated }: Props) {
+export default function CostTable({ items, projectId, onDeleted, onUpdated }: Props) {
   const [localItems, setLocalItems] = useState<CostItem[]>(items)
+  const [editingItem, setEditingItem] = useState<CostItem | null>(null)
 
   // Sync when parent adds new items
   const ids = items.map(i => i.id).join(',')
@@ -159,7 +162,19 @@ export default function CostTable({ items, onDeleted, onUpdated }: Props) {
   }
 
   if (localItems.length === 0) {
-    return <div className="text-sm text-gray-400 py-6 text-center">Brak kosztów. Kliknij "Dodaj koszt".</div>
+    return (
+      <>
+        <div className="text-sm text-gray-400 py-6 text-center">Brak kosztów. Kliknij "Dodaj koszt".</div>
+        {editingItem && (
+          <AddCostModal
+            projectId={projectId}
+            initialItem={editingItem}
+            onClose={() => setEditingItem(null)}
+            onCreated={updated => { handleUpdated(updated); setEditingItem(null) }}
+          />
+        )}
+      </>
+    )
   }
 
   const total = localItems.reduce((s, i) => s + i.total_price, 0)
@@ -199,13 +214,22 @@ export default function CostTable({ items, onDeleted, onUpdated }: Props) {
                 <AttachmentCell item={item} onUpdated={handleUpdated} />
               </td>
               <td className="py-2">
-                <button
-                  onClick={() => handleDelete(item.id)}
-                  className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 rounded transition-all"
-                  title="Usuń"
-                >
-                  ✕
-                </button>
+                <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 transition-all">
+                  <button
+                    onClick={() => setEditingItem(item)}
+                    className="p-1 text-gray-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded"
+                    title="Edytuj"
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    onClick={() => handleDelete(item.id)}
+                    className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 rounded"
+                    title="Usuń"
+                  >
+                    ✕
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
@@ -218,6 +242,15 @@ export default function CostTable({ items, onDeleted, onUpdated }: Props) {
           </tr>
         </tfoot>
       </table>
+
+      {editingItem && (
+        <AddCostModal
+          projectId={projectId}
+          initialItem={editingItem}
+          onClose={() => setEditingItem(null)}
+          onCreated={updated => { handleUpdated(updated); setEditingItem(null) }}
+        />
+      )}
     </div>
   )
 }

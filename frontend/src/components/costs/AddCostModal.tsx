@@ -8,17 +8,19 @@ interface Props {
   projectId: string
   onClose: () => void
   onCreated: (item: CostItem) => void
+  initialItem?: CostItem   // jeśli podane → tryb edycji
 }
 
-export default function AddCostModal({ projectId, onClose, onCreated }: Props) {
+export default function AddCostModal({ projectId, onClose, onCreated, initialItem }: Props) {
+  const editing = !!initialItem
   const [form, setForm] = useState({
-    category: 'materials' as CostCategory,
-    description: '',
-    quantity: '1',
-    unit_price: '',
-    supplier: '',
-    invoice_number: '',
-    date: new Date().toISOString().slice(0, 10),
+    category: (initialItem?.category ?? 'materials') as CostCategory,
+    description: initialItem?.description ?? '',
+    quantity: String(initialItem?.quantity ?? '1'),
+    unit_price: String(initialItem?.unit_price ?? ''),
+    supplier: initialItem?.supplier ?? '',
+    invoice_number: initialItem?.invoice_number ?? '',
+    date: initialItem?.date ?? new Date().toISOString().slice(0, 10),
   })
   const [file, setFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
@@ -33,17 +35,22 @@ export default function AddCostModal({ projectId, onClose, onCreated }: Props) {
     setSaving(true)
     setError('')
     try {
-      let result = await costsApi.create(projectId, {
-        ...form,
-        quantity: parseFloat(form.quantity) || 1,
-        unit_price: parseFloat(form.unit_price) || 0,
-      })
+      let result: CostItem
+      if (editing && initialItem) {
+        result = await costsApi.update(initialItem.id, {
+          ...form,
+          quantity: parseFloat(form.quantity) || 1,
+          unit_price: parseFloat(form.unit_price) || 0,
+        })
+      } else {
+        result = await costsApi.create(projectId, {
+          ...form,
+          quantity: parseFloat(form.quantity) || 1,
+          unit_price: parseFloat(form.unit_price) || 0,
+        })
+      }
       if (file) {
-        try {
-          result = await attachmentsApi.upload(result.id, file)
-        } catch {
-          // attachment upload failed but cost item created — still report success
-        }
+        try { result = await attachmentsApi.upload(result.id, file) } catch {}
       }
       onCreated(result)
       onClose()
@@ -57,7 +64,7 @@ export default function AddCostModal({ projectId, onClose, onCreated }: Props) {
   const total = (parseFloat(form.quantity) || 0) * (parseFloat(form.unit_price) || 0)
 
   return (
-    <Modal title="Dodaj koszt" onClose={onClose} wide>
+    <Modal title={editing ? 'Edytuj koszt' : 'Dodaj koszt'} onClose={onClose} wide>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -190,7 +197,7 @@ export default function AddCostModal({ projectId, onClose, onCreated }: Props) {
             type="submit" disabled={saving}
             className="px-4 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors disabled:opacity-50"
           >
-            {saving ? 'Zapisywanie...' : 'Dodaj koszt'}
+            {saving ? 'Zapisywanie...' : editing ? 'Zapisz zmiany' : 'Dodaj koszt'}
           </button>
         </div>
       </form>
