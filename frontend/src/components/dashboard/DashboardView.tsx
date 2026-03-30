@@ -9,21 +9,6 @@ function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
 }
 
-function fmtProfit(n: number) {
-  const abs = Math.abs(n)
-  const str = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(abs)
-  return (n < 0 ? '−' : '+') + str
-}
-
-function ProfitBadge({ value, suffix = ' PLN' }: { value: number; suffix?: string }) {
-  const isPos = value >= 0
-  return (
-    <span className={`font-semibold tabular-nums ${isPos ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-      {fmtProfit(value)}{suffix}
-    </span>
-  )
-}
-
 export default function DashboardView() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -88,39 +73,6 @@ export default function DashboardView() {
             {stats.average_margin_pct.toFixed(1)}%
           </div>
           <div className="text-xs text-gray-400 mt-1">aktywne projekty</div>
-        </div>
-      </div>
-
-      {/* Profit / Loss KPI */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className={`rounded-xl border p-5 ${stats.total_profit >= 0
-          ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800'
-          : 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800'}`}>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-lg">{stats.total_profit >= 0 ? '📈' : '📉'}</span>
-            <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Zysk / Strata całkowita</div>
-          </div>
-          <div className={`text-3xl font-bold tabular-nums ${stats.total_profit >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-            {fmtProfit(stats.total_profit)} PLN
-          </div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Przychody {fmt(stats.total_payments || stats.total_budget)} PLN − Koszty {fmt(stats.total_costs)} PLN
-          </div>
-        </div>
-
-        <div className={`rounded-xl border p-5 ${stats.daily_profit >= 0
-          ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
-          : 'bg-orange-50 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800'}`}>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-lg">📅</span>
-            <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Zysk / Strata dzienna (łącznie)</div>
-          </div>
-          <div className={`text-3xl font-bold tabular-nums ${stats.daily_profit >= 0 ? 'text-blue-700 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400'}`}>
-            {fmtProfit(stats.daily_profit)} PLN/dzień
-          </div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Suma dziennych zysków z {stats.active_projects} aktywnych projektów
-          </div>
         </div>
       </div>
 
@@ -199,74 +151,6 @@ export default function DashboardView() {
           </div>
         </div>
       </div>
-
-      {/* Profit / Loss per project table */}
-      {stats.profit_by_project.length > 0 && (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-            <span>💰</span> Zysk / Strata per projekt (aktywne)
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
-                  <th className="text-left py-2 pr-4">Projekt</th>
-                  <th className="text-right py-2 pr-4">Przychód</th>
-                  <th className="text-right py-2 pr-4">Koszty</th>
-                  <th className="text-right py-2 pr-4">Zysk/Strata</th>
-                  <th className="text-right py-2 pr-4">Marża</th>
-                  <th className="text-right py-2">Dziennie</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.profit_by_project.map(p => (
-                  <tr
-                    key={p.id}
-                    onClick={() => navigate(`/projects/${p.id}`)}
-                    className="border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors"
-                  >
-                    <td className="py-2.5 pr-4">
-                      <div className="font-medium text-gray-800 dark:text-gray-100">{p.name}</div>
-                      <div className="text-xs text-gray-400">{p.client_name} · {p.days_running} dni</div>
-                    </td>
-                    <td className="py-2.5 pr-4 text-right text-gray-600 dark:text-gray-400 tabular-nums">
-                      {fmt(p.payments_total > 0 ? p.payments_total : p.budget_amount)}
-                    </td>
-                    <td className="py-2.5 pr-4 text-right text-gray-600 dark:text-gray-400 tabular-nums">
-                      {fmt(p.cost_total)}
-                    </td>
-                    <td className="py-2.5 pr-4 text-right">
-                      <ProfitBadge value={p.profit_pln} />
-                    </td>
-                    <td className="py-2.5 pr-4 text-right">
-                      <span className={`text-xs font-semibold ${p.profit_pct >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                        {p.profit_pct >= 0 ? '+' : ''}{p.profit_pct.toFixed(1)}%
-                      </span>
-                    </td>
-                    <td className="py-2.5 text-right">
-                      <ProfitBadge value={p.daily_profit} suffix=" PLN" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-gray-200 dark:border-gray-700 font-semibold text-gray-700 dark:text-gray-300">
-                  <td className="pt-2 pr-4 text-xs">SUMA</td>
-                  <td className="pt-2 pr-4 text-right tabular-nums text-sm">{fmt(stats.total_payments || stats.total_budget)}</td>
-                  <td className="pt-2 pr-4 text-right tabular-nums text-sm">{fmt(stats.total_costs)}</td>
-                  <td className="pt-2 pr-4 text-right"><ProfitBadge value={stats.total_profit} /></td>
-                  <td className="pt-2 pr-4 text-right">
-                    <span className={`text-xs font-bold ${stats.average_margin_pct >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
-                      {stats.average_margin_pct >= 0 ? '+' : ''}{stats.average_margin_pct.toFixed(1)}%
-                    </span>
-                  </td>
-                  <td className="pt-2 text-right"><ProfitBadge value={stats.daily_profit} suffix=" PLN" /></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* Recent projects */}
       <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4">

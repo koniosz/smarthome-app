@@ -130,32 +130,15 @@ export interface Employee {
   created_at: string
 }
 
-export interface ProfitProject {
-  id: string
-  name: string
-  client_name: string
-  status: ProjectStatus
-  budget_amount: number
-  payments_total: number
-  cost_total: number
-  profit_pln: number
-  profit_pct: number
-  daily_profit: number
-  days_running: number
-}
-
 export interface DashboardStats {
   total_projects: number
   active_projects: number
   total_budget: number
   total_costs: number
   total_payments: number
-  total_profit: number
-  daily_profit: number
   average_margin_pct: number
   over_budget_count: number
   over_budget_projects: OverBudgetProject[]
-  profit_by_project: ProfitProject[]
   by_status: Record<string, number>
   by_type: Record<string, number>
   recent_projects: (Project & { cost_total: number; margin_pct: number })[]
@@ -168,8 +151,8 @@ export interface OverBudgetProject {
   status: ProjectStatus
   budget_amount: number
   cost_total: number
-  profit_pln: number
-  profit_pct: number
+  margin_pln: number
+  margin_pct: number
 }
 
 // ─── Extra Costs (koszty dodatkowe) ──────────────────────────────────────────
