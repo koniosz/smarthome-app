@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage'
 import AdminView from './pages/AdminView'
 import ProductCatalogPage from './pages/ProductCatalogPage'
 import AiExamplesPage from './pages/AiExamplesPage'
+import KsefPage from './pages/KsefPage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
@@ -72,6 +73,9 @@ function AppContent() {
             <Route path="/product-catalog" element={<ProductCatalogPage />} />
             <Route path="/ai-examples" element={
               <AdminRoute><AiExamplesPage /></AdminRoute>
+            } />
+            <Route path="/ksef" element={
+              <AdminRoute><KsefPage /></AdminRoute>
             } />
           </Routes>
         </main>

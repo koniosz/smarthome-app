@@ -322,3 +322,41 @@ export const SMART_FEATURES: { key: string; label: string; icon: string }[] = [
   { key: 'spa', label: 'Sterowanie SPA', icon: '🛁' },
   { key: 'pv', label: 'Monitoring instalacji PV', icon: '☀️' },
 ]
+
+
+// ─── KSeF ────────────────────────────────────────────────────────────────────
+
+export interface KsefInvoice {
+  id: string
+  ksef_number: string | null
+  invoice_number: string | null
+  seller_name: string | null
+  seller_nip: string | null
+  net_amount: number
+  vat_amount: number
+  gross_amount: number
+  currency: string
+  invoice_date: string | null
+  acquisition_date: string | null
+  project_id: string | null
+  notes: string | null
+  created_at: string
+  project?: { id: string; name: string; client_name: string } | null
+}
+
+export interface KsefStatus {
+  configured: boolean
+  env: string
+  nip: string
+  has_session: boolean
+  session_expires_at: string | null
+  last_sync_at: string | null
+  invoice_count: number
+  unassigned_count: number
+}
+
+export interface KsefSyncResult {
+  fetched: number
+  saved: number
+  errors: string[]
+}

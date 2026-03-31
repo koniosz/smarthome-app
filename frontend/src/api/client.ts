@@ -254,3 +254,25 @@ export const notificationsApi = {
   markRead: (ids?: string[]) =>
     api.put('/notifications/read', { ids }).then(r => r.data),
 }
+
+export const ksefApi = {
+  status: () =>
+    api.get<import('../types').KsefStatus>('/ksef/status').then(r => r.data),
+
+  sync: () =>
+    api.post<import('../types').KsefSyncResult>('/ksef/sync').then(r => r.data),
+
+  invoices: (params?: { assigned?: boolean; search?: string; page?: number; limit?: number }) =>
+    api.get<{ invoices: import('../types').KsefInvoice[]; total: number; page: number; limit: number }>(
+      '/ksef/invoices', { params }
+    ).then(r => r.data),
+
+  assign: (id: string, project_id: string | null, notes?: string) =>
+    api.patch<import('../types').KsefInvoice>(`/ksef/invoices/${id}/assign`, { project_id, notes }).then(r => r.data),
+
+  updateNotes: (id: string, notes: string) =>
+    api.patch<import('../types').KsefInvoice>(`/ksef/invoices/${id}/notes`, { notes }).then(r => r.data),
+
+  remove: (id: string) =>
+    api.delete(`/ksef/invoices/${id}`).then(r => r.data),
+}

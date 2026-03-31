@@ -23,6 +23,8 @@ import extraCostsRouter, { updateExtraCost, deleteExtraCost } from './routes/ext
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
+import ksefRouter from './routes/ksef'
+import { syncInvoices } from './services/ksef'
 import { requireAuth } from './middleware/auth'
 
 const app = express()
@@ -82,6 +84,9 @@ app.delete('/api/extra-costs/:id', deleteExtraCost)
 app.use('/api/access-requests', accessRequestsRouter)
 app.use('/api/notifications', notificationsRouter)
 
+// KSeF — Krajowy System e-Faktur (admin only)
+app.use('/api/ksef', ksefRouter)
+
 // ── Serve frontend static files (production / network mode) ──────────────────
 const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist')
 if (fs.existsSync(DIST_DIR)) {
@@ -119,6 +124,24 @@ const server = app.listen(Number(PORT), '0.0.0.0', () => {
   }
   console.log()
 })
+
+// ── KSeF — automatyczna synchronizacja co 30 minut ───────────────────────────
+if (process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
+  const KSEF_INTERVAL = 30 * 60 * 1000 // 30 minut
+  // Pierwsze uruchomienie po 2 minutach od startu (żeby serwer zdążył się postawić)
+  setTimeout(async () => {
+    console.log('[KSeF] Pierwsze uruchomienie synchronizacji...')
+    try { await syncInvoices() } catch (e: any) { console.error('[KSeF] Błąd:', e.message) }
+    // Następnie co 30 minut
+    setInterval(async () => {
+      console.log('[KSeF] Automatyczna synchronizacja...')
+      try { await syncInvoices() } catch (e: any) { console.error('[KSeF] Błąd:', e.message) }
+    }, KSEF_INTERVAL)
+  }, 2 * 60 * 1000)
+  console.log('[KSeF] Automatyczna synchronizacja co 30 minut włączona')
+} else {
+  console.log('[KSeF] Brak konfiguracji (KSEF_NIP/KSEF_TOKEN) — synchronizacja wyłączona')
+}
 
 // Zwiększ timeout dla długich zapytań AI (rzuty, cenniki)
 // Render free ma 30s timeout w proxy — to nie obejdzie limitu Render,

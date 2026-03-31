@@ -33,6 +33,7 @@ model Project {
   project_members ProjectMember[]
   ai_quotes       AiQuote[]
   cost_audit_log  CostAuditLog[]
+  ksef_invoices   KsefInvoice[]
 
   @@map("projects")
 }
@@ -261,4 +262,38 @@ model CostAuditLog {
   project     Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@map("cost_audit_log")
+}
+
+// ─── KSeF — Krajowy System e-Faktur ──────────────────────────────────────────
+
+model KsefInvoice {
+  id               String   @id
+  ksef_number      String?  @unique   // Numer referencyjny KSeF (np. 2023...)
+  invoice_number   String?            // Numer faktury wystawcy
+  seller_name      String?            // Nazwa sprzedawcy
+  seller_nip       String?            // NIP sprzedawcy
+  net_amount       Float    @default(0)
+  vat_amount       Float    @default(0)
+  gross_amount     Float    @default(0)
+  currency         String   @default("PLN")
+  invoice_date     String?            // Data wystawienia
+  acquisition_date String?            // Data pobrania z KSeF
+  project_id       String?            // null = nieprzypisana
+  notes            String?            // notatka admina
+  raw_data         String?            // surowe dane JSON z KSeF (do debugowania)
+  created_at       String
+
+  project  Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
+
+  @@map("ksef_invoices")
+}
+
+model KsefSession {
+  id            String  @id
+  session_token String
+  expires_at    String
+  last_sync_at  String?
+  created_at    String
+
+  @@map("ksef_sessions")
 }
