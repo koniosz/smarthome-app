@@ -264,9 +264,9 @@ export async function terminateSession(): Promise<void> {
 }
 
 /**
- * Pobierz faktury zakupowe (Subject3 = nabywca) za podany okres
+ * Pobierz faktury zakupowe za jeden chunk (max 3 miesiące — limit API)
  */
-async function fetchInvoices(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
+async function fetchInvoicesChunk(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
   const all: any[] = []
   let pageOffset = 0
   const pageSize = 100
@@ -297,10 +297,28 @@ async function fetchInvoices(accessToken: string, dateFrom: Date, dateTo: Date):
     const invoices: any[] = res.data.invoices ?? []
     all.push(...invoices)
 
-    console.log(`[KSeF] Pobrano ${invoices.length} faktur (offset ${pageOffset}), hasMore=${res.data.hasMore}`)
+    console.log(`[KSeF] Chunk ${dateFrom.toISOString().split('T')[0]}–${dateTo.toISOString().split('T')[0]}: ${invoices.length} faktur (offset ${pageOffset}), hasMore=${res.data.hasMore}`)
 
     if (!res.data.hasMore || invoices.length === 0) break
     pageOffset += pageSize
+  }
+
+  return all
+}
+
+/**
+ * Pobierz faktury zakupowe za cały okres — automatycznie dzieli na chunki 3-miesięczne
+ */
+async function fetchInvoices(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
+  const all: any[] = []
+  const CHUNK_MS = 90 * 24 * 60 * 60 * 1000 // 90 dni w ms
+
+  let chunkStart = new Date(dateFrom)
+  while (chunkStart < dateTo) {
+    const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
+    const chunk = await fetchInvoicesChunk(accessToken, chunkStart, chunkEnd)
+    all.push(...chunk)
+    chunkStart = new Date(chunkEnd.getTime() + 24 * 60 * 60 * 1000) // następny dzień po końcu chunku
   }
 
   return all
