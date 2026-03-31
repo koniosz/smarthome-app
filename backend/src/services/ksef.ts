@@ -188,22 +188,24 @@ async function createSession(): Promise<string> {
     throw new Error('Brak referenceNumber lub authenticationToken po init')
   }
 
-  // ── Krok 4: Poll statusu autoryzacji ──────────────────────────────────────
-  for (let i = 0; i < 12; i++) {
+  // ── Krok 4: Krótkie oczekiwanie — token auth weryfikuje się błyskawicznie ──
+  // Polling dostępny, ale dla token-auth zwykle 1-2s wystarczy
+  for (let i = 0; i < 5; i++) {
     await new Promise(r => setTimeout(r, 2000))
     try {
       const statusRes = await axios.get(
         `${BASE_URL}/auth/${referenceNumber}`,
         { headers: { Authorization: `Bearer ${authenticationToken}` }, timeout: 15000 },
       )
+      console.log(`[KSeF] Auth status (${i + 1}): ${JSON.stringify(statusRes.data)}`)
       const { status, isTokenRedeemed } = statusRes.data
-      console.log(`[KSeF] Auth status (${i + 1}): status=${status}, isTokenRedeemed=${isTokenRedeemed}`)
-
-      // Gotowe gdy token nie został jeszcze zrealizowany i autoryzacja zakończona
-      if (isTokenRedeemed === false && status !== 'Pending') break
-      if (status === 'Authorised' || status === 'Completed' || status === 'Verified') break
+      // Każdy status inny niż Pending oznacza gotowość do redeem
+      if (status && status !== 'Pending') break
+      if (isTokenRedeemed === false) break
     } catch (err: any) {
-      console.warn(`[KSeF] Poll błąd (${i + 1}):`, axiosError(err))
+      console.warn(`[KSeF] Poll error (${i + 1}):`, axiosError(err))
+      // Mimo błędu pollingu — spróbuj redeem
+      break
     }
   }
 

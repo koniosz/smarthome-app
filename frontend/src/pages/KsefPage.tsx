@@ -257,7 +257,8 @@ export default function KsefPage() {
     setSyncMsg(null)
     try {
       const result = await ksefApi.sync()
-      setSyncMsg(`✓ Pobrano ${result.fetched}, zapisano ${result.saved} nowych faktur${result.errors.length ? ` (${result.errors.length} błędów)` : ''}`)
+      const errTxt = result.errors.length ? `\nBłędy: ${result.errors.join(' | ')}` : ''
+      setSyncMsg(`✓ Pobrano ${result.fetched}, zapisano ${result.saved} nowych faktur${errTxt}`)
       await load()
     } catch (err: any) {
       setSyncMsg(`✗ Błąd: ${err.response?.data?.error ?? err.message}`)
