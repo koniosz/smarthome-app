@@ -6,10 +6,12 @@ function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-function StatusBar({ status, onSync, syncing }: {
+function StatusBar({ status, onSync, syncing, dateFrom, onDateFromChange }: {
   status: KsefStatus | null
   onSync: () => void
   syncing: boolean
+  dateFrom: string
+  onDateFromChange: (v: string) => void
 }) {
   if (!status) return null
   const lastSync = status.last_sync_at
@@ -21,7 +23,7 @@ function StatusBar({ status, onSync, syncing }: {
       <div className="flex items-center gap-2">
         <span className={`w-2.5 h-2.5 rounded-full ${status.configured ? 'bg-green-500' : 'bg-red-400'}`} />
         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          KSeF {status.env === 'prod' ? 'Produkcja' : 'Test'}
+          KSeF {status.env?.includes('prod') ? 'Produkcja' : 'Test'} 2.0
         </span>
         {status.nip && <span className="text-xs text-gray-400">NIP: {status.nip}</span>}
       </div>
@@ -32,6 +34,16 @@ function StatusBar({ status, onSync, syncing }: {
         <span>Ostatnia sync: {lastSync}</span>
       </div>
 
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Od:</label>
+        <input
+          type="date"
+          value={dateFrom}
+          onChange={e => onDateFromChange(e.target.value)}
+          className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-500"
+        />
+      </div>
+
       <button
         onClick={onSync}
         disabled={syncing || !status.configured}
@@ -40,13 +52,13 @@ function StatusBar({ status, onSync, syncing }: {
         {syncing ? (
           <><span className="animate-spin">⟳</span> Synchronizacja...</>
         ) : (
-          <><span>⟳</span> Synchronizuj teraz</>
+          <><span>⟳</span> Synchronizuj</>
         )}
       </button>
 
       {!status.configured && (
         <div className="w-full text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">
-          Brak konfiguracji. Ustaw zmienne środowiskowe: <code className="font-mono">KSEF_NIP</code>, <code className="font-mono">KSEF_TOKEN</code>, <code className="font-mono">KSEF_ENV</code> (prod/test)
+          Brak konfiguracji. Ustaw zmienne środowiskowe: <code className="font-mono">KSEF_NIP</code>, <code className="font-mono">KSEF_TOKEN</code>
         </div>
       )}
     </div>
@@ -230,6 +242,7 @@ export default function KsefPage() {
   const [page, setPage]         = useState(1)
   const [debugInfo, setDebugInfo] = useState<any>(null)
   const [debugging, setDebugging] = useState(false)
+  const [dateFrom, setDateFrom]   = useState('2024-01-01')
   const LIMIT = 50
 
   const load = useCallback(async () => {
@@ -256,7 +269,7 @@ export default function KsefPage() {
     setSyncing(true)
     setSyncMsg(null)
     try {
-      const result = await ksefApi.sync()
+      const result = await ksefApi.sync(dateFrom || undefined)
       const errTxt = result.errors.length ? `\nBłędy: ${result.errors.join(' | ')}` : ''
       setSyncMsg(`✓ Pobrano ${result.fetched}, zapisano ${result.saved} nowych faktur${errTxt}`)
       await load()
@@ -303,7 +316,7 @@ export default function KsefPage() {
         </div>
       </div>
 
-      <StatusBar status={status} onSync={handleSync} syncing={syncing} />
+      <StatusBar status={status} onSync={handleSync} syncing={syncing} dateFrom={dateFrom} onDateFromChange={setDateFrom} />
 
       {syncMsg && (
         <div className={`text-sm px-4 py-2 rounded-lg ${syncMsg.startsWith('✓')

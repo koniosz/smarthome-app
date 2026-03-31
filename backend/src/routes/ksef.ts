@@ -29,10 +29,11 @@ router.get('/status', async (_req: Request, res: Response) => {
   }
 })
 
-// POST /api/ksef/sync — ręczna synchronizacja
-router.post('/sync', async (_req: Request, res: Response) => {
+// POST /api/ksef/sync — ręczna synchronizacja (opcjonalnie z dateFrom)
+router.post('/sync', async (req: Request, res: Response) => {
   try {
-    const result = await syncInvoices()
+    const { dateFrom } = req.body
+    const result = await syncInvoices(dateFrom ? new Date(dateFrom) : undefined)
     res.json(result)
   } catch (err: any) {
     res.status(500).json({ error: err.message })

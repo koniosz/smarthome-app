@@ -326,7 +326,7 @@ function mapInvoice(inv: any) {
 /**
  * Główna funkcja synchronizacji — wywołana co 30 min przez cron
  */
-export async function syncInvoices(): Promise<{ fetched: number; saved: number; errors: string[] }> {
+export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: number; saved: number; errors: string[] }> {
   const errors: string[] = []
   let fetched = 0
   let saved   = 0
@@ -334,11 +334,13 @@ export async function syncInvoices(): Promise<{ fetched: number; saved: number; 
   try {
     const accessToken = await getActiveSession()
 
-    // Pobierz faktury od ostatniej synchronizacji (lub 90 dni wstecz)
+    // Pobierz faktury od ostatniej synchronizacji
+    // Pierwsza synchronizacja sięga do 1 stycznia 2024 (KSeF pilotaż)
     const lastSession = await prisma.ksefSession.findFirst()
-    const dateFrom = lastSession?.last_sync_at
-      ? new Date(lastSession.last_sync_at)
-      : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    const dateFrom = forceDateFrom
+      ?? (lastSession?.last_sync_at
+        ? new Date(lastSession.last_sync_at)
+        : new Date('2024-01-01'))
     const dateTo = new Date()
 
     console.log(`[KSeF] Synchronizacja od ${dateFrom.toISOString()} do ${dateTo.toISOString()}`)

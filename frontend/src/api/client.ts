@@ -259,8 +259,8 @@ export const ksefApi = {
   status: () =>
     api.get<import('../types').KsefStatus>('/ksef/status').then(r => r.data),
 
-  sync: () =>
-    api.post<import('../types').KsefSyncResult>('/ksef/sync').then(r => r.data),
+  sync: (dateFrom?: string) =>
+    api.post<import('../types').KsefSyncResult>('/ksef/sync', dateFrom ? { dateFrom } : {}).then(r => r.data),
 
   invoices: (params?: { assigned?: boolean; search?: string; page?: number; limit?: number }) =>
     api.get<{ invoices: import('../types').KsefInvoice[]; total: number; page: number; limit: number }>(
