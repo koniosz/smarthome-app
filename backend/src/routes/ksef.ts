@@ -1,13 +1,23 @@
 import { Router, Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { requireAdmin } from '../middleware/auth'
-import { syncInvoices, getStatus } from '../services/ksef'
+import { syncInvoices, getStatus, debugAuth } from '../services/ksef'
 
 const prisma = new PrismaClient()
 const router = Router()
 
 // Wszystkie endpointy KSeF tylko dla admina
 router.use(requireAdmin)
+
+// GET /api/ksef/debug-auth — diagnostyka autoryzacji (szczegółowe błędy)
+router.get('/debug-auth', async (_req: Request, res: Response) => {
+  try {
+    const result = await debugAuth()
+    res.json(result)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // GET /api/ksef/status — status połączenia i konfiguracji
 router.get('/status', async (_req: Request, res: Response) => {

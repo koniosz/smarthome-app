@@ -228,6 +228,8 @@ export default function KsefPage() {
   const [tab, setTab]           = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [search, setSearch]     = useState('')
   const [page, setPage]         = useState(1)
+  const [debugInfo, setDebugInfo] = useState<any>(null)
+  const [debugging, setDebugging] = useState(false)
   const LIMIT = 50
 
   const load = useCallback(async () => {
@@ -264,6 +266,19 @@ export default function KsefPage() {
     }
   }
 
+  const handleDebug = async () => {
+    setDebugging(true)
+    setDebugInfo(null)
+    try {
+      const result = await ksefApi.debugAuth()
+      setDebugInfo(result)
+    } catch (err: any) {
+      setDebugInfo({ error: err.response?.data ?? err.message })
+    } finally {
+      setDebugging(false)
+    }
+  }
+
   const handleUpdated = (updated: KsefInvoice) => {
     setInvoices(prev => prev.map(i => i.id === updated.id ? updated : i))
     // Odśwież status (zmiana liczby nieprzypisanych)
@@ -294,6 +309,25 @@ export default function KsefPage() {
           ? 'bg-green-50 dark:bg-green-950/20 text-green-700 dark:text-green-400'
           : 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400'}`}>
           {syncMsg}
+        </div>
+      )}
+
+      {/* Debug panel */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={handleDebug}
+          disabled={debugging}
+          className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
+        >
+          {debugging ? 'Diagnostyka…' : '🔍 Diagnostyka autoryzacji'}
+        </button>
+        {debugInfo && (
+          <button onClick={() => setDebugInfo(null)} className="text-xs text-gray-400 hover:text-gray-600">Zamknij</button>
+        )}
+      </div>
+      {debugInfo && (
+        <div className="bg-gray-900 text-green-400 text-xs font-mono p-4 rounded-xl overflow-x-auto max-h-64 overflow-y-auto">
+          <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
         </div>
       )}
 

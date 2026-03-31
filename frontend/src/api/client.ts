@@ -275,4 +275,7 @@ export const ksefApi = {
 
   remove: (id: string) =>
     api.delete(`/ksef/invoices/${id}`).then(r => r.data),
+
+  debugAuth: () =>
+    api.get<Record<string, any>>('/ksef/debug-auth').then(r => r.data),
 }

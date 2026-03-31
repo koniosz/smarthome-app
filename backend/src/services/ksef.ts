@@ -62,6 +62,16 @@ export async function getActiveSession(): Promise<string> {
 }
 
 /**
+ * Pomocnik do wyciągania szczegółów błędu Axios
+ */
+function axiosError(err: any): string {
+  if (err?.response) {
+    return `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`
+  }
+  return err?.message ?? String(err)
+}
+
+/**
  * Autoryzacja w KSeF — tworzy nową sesję online
  */
 async function createSession(): Promise<string> {
@@ -70,30 +80,42 @@ async function createSession(): Promise<string> {
   }
 
   // Krok 1: AuthorisationChallenge
-  const challengeRes = await axios.post(
-    `${BASE_URL}/online/Session/AuthorisationChallenge`,
-    { contextIdentifier: { type: 'onip', identifier: KSEF_NIP } },
-    { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
-  )
-  const { challenge, timestamp } = challengeRes.data
-  if (!challenge) throw new Error('KSeF nie zwróciło challenge')
+  let challengeRes: any
+  try {
+    challengeRes = await axios.post(
+      `${BASE_URL}/online/Session/AuthorisationChallenge`,
+      { contextIdentifier: { type: 'onip', identifier: KSEF_NIP } },
+      { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
+    )
+  } catch (err: any) {
+    throw new Error(`AuthorisationChallenge failed: ${axiosError(err)}`)
+  }
+  const { challenge } = challengeRes.data
+  if (!challenge) throw new Error(`KSeF nie zwróciło challenge. Response: ${JSON.stringify(challengeRes.data)}`)
+
+  console.log(`[KSeF] Challenge: ${challenge}`)
 
   // Krok 2: Szyfrowanie tokenu
   const encryptedToken = encryptToken(KSEF_TOKEN, challenge)
 
   // Krok 3: Authorisation
-  const authRes = await axios.post(
-    `${BASE_URL}/online/Session/Authorisation`,
-    {
-      contextIdentifier: { type: 'onip', identifier: KSEF_NIP },
-      documentType: { version: '1-0E', value: 'KSeF' },
-      encryptedToken,
-    },
-    { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
-  )
+  let authRes: any
+  try {
+    authRes = await axios.post(
+      `${BASE_URL}/online/Session/Authorisation`,
+      {
+        contextIdentifier: { type: 'onip', identifier: KSEF_NIP },
+        documentType: { version: '1-0E', value: 'KSeF' },
+        encryptedToken,
+      },
+      { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
+    )
+  } catch (err: any) {
+    throw new Error(`Authorisation failed: ${axiosError(err)}`)
+  }
 
   const sessionToken = authRes.data?.sessionToken
-  if (!sessionToken) throw new Error('KSeF nie zwróciło sessionToken')
+  if (!sessionToken) throw new Error(`KSeF nie zwróciło sessionToken. Response: ${JSON.stringify(authRes.data)}`)
 
   // Sesja ważna 24h — zapisz z expires_at
   const expiresAt = new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString()
@@ -133,31 +155,71 @@ export async function terminateSession(): Promise<void> {
 }
 
 /**
- * Pobierz faktury zakupowe z KSeF za podany okres
+ * Pobierz faktury zakupowe z KSeF za podany okres.
+ * KSeF używa wzorca asynchronicznego: POST query → queryId → GET wyniki
  */
 async function fetchInvoices(sessionToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
-  // KSeF query — faktury wystawione dla naszego NIP (zakupowe/received)
-  const queryRes = await axios.post(
-    `${BASE_URL}/online/Invoice/query`,
-    {
-      queryCriteria: {
-        subjectType: 'subject3',  // subject3 = nabywca (kupujący)
-        dateRange: {
-          startDate: dateFrom.toISOString().split('T')[0],
-          endDate:   dateTo.toISOString().split('T')[0],
+  const headers = {
+    'Content-Type': 'application/json',
+    'SessionToken': sessionToken,
+  }
+
+  // Krok 1: Inicjuj zapytanie
+  let queryId: string
+  try {
+    const queryRes = await axios.post(
+      `${BASE_URL}/online/Invoice/query`,
+      {
+        queryCriteria: {
+          subjectType: 'subject3',  // subject3 = nabywca (kupujący)
+          dateRange: {
+            startDate: dateFrom.toISOString().split('T')[0],
+            endDate:   dateTo.toISOString().split('T')[0],
+          },
         },
       },
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'SessionToken': sessionToken,
-      },
-      timeout: 30000,
-    },
-  )
+      { headers, timeout: 30000 },
+    )
+    queryId = queryRes.data?.queryId ?? queryRes.data?.referenceNumber
+    if (!queryId) {
+      // Niektóre wersje API zwracają listę bezpośrednio
+      const direct = queryRes.data?.invoiceHeaderList ?? queryRes.data
+      if (Array.isArray(direct)) {
+        console.log(`[KSeF] Bezpośrednia odpowiedź — ${direct.length} faktur`)
+        return direct
+      }
+      throw new Error(`Brak queryId w odpowiedzi: ${JSON.stringify(queryRes.data)}`)
+    }
+  } catch (err: any) {
+    if (err.message.startsWith('Brak queryId')) throw err
+    throw new Error(`Invoice query failed: ${axiosError(err)}`)
+  }
 
-  return queryRes.data?.invoiceHeaderList ?? []
+  console.log(`[KSeF] queryId: ${queryId} — oczekuję na wyniki...`)
+
+  // Krok 2: Czekaj na wyniki (max 10 prób co 3s)
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await new Promise(r => setTimeout(r, 3000))
+    try {
+      const resultRes = await axios.get(
+        `${BASE_URL}/online/Invoice/query/${queryId}`,
+        { headers: { 'SessionToken': sessionToken }, timeout: 30000 },
+      )
+      const data = resultRes.data
+      // processingCode: 200 = gotowe
+      if (data.processingCode === 200 || data.invoiceHeaderList !== undefined) {
+        const list = data.invoiceHeaderList ?? []
+        console.log(`[KSeF] Zapytanie zakończone — ${list.length} faktur (attempt ${attempt + 1})`)
+        return list
+      }
+      console.log(`[KSeF] Zapytanie w toku (processingCode: ${data.processingCode}), próba ${attempt + 1}/10`)
+    } catch (err: any) {
+      throw new Error(`Invoice query result failed: ${axiosError(err)}`)
+    }
+  }
+
+  console.warn('[KSeF] Przekroczono limit prób oczekiwania na wyniki zapytania')
+  return []
 }
 
 /**
@@ -273,11 +335,82 @@ export async function syncInvoices(): Promise<{ fetched: number; saved: number; 
 
     console.log(`[KSeF] Zapisano ${saved} nowych faktur. Błędy: ${errors.length}`)
   } catch (err: any) {
-    console.error('[KSeF] Błąd synchronizacji:', err.message)
-    errors.push(err.message)
+    const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message
+    console.error('[KSeF] Błąd synchronizacji:', msg)
+    errors.push(msg)
   }
 
   return { fetched, saved, errors }
+}
+
+/**
+ * Diagnostyka autoryzacji — zwraca szczegóły każdego kroku
+ */
+export async function debugAuth(): Promise<Record<string, any>> {
+  const result: Record<string, any> = {
+    config: {
+      env: KSEF_ENV,
+      base_url: BASE_URL,
+      nip_set: !!KSEF_NIP,
+      nip_length: KSEF_NIP.length,
+      token_set: !!KSEF_TOKEN,
+      token_length: KSEF_TOKEN.length,
+    },
+  }
+
+  if (!KSEF_NIP || !KSEF_TOKEN) {
+    result.error = 'Brak konfiguracji KSEF_NIP lub KSEF_TOKEN'
+    return result
+  }
+
+  // Krok 1: Challenge
+  try {
+    const challengeRes = await axios.post(
+      `${BASE_URL}/online/Session/AuthorisationChallenge`,
+      { contextIdentifier: { type: 'onip', identifier: KSEF_NIP } },
+      { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
+    )
+    result.challenge_response = { status: challengeRes.status, data: challengeRes.data }
+    const { challenge } = challengeRes.data
+
+    if (!challenge) {
+      result.error = 'Brak challenge w odpowiedzi'
+      return result
+    }
+
+    // Krok 2: Szyfrowanie
+    const encryptedToken = encryptToken(KSEF_TOKEN, challenge)
+    result.encrypted_token_length = encryptedToken.length
+
+    // Krok 3: Autoryzacja
+    try {
+      const authRes = await axios.post(
+        `${BASE_URL}/online/Session/Authorisation`,
+        {
+          contextIdentifier: { type: 'onip', identifier: KSEF_NIP },
+          documentType: { version: '1-0E', value: 'KSeF' },
+          encryptedToken,
+        },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
+      )
+      result.auth_response = { status: authRes.status, data: authRes.data }
+      result.success = !!authRes.data?.sessionToken
+    } catch (err: any) {
+      result.auth_error = {
+        status: err?.response?.status,
+        data: err?.response?.data,
+        message: err?.message,
+      }
+    }
+  } catch (err: any) {
+    result.challenge_error = {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err?.message,
+    }
+  }
+
+  return result
 }
 
 /**
