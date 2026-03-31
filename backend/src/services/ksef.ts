@@ -43,8 +43,11 @@ async function getEncryptionPublicKey(): Promise<crypto.KeyObject> {
   const res = await axios.get(`${BASE_URL}/security/public-key-certificates`, { timeout: 15000 })
   const certs: Array<{ certificate: string; usage: string; validFrom: string; validTo: string }> = res.data
 
-  const cert = certs.find(c => c.usage === 'KsefTokenEncryption')
-  if (!cert) throw new Error(`Brak certyfikatu KsefTokenEncryption. Dostępne: ${certs.map(c => c.usage).join(', ')}`)
+  const hasUsage = (c: any, u: string) =>
+    Array.isArray(c.usage) ? c.usage.includes(u) : c.usage === u
+
+  const cert = certs.find(c => hasUsage(c, 'KsefTokenEncryption'))
+  if (!cert) throw new Error(`Brak certyfikatu KsefTokenEncryption. Dostępne: ${certs.map(c => JSON.stringify(c.usage)).join(', ')}`)
 
   // certificate to Base64 DER — może być X.509 lub SubjectPublicKeyInfo
   // Próbuj jako PEM certyfikat (X.509)
