@@ -218,8 +218,11 @@ async function createSession(): Promise<string> {
       {},
       { headers: { Authorization: `Bearer ${authenticationToken}` }, timeout: 15000 },
     )
-    accessToken  = redeemRes.data?.accessToken
-    refreshToken = redeemRes.data?.refreshToken
+    const rawAccess  = redeemRes.data?.accessToken
+    const rawRefresh = redeemRes.data?.refreshToken
+    // API zwraca obiekty { token, validUntil } zamiast stringów
+    accessToken  = typeof rawAccess  === 'string' ? rawAccess  : rawAccess?.token
+    refreshToken = typeof rawRefresh === 'string' ? rawRefresh : rawRefresh?.token
     if (!accessToken) throw new Error(`Brak accessToken: ${JSON.stringify(redeemRes.data)}`)
   } catch (err: any) {
     throw new Error(`Token redeem failed: ${axiosError(err)}`)
