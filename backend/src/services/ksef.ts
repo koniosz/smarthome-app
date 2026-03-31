@@ -176,8 +176,10 @@ async function createSession(): Promise<string> {
       },
       { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
     )
-    referenceNumber      = res.data?.referenceNumber
-    authenticationToken  = res.data?.authenticationToken
+    referenceNumber = res.data?.referenceNumber
+    // authenticationToken może być stringiem lub obiektem { token, validUntil }
+    const authTokenRaw = res.data?.authenticationToken
+    authenticationToken = typeof authTokenRaw === 'string' ? authTokenRaw : authTokenRaw?.token
     console.log(`[KSeF] Auth init OK, referenceNumber: ${referenceNumber}`)
   } catch (err: any) {
     throw new Error(`Token auth init failed: ${axiosError(err)}`)
