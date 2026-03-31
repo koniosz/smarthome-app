@@ -1,9 +1,9 @@
 /**
- * KSeF — Krajowy System e-Faktur
- * Integracja z API KSeF MF (Ministerstwo Finansów)
+ * KSeF 2.0 — Krajowy System e-Faktur
+ * API 2.0 (od 1 lutego 2026)
  *
- * Dokumentacja: https://ksef.mf.gov.pl/api
- * Środowisko testowe: https://ksef-test.mf.gov.pl/api
+ * Dokumentacja: https://api.ksef.mf.gov.pl/docs/v2/index.html
+ * Base URL: https://api.ksef.mf.gov.pl/v2
  */
 
 import axios from 'axios'
@@ -13,57 +13,13 @@ import { v4 as uuidv4 } from 'uuid'
 
 const prisma = new PrismaClient()
 
-const KSEF_ENV   = process.env.KSEF_ENV   || 'test'
 const KSEF_NIP   = (process.env.KSEF_NIP  || '').replace(/[-\s]/g, '')
 const KSEF_TOKEN = process.env.KSEF_TOKEN || ''
 
-const BASE_URL = KSEF_ENV === 'prod'
-  ? 'https://ksef.mf.gov.pl/api'
-  : 'https://ksef-test.mf.gov.pl/api'
+const BASE_URL = 'https://api.ksef.mf.gov.pl/v2'
 
 function now() { return new Date().toISOString() }
 
-/**
- * Szyfrowanie tokenu API wg specyfikacji KSeF:
- * key = SHA-256(challenge)
- * iv  = pierwsze 16 bajtów klucza
- * cipher = AES-256-CBC
- */
-function encryptToken(apiToken: string, challenge: string): string {
-  const key = crypto.createHash('sha256').update(challenge, 'utf8').digest()
-  const iv  = key.slice(0, 16)
-  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv)
-  const encrypted = Buffer.concat([
-    cipher.update(Buffer.from(apiToken, 'utf8')),
-    cipher.final(),
-  ])
-  return encrypted.toString('base64')
-}
-
-/**
- * Pobierz aktywny token sesji (z bazy lub utwórz nowy)
- */
-export async function getActiveSession(): Promise<string> {
-  // Sprawdź czy mamy ważną sesję (z marginesem 5 min)
-  const existing = await prisma.ksefSession.findFirst({
-    orderBy: { created_at: 'desc' },
-  })
-
-  if (existing) {
-    const expiresAt = new Date(existing.expires_at)
-    const margin = new Date(Date.now() + 5 * 60 * 1000) // +5 min margines
-    if (expiresAt > margin) {
-      return existing.session_token
-    }
-  }
-
-  // Utwórz nową sesję
-  return await createSession()
-}
-
-/**
- * Pomocnik do wyciągania szczegółów błędu Axios
- */
 function axiosError(err: any): string {
   if (err?.response) {
     return `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`
@@ -71,69 +27,212 @@ function axiosError(err: any): string {
   return err?.message ?? String(err)
 }
 
+/** Parsuj JWT exp claim → ISO string */
+function parseJwtExpiry(jwt: string): string {
+  try {
+    const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString('utf8'))
+    if (payload.exp) return new Date(payload.exp * 1000).toISOString()
+  } catch {}
+  return new Date(Date.now() + 60 * 60 * 1000).toISOString() // fallback 1h
+}
+
 /**
- * Autoryzacja w KSeF — tworzy nową sesję online
+ * Pobierz klucz publiczny MF do szyfrowania tokenu KSeF (RSA-OAEP SHA-256)
+ */
+async function getEncryptionPublicKey(): Promise<crypto.KeyObject> {
+  const res = await axios.get(`${BASE_URL}/security/public-key-certificates`, { timeout: 15000 })
+  const certs: Array<{ certificate: string; usage: string; validFrom: string; validTo: string }> = res.data
+
+  const cert = certs.find(c => c.usage === 'KsefTokenEncryption')
+  if (!cert) throw new Error(`Brak certyfikatu KsefTokenEncryption. Dostępne: ${certs.map(c => c.usage).join(', ')}`)
+
+  // certificate to Base64 DER — może być X.509 lub SubjectPublicKeyInfo
+  // Próbuj jako PEM certyfikat (X.509)
+  try {
+    const pem = `-----BEGIN CERTIFICATE-----\n${cert.certificate}\n-----END CERTIFICATE-----`
+    return crypto.createPublicKey(pem)
+  } catch {
+    // Fallback: SPKI DER
+    return crypto.createPublicKey({
+      key: Buffer.from(cert.certificate, 'base64'),
+      format: 'der',
+      type: 'spki',
+    })
+  }
+}
+
+/**
+ * Szyfrowanie tokenu KSeF wg specyfikacji 2.0:
+ * plaintext = "${token}|${timestampMs}"
+ * encrypted = RSA-OAEP(SHA-256, publicKey, plaintext)
+ * result = Base64(encrypted)
+ */
+function encryptTokenRsa(apiToken: string, timestampMs: number | string, publicKey: crypto.KeyObject): string {
+  const plaintext = `${apiToken}|${timestampMs}`
+  const encrypted = crypto.publicEncrypt(
+    {
+      key: publicKey,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: 'sha256',
+    },
+    Buffer.from(plaintext, 'utf8'),
+  )
+  return encrypted.toString('base64')
+}
+
+/**
+ * Odśwież accessToken używając refreshToken
+ */
+async function refreshAccessToken(refreshToken: string): Promise<string> {
+  const res = await axios.post(
+    `${BASE_URL}/auth/token/refresh`,
+    {},
+    { headers: { Authorization: `Bearer ${refreshToken}` }, timeout: 15000 },
+  )
+  const { accessToken } = res.data
+  if (!accessToken) throw new Error('Brak accessToken w refresh response')
+
+  const expiresAt = parseJwtExpiry(accessToken)
+  await prisma.ksefSession.updateMany({ data: { session_token: accessToken, expires_at: expiresAt } })
+  console.log('[KSeF] Token odświeżony, ważny do:', expiresAt)
+  return accessToken
+}
+
+/**
+ * Pobierz aktywny accessToken (z bazy lub utwórz nowy)
+ */
+export async function getActiveSession(): Promise<string> {
+  const existing = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+
+  if (existing) {
+    const expiresAt = new Date(existing.expires_at)
+    const margin    = new Date(Date.now() + 5 * 60 * 1000) // 5 min margines
+
+    if (expiresAt > margin) {
+      return existing.session_token
+    }
+
+    // Spróbuj odświeżyć przez refreshToken
+    if (existing.refresh_token) {
+      try {
+        return await refreshAccessToken(existing.refresh_token)
+      } catch (err: any) {
+        console.warn('[KSeF] Refresh token nieważny, tworzę nową sesję:', err.message)
+      }
+    }
+  }
+
+  return await createSession()
+}
+
+/**
+ * Autoryzacja w KSeF 2.0 — 4-krokowy flow:
+ * 1. POST /auth/challenge
+ * 2. POST /auth/ksef-token (z zaszyfrowanym tokenem RSA-OAEP)
+ * 3. Poll GET /auth/{referenceNumber} do czasu zakończenia
+ * 4. POST /auth/token/redeem → accessToken + refreshToken
  */
 async function createSession(): Promise<string> {
   if (!KSEF_NIP || !KSEF_TOKEN) {
     throw new Error('Brak konfiguracji KSeF (KSEF_NIP lub KSEF_TOKEN nie ustawione)')
   }
 
-  // Krok 1: AuthorisationChallenge
-  let challengeRes: any
+  // ── Krok 1: Pobierz klucz publiczny ───────────────────────────────────────
+  let publicKey: crypto.KeyObject
   try {
-    challengeRes = await axios.post(
-      `${BASE_URL}/online/Session/AuthorisationChallenge`,
-      { contextIdentifier: { type: 'onip', identifier: KSEF_NIP } },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
-    )
+    publicKey = await getEncryptionPublicKey()
   } catch (err: any) {
-    throw new Error(`AuthorisationChallenge failed: ${axiosError(err)}`)
+    throw new Error(`Błąd pobierania klucza publicznego MF: ${axiosError(err)}`)
   }
-  const { challenge } = challengeRes.data
-  if (!challenge) throw new Error(`KSeF nie zwróciło challenge. Response: ${JSON.stringify(challengeRes.data)}`)
 
-  console.log(`[KSeF] Challenge: ${challenge}`)
-
-  // Krok 2: Szyfrowanie tokenu
-  const encryptedToken = encryptToken(KSEF_TOKEN, challenge)
-
-  // Krok 3: Authorisation
-  let authRes: any
+  // ── Krok 2: Challenge ──────────────────────────────────────────────────────
+  let challengeData: { challenge: string; timestampMs: number }
   try {
-    authRes = await axios.post(
-      `${BASE_URL}/online/Session/Authorisation`,
+    const res = await axios.post(`${BASE_URL}/auth/challenge`, {}, { timeout: 15000 })
+    challengeData = res.data
+    console.log(`[KSeF] Challenge: ${challengeData.challenge}, timestampMs: ${challengeData.timestampMs}`)
+  } catch (err: any) {
+    throw new Error(`Challenge failed: ${axiosError(err)}`)
+  }
+  if (!challengeData.challenge) {
+    throw new Error(`Brak challenge w odpowiedzi: ${JSON.stringify(challengeData)}`)
+  }
+
+  // ── Krok 3: Zaszyfruj token i zainicjuj autoryzację ───────────────────────
+  const encryptedToken = encryptTokenRsa(KSEF_TOKEN, challengeData.timestampMs, publicKey)
+
+  let referenceNumber: string
+  let authenticationToken: string
+  try {
+    const res = await axios.post(
+      `${BASE_URL}/auth/ksef-token`,
       {
-        contextIdentifier: { type: 'onip', identifier: KSEF_NIP },
-        documentType: { version: '1-0E', value: 'KSeF' },
+        challenge:         challengeData.challenge,
+        contextIdentifier: { type: 'Nip', value: KSEF_NIP },
         encryptedToken,
       },
       { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
     )
+    referenceNumber      = res.data?.referenceNumber
+    authenticationToken  = res.data?.authenticationToken
+    console.log(`[KSeF] Auth init OK, referenceNumber: ${referenceNumber}`)
   } catch (err: any) {
-    throw new Error(`Authorisation failed: ${axiosError(err)}`)
+    throw new Error(`Token auth init failed: ${axiosError(err)}`)
+  }
+  if (!referenceNumber || !authenticationToken) {
+    throw new Error('Brak referenceNumber lub authenticationToken po init')
   }
 
-  const sessionToken = authRes.data?.sessionToken
-  if (!sessionToken) throw new Error(`KSeF nie zwróciło sessionToken. Response: ${JSON.stringify(authRes.data)}`)
+  // ── Krok 4: Poll statusu autoryzacji ──────────────────────────────────────
+  for (let i = 0; i < 12; i++) {
+    await new Promise(r => setTimeout(r, 2000))
+    try {
+      const statusRes = await axios.get(
+        `${BASE_URL}/auth/${referenceNumber}`,
+        { headers: { Authorization: `Bearer ${authenticationToken}` }, timeout: 15000 },
+      )
+      const { status, isTokenRedeemed } = statusRes.data
+      console.log(`[KSeF] Auth status (${i + 1}): status=${status}, isTokenRedeemed=${isTokenRedeemed}`)
 
-  // Sesja ważna 24h — zapisz z expires_at
-  const expiresAt = new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString()
+      // Gotowe gdy token nie został jeszcze zrealizowany i autoryzacja zakończona
+      if (isTokenRedeemed === false && status !== 'Pending') break
+      if (status === 'Authorised' || status === 'Completed' || status === 'Verified') break
+    } catch (err: any) {
+      console.warn(`[KSeF] Poll błąd (${i + 1}):`, axiosError(err))
+    }
+  }
 
-  // Usuń stare sesje
+  // ── Krok 5: Redeem — pobierz accessToken + refreshToken ───────────────────
+  let accessToken: string
+  let refreshToken: string | undefined
+  try {
+    const redeemRes = await axios.post(
+      `${BASE_URL}/auth/token/redeem`,
+      {},
+      { headers: { Authorization: `Bearer ${authenticationToken}` }, timeout: 15000 },
+    )
+    accessToken  = redeemRes.data?.accessToken
+    refreshToken = redeemRes.data?.refreshToken
+    if (!accessToken) throw new Error(`Brak accessToken: ${JSON.stringify(redeemRes.data)}`)
+  } catch (err: any) {
+    throw new Error(`Token redeem failed: ${axiosError(err)}`)
+  }
+
+  const expiresAt = parseJwtExpiry(accessToken)
+
   await prisma.ksefSession.deleteMany()
-
   await prisma.ksefSession.create({
     data: {
-      id: uuidv4(),
-      session_token: sessionToken,
-      expires_at: expiresAt,
-      created_at: now(),
+      id:            uuidv4(),
+      session_token: accessToken,
+      refresh_token: refreshToken ?? null,
+      expires_at:    expiresAt,
+      created_at:    now(),
     },
   })
 
-  console.log('[KSeF] Nowa sesja utworzona, ważna do:', expiresAt)
-  return sessionToken
+  console.log('[KSeF v2] Nowa sesja utworzona, ważna do:', expiresAt)
+  return accessToken
 }
 
 /**
@@ -144,8 +243,8 @@ export async function terminateSession(): Promise<void> {
   if (!existing) return
 
   try {
-    await axios.get(`${BASE_URL}/online/Session/Terminate`, {
-      headers: { 'SessionToken': existing.session_token },
+    await axios.delete(`${BASE_URL}/auth/sessions/current`, {
+      headers: { Authorization: `Bearer ${existing.session_token}` },
       timeout: 10000,
     })
   } catch {
@@ -155,116 +254,62 @@ export async function terminateSession(): Promise<void> {
 }
 
 /**
- * Pobierz faktury zakupowe z KSeF za podany okres.
- * KSeF używa wzorca asynchronicznego: POST query → queryId → GET wyniki
+ * Pobierz faktury zakupowe (Subject3 = nabywca) za podany okres
  */
-async function fetchInvoices(sessionToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
-  const headers = {
-    'Content-Type': 'application/json',
-    'SessionToken': sessionToken,
-  }
+async function fetchInvoices(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
+  const all: any[] = []
+  let pageOffset = 0
+  const pageSize = 100
 
-  // Krok 1: Inicjuj zapytanie
-  let queryId: string
-  try {
-    const queryRes = await axios.post(
-      `${BASE_URL}/online/Invoice/query`,
-      {
-        queryCriteria: {
-          subjectType: 'subject3',  // subject3 = nabywca (kupujący)
+  while (true) {
+    let res: any
+    try {
+      res = await axios.post(
+        `${BASE_URL}/invoices/query/metadata`,
+        {
+          subjectType: 'Subject3', // nabywca (kupujący)
           dateRange: {
-            startDate: dateFrom.toISOString().split('T')[0],
-            endDate:   dateTo.toISOString().split('T')[0],
+            dateType: 'Issue',
+            from: dateFrom.toISOString().split('T')[0],
+            to:   dateTo.toISOString().split('T')[0],
           },
         },
-      },
-      { headers, timeout: 30000 },
-    )
-    queryId = queryRes.data?.queryId ?? queryRes.data?.referenceNumber
-    if (!queryId) {
-      // Niektóre wersje API zwracają listę bezpośrednio
-      const direct = queryRes.data?.invoiceHeaderList ?? queryRes.data
-      if (Array.isArray(direct)) {
-        console.log(`[KSeF] Bezpośrednia odpowiedź — ${direct.length} faktur`)
-        return direct
-      }
-      throw new Error(`Brak queryId w odpowiedzi: ${JSON.stringify(queryRes.data)}`)
-    }
-  } catch (err: any) {
-    if (err.message.startsWith('Brak queryId')) throw err
-    throw new Error(`Invoice query failed: ${axiosError(err)}`)
-  }
-
-  console.log(`[KSeF] queryId: ${queryId} — oczekuję na wyniki...`)
-
-  // Krok 2: Czekaj na wyniki (max 10 prób co 3s)
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await new Promise(r => setTimeout(r, 3000))
-    try {
-      const resultRes = await axios.get(
-        `${BASE_URL}/online/Invoice/query/${queryId}`,
-        { headers: { 'SessionToken': sessionToken }, timeout: 30000 },
+        {
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          params:  { pageOffset, pageSize, sortOrder: 'Asc' },
+          timeout: 30000,
+        },
       )
-      const data = resultRes.data
-      // processingCode: 200 = gotowe
-      if (data.processingCode === 200 || data.invoiceHeaderList !== undefined) {
-        const list = data.invoiceHeaderList ?? []
-        console.log(`[KSeF] Zapytanie zakończone — ${list.length} faktur (attempt ${attempt + 1})`)
-        return list
-      }
-      console.log(`[KSeF] Zapytanie w toku (processingCode: ${data.processingCode}), próba ${attempt + 1}/10`)
     } catch (err: any) {
-      throw new Error(`Invoice query result failed: ${axiosError(err)}`)
+      throw new Error(`Invoice query failed: ${axiosError(err)}`)
     }
+
+    const invoices: any[] = res.data.invoices ?? []
+    all.push(...invoices)
+
+    console.log(`[KSeF] Pobrano ${invoices.length} faktur (offset ${pageOffset}), hasMore=${res.data.hasMore}`)
+
+    if (!res.data.hasMore || invoices.length === 0) break
+    pageOffset += pageSize
   }
 
-  console.warn('[KSeF] Przekroczono limit prób oczekiwania na wyniki zapytania')
-  return []
+  return all
 }
 
 /**
- * Pobierz szczegóły jednej faktury (XML)
+ * Mapuj InvoiceMetadata z KSeF 2.0 na nasze pola
  */
-async function fetchInvoiceDetails(sessionToken: string, ksefNumber: string): Promise<string | null> {
-  try {
-    const res = await axios.get(
-      `${BASE_URL}/online/Invoice/get/${ksefNumber}`,
-      {
-        headers: { 'SessionToken': sessionToken },
-        responseType: 'text',
-        timeout: 15000,
-      },
-    )
-    return res.data
-  } catch {
-    return null
-  }
-}
-
-/**
- * Parsuje nagłówek faktury z odpowiedzi KSeF
- */
-function parseInvoiceHeader(header: any): {
-  ksef_number: string
-  invoice_number: string
-  seller_name: string
-  seller_nip: string
-  net_amount: number
-  vat_amount: number
-  gross_amount: number
-  currency: string
-  invoice_date: string
-} {
+function mapInvoice(inv: any) {
   return {
-    ksef_number:    header.ksefReferenceNumber ?? header.referenceNumber ?? '',
-    invoice_number: header.invoiceReferenceNumber ?? header.invoiceNumber ?? '',
-    seller_name:    header.subjectBy?.name ?? header.sellerName ?? '',
-    seller_nip:     header.subjectBy?.issuedToIdentifier?.identifier ?? header.sellerNip ?? '',
-    net_amount:     parseFloat(header.net   ?? header.netAmount   ?? '0') || 0,
-    vat_amount:     parseFloat(header.vat   ?? header.vatAmount   ?? '0') || 0,
-    gross_amount:   parseFloat(header.gross ?? header.grossAmount ?? '0') || 0,
-    currency:       header.currency ?? 'PLN',
-    invoice_date:   header.invoiceDate ?? header.issuedDate ?? now().split('T')[0],
+    ksef_number:    inv.ksefNumber ?? '',
+    invoice_number: inv.invoiceNumber ?? '',
+    seller_name:    inv.seller?.name ?? '',
+    seller_nip:     inv.seller?.nip ?? '',
+    net_amount:     parseFloat(inv.netAmount   ?? '0') || 0,
+    vat_amount:     parseFloat(inv.vatAmount   ?? '0') || 0,
+    gross_amount:   parseFloat(inv.grossAmount ?? '0') || 0,
+    currency:       inv.currency ?? 'PLN',
+    invoice_date:   inv.issueDate ?? inv.invoicingDate ?? now().split('T')[0],
   }
 }
 
@@ -277,65 +322,52 @@ export async function syncInvoices(): Promise<{ fetched: number; saved: number; 
   let saved   = 0
 
   try {
-    const sessionToken = await getActiveSession()
+    const accessToken = await getActiveSession()
 
-    // Pobierz faktury z ostatnich 90 dni (lub od ostatniej synchronizacji)
+    // Pobierz faktury od ostatniej synchronizacji (lub 90 dni wstecz)
     const lastSession = await prisma.ksefSession.findFirst()
-    const lastSync = lastSession?.last_sync_at
+    const dateFrom = lastSession?.last_sync_at
       ? new Date(lastSession.last_sync_at)
-      : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) // 90 dni wstecz
-
-    const dateTo   = new Date()
-    const dateFrom = lastSync
+      : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    const dateTo = new Date()
 
     console.log(`[KSeF] Synchronizacja od ${dateFrom.toISOString()} do ${dateTo.toISOString()}`)
 
-    const headers = await fetchInvoices(sessionToken, dateFrom, dateTo)
-    fetched = headers.length
-    console.log(`[KSeF] Pobrano ${fetched} nagłówków faktur`)
+    const invoices = await fetchInvoices(accessToken, dateFrom, dateTo)
+    fetched = invoices.length
+    console.log(`[KSeF] Pobrano ${fetched} faktur łącznie`)
 
-    for (const header of headers) {
+    for (const inv of invoices) {
       try {
-        const parsed = parseInvoiceHeader(header)
-        if (!parsed.ksef_number) continue
+        const mapped = mapInvoice(inv)
+        if (!mapped.ksef_number) continue
 
-        // Sprawdź czy już mamy tę fakturę
-        const existing = await prisma.ksefInvoice.findUnique({
-          where: { ksef_number: parsed.ksef_number },
-        })
-        if (existing) continue
+        const exists = await prisma.ksefInvoice.findUnique({ where: { ksef_number: mapped.ksef_number } })
+        if (exists) continue
 
         await prisma.ksefInvoice.create({
           data: {
             id:               uuidv4(),
-            ksef_number:      parsed.ksef_number,
-            invoice_number:   parsed.invoice_number,
-            seller_name:      parsed.seller_name,
-            seller_nip:       parsed.seller_nip,
-            net_amount:       parsed.net_amount,
-            vat_amount:       parsed.vat_amount,
-            gross_amount:     parsed.gross_amount,
-            currency:         parsed.currency,
-            invoice_date:     parsed.invoice_date,
+            ...mapped,
             acquisition_date: now().split('T')[0],
-            raw_data:         JSON.stringify(header),
+            raw_data:         JSON.stringify(inv),
             created_at:       now(),
           },
         })
         saved++
       } catch (err: any) {
-        errors.push(`Faktura ${header.ksefReferenceNumber ?? '?'}: ${err.message}`)
+        errors.push(`Faktura ${inv.ksefNumber ?? '?'}: ${err.message}`)
       }
     }
 
     // Zaktualizuj czas ostatniej synchronizacji
-    await prisma.ksefSession.updateMany({
-      data: { last_sync_at: now() },
-    })
+    await prisma.ksefSession.updateMany({ data: { last_sync_at: now() } })
 
     console.log(`[KSeF] Zapisano ${saved} nowych faktur. Błędy: ${errors.length}`)
   } catch (err: any) {
-    const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message
+    const msg = err?.response
+      ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`
+      : err.message
     console.error('[KSeF] Błąd synchronizacji:', msg)
     errors.push(msg)
   }
@@ -349,11 +381,10 @@ export async function syncInvoices(): Promise<{ fetched: number; saved: number; 
 export async function debugAuth(): Promise<Record<string, any>> {
   const result: Record<string, any> = {
     config: {
-      env: KSEF_ENV,
-      base_url: BASE_URL,
-      nip_set: !!KSEF_NIP,
-      nip_length: KSEF_NIP.length,
-      token_set: !!KSEF_TOKEN,
+      base_url:     BASE_URL,
+      nip_set:      !!KSEF_NIP,
+      nip_length:   KSEF_NIP.length,
+      token_set:    !!KSEF_TOKEN,
       token_length: KSEF_TOKEN.length,
     },
   }
@@ -363,51 +394,53 @@ export async function debugAuth(): Promise<Record<string, any>> {
     return result
   }
 
-  // Krok 1: Challenge
+  // Klucze publiczne
   try {
-    const challengeRes = await axios.post(
-      `${BASE_URL}/online/Session/AuthorisationChallenge`,
-      { contextIdentifier: { type: 'onip', identifier: KSEF_NIP } },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
-    )
-    result.challenge_response = { status: challengeRes.status, data: challengeRes.data }
-    const { challenge } = challengeRes.data
+    const keysRes = await axios.get(`${BASE_URL}/security/public-key-certificates`, { timeout: 15000 })
+    result.public_keys = keysRes.data.map((c: any) => ({
+      usage:    c.usage,
+      validTo:  c.validTo,
+      certLen:  c.certificate?.length,
+    }))
+  } catch (err: any) {
+    result.public_keys_error = axiosError(err)
+    return result
+  }
 
+  // Challenge
+  try {
+    const challengeRes = await axios.post(`${BASE_URL}/auth/challenge`, {}, { timeout: 15000 })
+    result.challenge_response = { status: challengeRes.status, data: challengeRes.data }
+
+    const { challenge, timestampMs } = challengeRes.data
     if (!challenge) {
-      result.error = 'Brak challenge w odpowiedzi'
+      result.error = 'Brak challenge'
       return result
     }
 
-    // Krok 2: Szyfrowanie
-    const encryptedToken = encryptToken(KSEF_TOKEN, challenge)
-    result.encrypted_token_length = encryptedToken.length
-
-    // Krok 3: Autoryzacja
+    // Szyfrowanie
     try {
-      const authRes = await axios.post(
-        `${BASE_URL}/online/Session/Authorisation`,
-        {
-          contextIdentifier: { type: 'onip', identifier: KSEF_NIP },
-          documentType: { version: '1-0E', value: 'KSeF' },
-          encryptedToken,
-        },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
-      )
-      result.auth_response = { status: authRes.status, data: authRes.data }
-      result.success = !!authRes.data?.sessionToken
-    } catch (err: any) {
-      result.auth_error = {
-        status: err?.response?.status,
-        data: err?.response?.data,
-        message: err?.message,
+      const pk = await getEncryptionPublicKey()
+      const enc = encryptTokenRsa(KSEF_TOKEN, timestampMs, pk)
+      result.encrypted_token_length = enc.length
+
+      // Auth init
+      try {
+        const authRes = await axios.post(
+          `${BASE_URL}/auth/ksef-token`,
+          { challenge, contextIdentifier: { type: 'Nip', value: KSEF_NIP }, encryptedToken: enc },
+          { timeout: 15000 },
+        )
+        result.auth_init = { status: authRes.status, data: authRes.data }
+        result.success = !!authRes.data?.authenticationToken
+      } catch (err: any) {
+        result.auth_init_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
       }
+    } catch (err: any) {
+      result.encrypt_error = err.message
     }
   } catch (err: any) {
-    result.challenge_error = {
-      status: err?.response?.status,
-      data: err?.response?.data,
-      message: err?.message,
-    }
+    result.challenge_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
   }
 
   return result
@@ -426,18 +459,18 @@ export async function getStatus(): Promise<{
   invoice_count: number
   unassigned_count: number
 }> {
-  const session = await prisma.ksefSession.findFirst()
-  const invoiceCount    = await prisma.ksefInvoice.count()
-  const unassignedCount = await prisma.ksefInvoice.count({ where: { project_id: null } })
+  const session       = await prisma.ksefSession.findFirst()
+  const invoiceCount  = await prisma.ksefInvoice.count()
+  const unassignedCnt = await prisma.ksefInvoice.count({ where: { project_id: null } })
 
   return {
     configured:         !!(KSEF_NIP && KSEF_TOKEN),
-    env:                KSEF_ENV,
+    env:                'prod (v2)',
     nip:                KSEF_NIP ? `${KSEF_NIP.slice(0, 3)}***${KSEF_NIP.slice(-3)}` : '',
     has_session:        !!session,
     session_expires_at: session?.expires_at ?? null,
     last_sync_at:       session?.last_sync_at ?? null,
     invoice_count:      invoiceCount,
-    unassigned_count:   unassignedCount,
+    unassigned_count:   unassignedCnt,
   }
 }

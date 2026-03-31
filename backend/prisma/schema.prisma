@@ -291,6 +291,7 @@ model KsefInvoice {
 model KsefSession {
   id            String  @id
   session_token String
+  refresh_token String?
   expires_at    String
   last_sync_at  String?
   created_at    String
