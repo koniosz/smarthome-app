@@ -274,11 +274,11 @@ function InvoicePreviewModal({ invoice, onClose }: {
                         {items.map((item, i) => (
                           <tr key={i} className="border-t border-gray-50 dark:border-gray-800">
                             <td className="px-3 py-2 text-gray-800 dark:text-gray-100 font-medium max-w-[200px]">{item.name}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{item.qty}</td>
-                            <td className="px-3 py-2">{item.unit}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{item.unitPrice}</td>
-                            <td className="px-3 py-2 text-right tabular-nums font-medium">{item.netValue}</td>
-                            <td className="px-3 py-2 text-right">{item.vatRate}%</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{item.qty}</td>
+                            <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{item.unit}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{item.unitPrice}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-medium text-gray-800 dark:text-gray-100">{item.netValue}</td>
+                            <td className="px-3 py-2 text-right text-gray-600 dark:text-gray-300">{item.vatRate}%</td>
                           </tr>
                         ))}
                       </tbody>

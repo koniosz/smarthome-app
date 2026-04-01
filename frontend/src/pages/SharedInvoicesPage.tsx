@@ -114,11 +114,11 @@ function InvoiceCard({ invoice, onUpdated }: {
                   {items.map((item, i) => (
                     <tr key={i} className="border-t border-gray-50 dark:border-gray-800">
                       <td className="px-3 py-2 text-gray-800 dark:text-gray-100 font-medium">{item.name}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{item.qty}</td>
-                      <td className="px-3 py-2 text-gray-500">{item.unit}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{item.unitPrice}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-semibold">{item.netValue}</td>
-                      <td className="px-3 py-2 text-right text-gray-500">{item.vatRate}%</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{item.qty}</td>
+                      <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{item.unit}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{item.unitPrice}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-800 dark:text-gray-100">{item.netValue}</td>
+                      <td className="px-3 py-2 text-right text-gray-600 dark:text-gray-300">{item.vatRate}%</td>
                     </tr>
                   ))}
                 </tbody>
