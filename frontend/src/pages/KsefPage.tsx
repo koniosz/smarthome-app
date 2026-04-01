@@ -139,13 +139,140 @@ function AssignModal({ invoice, projects, onClose, onAssigned }: {
   )
 }
 
+/** Parsuj XML faktury KSeF i wyciągnij kluczowe pola do wyświetlenia */
+function parseInvoiceXml(xml: string): Record<string, string> {
+  const get = (tag: string) => {
+    const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`, 'i'))
+    return m ? m[1].trim() : ''
+  }
+  return {
+    'Nr faktury':     get('P_2') || get('NrFaKorygowanej') || '',
+    'Data wystawienia': get('P_1') || '',
+    'Sprzedawca NIP': get('NIP') || '',
+    'Sprzedawca':     get('Nazwa') || '',
+    'Nabywca':        get('Nazwa') || '',
+    'Wartość netto':  get('P_15') || '',
+    'Kwota VAT':      get('P_16') || '',
+    'Wartość brutto': get('P_17') || '',
+    'Waluta':         get('KodWaluty') || 'PLN',
+  }
+}
+
+function InvoicePreviewModal({ invoice, onClose }: {
+  invoice: KsefInvoice
+  onClose: () => void
+}) {
+  const [xml, setXml]         = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
+
+  useEffect(() => {
+    ksefApi.getXml(invoice.id)
+      .then(x => setXml(x))
+      .catch(e => setError(e.response?.data?.error ?? e.message))
+      .finally(() => setLoading(false))
+  }, [invoice.id])
+
+  const handleDownload = () => {
+    if (!xml) return
+    const blob = new Blob([xml], { type: 'application/xml' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `faktura-${invoice.invoice_number ?? invoice.ksef_number ?? 'ksef'}.xml`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const fields = xml ? parseInvoiceXml(xml) : {}
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+          <div>
+            <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">Podgląd faktury</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{invoice.invoice_number ?? invoice.ksef_number}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {xml && (
+              <button
+                onClick={handleDownload}
+                className="px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
+              >
+                ⬇ Pobierz XML
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {loading && <div className="text-center py-12 text-gray-400 text-sm">Pobieranie z KSeF…</div>}
+          {error   && <div className="text-sm text-red-500 bg-red-50 dark:bg-red-950/20 px-4 py-3 rounded-lg">{error}</div>}
+
+          {xml && (
+            <div className="space-y-4">
+              {/* Kluczowe pola */}
+              <div className="grid grid-cols-2 gap-3">
+                {Object.entries(fields).filter(([, v]) => v).map(([k, v]) => (
+                  <div key={k} className="bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded-lg">
+                    <div className="text-xs text-gray-400 mb-0.5">{k}</div>
+                    <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Dane z naszej bazy */}
+              <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Dane z bazy</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    ['Sprzedawca', invoice.seller_name],
+                    ['NIP sprzedawcy', invoice.seller_nip],
+                    ['Netto', `${fmt(invoice.net_amount)} ${invoice.currency}`],
+                    ['VAT', `${fmt(invoice.vat_amount)} ${invoice.currency}`],
+                    ['Brutto', `${fmt(invoice.gross_amount)} ${invoice.currency}`],
+                    ['Data wystawienia', invoice.invoice_date],
+                    ['Numer KSeF', invoice.ksef_number],
+                  ].filter(([, v]) => v).map(([k, v]) => (
+                    <div key={k as string} className="bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded-lg">
+                      <div className="text-xs text-gray-400 mb-0.5">{k}</div>
+                      <div className="text-sm text-gray-700 dark:text-gray-300 break-all">{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Raw XML (zwijany) */}
+              <details className="border border-gray-100 dark:border-gray-800 rounded-lg">
+                <summary className="px-4 py-2 text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">Surowy XML</summary>
+                <pre className="px-4 py-3 text-xs font-mono text-gray-600 dark:text-gray-400 overflow-x-auto max-h-64 overflow-y-auto bg-gray-50 dark:bg-gray-800 rounded-b-lg whitespace-pre-wrap break-all">
+                  {xml}
+                </pre>
+              </details>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
   invoice: KsefInvoice
   projects: Project[]
   onUpdated: (inv: KsefInvoice) => void
   onRemoved: (id: string) => void
 }) {
-  const [assigning, setAssigning] = useState(false)
+  const [assigning, setAssigning]   = useState(false)
+  const [previewing, setPreviewing] = useState(false)
 
   const handleRemove = async () => {
     if (!confirm('Usunąć tę fakturę z bazy? (Nie usuwa jej z KSeF)')) return
@@ -200,6 +327,16 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
         <td className="py-2.5">
           <div className="flex items-center gap-1">
             <button
+              onClick={() => setPreviewing(true)}
+              className="p-1 text-gray-400 hover:text-violet-600 dark:hover:text-violet-400 rounded transition-colors"
+              title="Podgląd faktury"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+            <button
               onClick={() => setAssigning(true)}
               className="px-2 py-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded transition-colors"
             >
@@ -217,6 +354,9 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
           </div>
         </td>
       </tr>
+      {previewing && (
+        <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />
+      )}
       {assigning && (
         <AssignModal
           invoice={invoice}

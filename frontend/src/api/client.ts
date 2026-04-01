@@ -279,6 +279,9 @@ export const ksefApi = {
   removeAll: () =>
     api.delete<{ success: boolean; deleted: number }>('/ksef/invoices').then(r => r.data),
 
+  getXml: (id: string) =>
+    api.get<string>(`/ksef/invoices/${id}/xml`, { responseType: 'text' }).then(r => r.data),
+
   debugAuth: () =>
     api.get<Record<string, any>>('/ksef/debug-auth').then(r => r.data),
 }

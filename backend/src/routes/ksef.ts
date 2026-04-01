@@ -116,6 +116,35 @@ router.patch('/invoices/:id/notes', async (req: Request, res: Response) => {
   }
 })
 
+// GET /api/ksef/invoices/:id/xml — pobierz XML faktury z KSeF
+router.get('/invoices/:id/xml', async (req: Request, res: Response) => {
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
+    if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
+    if (!invoice.ksef_number) { res.status(400).json({ error: 'Brak numeru KSeF' }); return }
+
+    const { getActiveSession } = await import('../services/ksef')
+    const accessToken = await getActiveSession()
+
+    const axios = (await import('axios')).default
+    const xmlRes = await axios.get(
+      `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(invoice.ksef_number)}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        responseType: 'text',
+        timeout: 15000,
+      },
+    )
+
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8')
+    res.setHeader('Content-Disposition', `inline; filename="faktura-${invoice.invoice_number ?? invoice.ksef_number}.xml"`)
+    res.send(xmlRes.data)
+  } catch (err: any) {
+    const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message
+    res.status(500).json({ error: msg })
+  }
+})
+
 // DELETE /api/ksef/invoices/:id — usuń fakturę z bazy (nie z KSeF)
 router.delete('/invoices/:id', async (req: Request, res: Response) => {
   try {
