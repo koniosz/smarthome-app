@@ -126,4 +126,16 @@ router.delete('/invoices/:id', async (req: Request, res: Response) => {
   }
 })
 
+// DELETE /api/ksef/invoices — usuń WSZYSTKIE faktury z bazy (reset)
+router.delete('/invoices', async (_req: Request, res: Response) => {
+  try {
+    const { count } = await prisma.ksefInvoice.deleteMany()
+    // Zresetuj też last_sync_at żeby następna synchronizacja pobrała wszystko od nowa
+    await prisma.ksefSession.updateMany({ data: { last_sync_at: null } })
+    res.json({ success: true, deleted: count })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router

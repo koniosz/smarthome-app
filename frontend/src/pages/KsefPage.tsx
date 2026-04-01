@@ -327,13 +327,24 @@ export default function KsefPage() {
       )}
 
       {/* Debug panel */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={handleDebug}
           disabled={debugging}
           className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
         >
           {debugging ? 'Diagnostyka…' : '🔍 Diagnostyka autoryzacji'}
+        </button>
+        <button
+          onClick={async () => {
+            if (!confirm('Usunąć wszystkie faktury z bazy i zresetować synchronizację?')) return
+            const r = await ksefApi.removeAll()
+            setSyncMsg(`✓ Usunięto ${r.deleted} faktur. Kliknij Synchronizuj aby pobrać ponownie.`)
+            await load()
+          }}
+          className="px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors"
+        >
+          🗑 Resetuj bazę faktur
         </button>
         {debugInfo && (
           <button onClick={() => setDebugInfo(null)} className="text-xs text-gray-400 hover:text-gray-600">Zamknij</button>
