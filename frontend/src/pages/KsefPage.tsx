@@ -151,21 +151,26 @@ interface InvoiceLineItem {
 }
 
 function parseInvoiceXml(xml: string): { fields: Record<string, string>; items: InvoiceLineItem[] } {
+  // Obsługuje tagi z namespace prefix (np. <tns:P_9A>, <fa:P_7>) oraz bez
   const get = (tag: string, scope?: string) => {
     const src = scope ?? xml
-    const m = src.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`, 'i'))
+    const m = src.match(new RegExp(`<(?:[A-Za-z0-9_]+:)?${tag}[^>]*>([^<]*)<\\/(?:[A-Za-z0-9_]+:)?${tag}>`, 'i'))
     return m ? m[1].trim() : ''
   }
+  const getFirst = (tags: string[], scope?: string) => {
+    for (const tag of tags) { const v = get(tag, scope); if (v) return v }
+    return ''
+  }
 
-  // Pozycje faktury — <FaWiersz> lub <Wiersz>
-  const itemBlocks = [...xml.matchAll(/<FaWiersz>([\s\S]*?)<\/FaWiersz>/gi)]
+  // Obsługuje <FaWiersz> z dowolnym namespace prefix
+  const itemBlocks = [...xml.matchAll(/<(?:[A-Za-z0-9_]+:)?FaWiersz[^>]*>([\s\S]*?)<\/(?:[A-Za-z0-9_]+:)?FaWiersz>/gi)]
   const items: InvoiceLineItem[] = itemBlocks.map(m => ({
-    nr:        get('NrWierszaFa', m[1]) || get('NrWiersza', m[1]),
+    nr:        getFirst(['NrWierszaFa', 'NrWiersza'], m[1]),
     name:      get('P_7', m[1]),
     unit:      get('P_8A', m[1]),
     qty:       get('P_8B', m[1]),
-    unitPrice: get('P_9A', m[1]),
-    netValue:  get('P_11', m[1]),
+    unitPrice: getFirst(['P_9A', 'P_9B'], m[1]),   // P_9A=netto, P_9B=brutto — fallback
+    netValue:  getFirst(['P_11', 'P_11A'], m[1]),
     vatRate:   get('P_12', m[1]),
   })).filter(i => i.name)
 
