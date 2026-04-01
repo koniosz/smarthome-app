@@ -211,20 +211,21 @@ async function upsertCostItemForAllocation(
   invoice: { invoice_number: string | null; seller_name: string | null; invoice_date: string | null; ksef_number: string | null },
   amount: number,
   notes: string,
+  category: string = 'materials',
 ) {
   const description = [invoice.seller_name, invoice.invoice_number].filter(Boolean).join(' — ') || 'Faktura KSeF'
   const existing = await prisma.costItem.findFirst({ where: { ksef_allocation_id: allocationId } })
   if (existing) {
     return prisma.costItem.update({
       where: { id: existing.id },
-      data: { unit_price: amount, total_price: amount, description, notes: notes || undefined, invoice_number: invoice.invoice_number ?? '', date: invoice.invoice_date ?? new Date().toISOString().split('T')[0], updated_at: new Date().toISOString() } as any,
+      data: { category, unit_price: amount, total_price: amount, description, notes: notes || undefined, invoice_number: invoice.invoice_number ?? '', date: invoice.invoice_date ?? new Date().toISOString().split('T')[0], updated_at: new Date().toISOString() } as any,
     })
   }
   return prisma.costItem.create({
     data: {
       id:                 require('uuid').v4(),
       project_id:         projectId,
-      category:           'ksef_invoice',
+      category,
       description,
       quantity:           1,
       unit_price:         amount,
@@ -253,7 +254,7 @@ router.get('/invoices/:id/allocations', requireAuth, async (req: Request, res: R
 // POST /api/ksef/invoices/:id/allocations — dodaj alokację
 router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { project_id, amount, notes = '' } = req.body
+    const { project_id, amount, notes = '', category = 'materials' } = req.body
     if (!project_id || !amount) { res.status(400).json({ error: 'Wymagane: project_id, amount' }); return }
 
     const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
@@ -264,12 +265,12 @@ router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: 
     const now = new Date().toISOString()
 
     const allocation = await prisma.ksefInvoiceAllocation.create({
-      data: { id: allocationId, invoice_id: req.params.id, project_id, amount: parseFloat(amount), notes, created_at: now, updated_at: now },
+      data: { id: allocationId, invoice_id: req.params.id, project_id, amount: parseFloat(amount), notes, category, created_at: now, updated_at: now },
       include: { project: { select: { id: true, name: true, client_name: true } } },
     })
 
     // Utwórz CostItem w projekcie
-    await upsertCostItemForAllocation(allocationId, project_id, invoice, parseFloat(amount), notes)
+    await upsertCostItemForAllocation(allocationId, project_id, invoice, parseFloat(amount), notes, category)
 
     // Zaktualizuj project_id faktury (na pierwszy projekt jeśli jeszcze nie ustawiony)
     if (!invoice.project_id) {
@@ -283,7 +284,7 @@ router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: 
 // PATCH /api/ksef/allocations/:id — edytuj alokację
 router.patch('/allocations/:id', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { amount, notes } = req.body
+    const { amount, notes, category } = req.body
     const existing = await prisma.ksefInvoiceAllocation.findUnique({
       where: { id: req.params.id },
       include: { invoice: true },
@@ -292,12 +293,24 @@ router.patch('/allocations/:id', requireAuth, async (req: Request, res: Response
 
     const updated = await prisma.ksefInvoiceAllocation.update({
       where: { id: req.params.id },
-      data: { amount: amount !== undefined ? parseFloat(amount) : undefined, notes: notes ?? undefined, updated_at: new Date().toISOString() },
+      data: {
+        amount:   amount   !== undefined ? parseFloat(amount) : undefined,
+        notes:    notes    ?? undefined,
+        category: category ?? undefined,
+        updated_at: new Date().toISOString(),
+      },
       include: { project: { select: { id: true, name: true, client_name: true } } },
     })
 
     // Zaktualizuj CostItem
-    await upsertCostItemForAllocation(req.params.id, existing.project_id, existing.invoice, parseFloat(amount ?? existing.amount), notes ?? existing.notes)
+    await upsertCostItemForAllocation(
+      req.params.id,
+      existing.project_id,
+      existing.invoice,
+      parseFloat(amount ?? existing.amount),
+      notes ?? existing.notes,
+      category ?? (existing as any).category ?? 'materials',
+    )
 
     res.json(updated)
   } catch (err: any) { res.status(500).json({ error: err.message }) }

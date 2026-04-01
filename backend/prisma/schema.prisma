@@ -299,6 +299,7 @@ model KsefInvoiceAllocation {
   project_id String
   amount     Float   @default(0)
   notes      String  @default("")
+  category   String  @default("materials")
   created_at String
   updated_at String
 

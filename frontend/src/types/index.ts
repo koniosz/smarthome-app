@@ -333,6 +333,7 @@ export interface KsefInvoiceAllocation {
   project_id: string
   amount: number
   notes: string
+  category: string
   created_at: string
   updated_at: string
   project?: { id: string; name: string; client_name: string }

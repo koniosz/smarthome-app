@@ -302,10 +302,10 @@ export const ksefApi = {
   // Alokacje
   getAllocations: (invoiceId: string) =>
     api.get<import('../types').KsefInvoiceAllocation[]>(`/ksef/invoices/${invoiceId}/allocations`).then(r => r.data),
-  addAllocation: (invoiceId: string, project_id: string, amount: number, notes?: string) =>
-    api.post<import('../types').KsefInvoiceAllocation>(`/ksef/invoices/${invoiceId}/allocations`, { project_id, amount, notes }).then(r => r.data),
-  updateAllocation: (allocationId: string, amount: number, notes?: string) =>
-    api.patch<import('../types').KsefInvoiceAllocation>(`/ksef/allocations/${allocationId}`, { amount, notes }).then(r => r.data),
+  addAllocation: (invoiceId: string, project_id: string, amount: number, notes?: string, category?: string) =>
+    api.post<import('../types').KsefInvoiceAllocation>(`/ksef/invoices/${invoiceId}/allocations`, { project_id, amount, notes, category }).then(r => r.data),
+  updateAllocation: (allocationId: string, amount: number, notes?: string, category?: string) =>
+    api.patch<import('../types').KsefInvoiceAllocation>(`/ksef/allocations/${allocationId}`, { amount, notes, category }).then(r => r.data),
   deleteAllocation: (allocationId: string) =>
     api.delete(`/ksef/allocations/${allocationId}`).then(r => r.data),
 }

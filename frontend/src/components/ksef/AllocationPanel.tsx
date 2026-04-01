@@ -1,14 +1,46 @@
 import { useEffect, useState } from 'react'
 import { ksefApi, projectsApi } from '../../api/client'
-import type { KsefInvoice, KsefInvoiceAllocation, Project } from '../../types'
+import type { KsefInvoiceAllocation, KsefInvoice, Project } from '../../types'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
+const CATEGORIES = [
+  { value: 'materials',     label: 'Materiały',      color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  { value: 'subcontractor', label: 'Podwykonawca',   color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+  { value: 'other',         label: 'Inne',            color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
+]
+
+function CategoryBadge({ category }: { category: string }) {
+  const cat = CATEGORIES.find(c => c.value === category) ?? CATEGORIES[0]
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${cat.color}`}>
+      {cat.label}
+    </span>
+  )
+}
+
+function CategorySelect({ value, onChange, className = '' }: {
+  value: string
+  onChange: (v: string) => void
+  className?: string
+}) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className={`px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500 ${className}`}
+    >
+      {CATEGORIES.map(c => (
+        <option key={c.value} value={c.value}>{c.label}</option>
+      ))}
+    </select>
+  )
+}
+
 interface AllocationPanelProps {
   invoice: KsefInvoice
-  /** Czy user jest adminem (może widzieć wszystkie projekty) */
   isAdmin?: boolean
 }
 
@@ -23,6 +55,7 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
   const [newProjectId, setNewProjectId] = useState('')
   const [newAmount, setNewAmount]       = useState('')
   const [newNotes, setNewNotes]         = useState('')
+  const [newCategory, setNewCategory]   = useState('materials')
   const [saving, setSaving]             = useState(false)
 
   useEffect(() => {
@@ -42,21 +75,22 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
     if (!newProjectId || !newAmount) return
     setSaving(true)
     try {
-      const alloc = await ksefApi.addAllocation(invoice.id, newProjectId, parseFloat(newAmount), newNotes)
+      const alloc = await ksefApi.addAllocation(invoice.id, newProjectId, parseFloat(newAmount), newNotes, newCategory)
       setAllocations(prev => [...prev, alloc])
       setAdding(false)
       setNewProjectId('')
-      setNewAmount(fmt(remaining).replace(/\s/g, ''))
+      setNewAmount('')
       setNewNotes('')
+      setNewCategory('materials')
     } catch (e: any) {
       alert(e.response?.data?.error ?? e.message)
     } finally { setSaving(false) }
   }
 
-  const handleUpdate = async (alloc: KsefInvoiceAllocation, amount: string, notes: string) => {
+  const handleUpdate = async (alloc: KsefInvoiceAllocation, amount: string, notes: string, category: string) => {
     setSaving(true)
     try {
-      const updated = await ksefApi.updateAllocation(alloc.id, parseFloat(amount), notes)
+      const updated = await ksefApi.updateAllocation(alloc.id, parseFloat(amount), notes, category)
       setAllocations(prev => prev.map(a => a.id === updated.id ? updated : a))
       setEditingId(null)
     } catch (e: any) {
@@ -107,7 +141,7 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
               isEditing={editingId === alloc.id}
               onEdit={() => setEditingId(alloc.id)}
               onCancel={() => setEditingId(null)}
-              onSave={(amt, notes) => handleUpdate(alloc, amt, notes)}
+              onSave={(amt, notes, category) => handleUpdate(alloc, amt, notes, category)}
               onDelete={() => handleDelete(alloc.id)}
               saving={saving}
             />
@@ -118,20 +152,23 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
       {/* Formularz dodawania */}
       {adding ? (
         <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 space-y-2">
+          {/* Wiersz 1: Projekt */}
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Projekt</label>
+            <select
+              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              value={newProjectId}
+              onChange={e => setNewProjectId(e.target.value)}
+            >
+              <option value="">— wybierz projekt —</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name} ({p.client_name})</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Wiersz 2: Kwota + Kategoria */}
           <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Projekt</label>
-              <select
-                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                value={newProjectId}
-                onChange={e => setNewProjectId(e.target.value)}
-              >
-                <option value="">— wybierz projekt —</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.client_name})</option>
-                ))}
-              </select>
-            </div>
             <div>
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Kwota ({invoice.currency})</label>
               <input
@@ -144,7 +181,13 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
                 placeholder={remaining > 0 ? fmt(remaining) : '0.00'}
               />
             </div>
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Kategoria kosztu</label>
+              <CategorySelect value={newCategory} onChange={setNewCategory} className="w-full" />
+            </div>
           </div>
+
+          {/* Wiersz 3: Notatka */}
           <div>
             <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Notatka (opcjonalnie)</label>
             <input
@@ -155,8 +198,14 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
               placeholder="np. materiały do salonu"
             />
           </div>
+
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setAdding(false)} className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg">Anuluj</button>
+            <button
+              onClick={() => { setAdding(false); setNewProjectId(''); setNewAmount(''); setNewNotes(''); setNewCategory('materials') }}
+              className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg"
+            >
+              Anuluj
+            </button>
             <button
               onClick={handleAdd}
               disabled={saving || !newProjectId || !newAmount}
@@ -184,12 +233,13 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
   isEditing: boolean
   onEdit: () => void
   onCancel: () => void
-  onSave: (amount: string, notes: string) => void
+  onSave: (amount: string, notes: string, category: string) => void
   onDelete: () => void
   saving: boolean
 }) {
-  const [amount, setAmount] = useState(alloc.amount.toFixed(2))
-  const [notes, setNotes]   = useState(alloc.notes)
+  const [amount, setAmount]     = useState(alloc.amount.toFixed(2))
+  const [notes, setNotes]       = useState(alloc.notes)
+  const [category, setCategory] = useState(alloc.category || 'materials')
 
   if (isEditing) {
     return (
@@ -197,16 +247,37 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs text-gray-400 mb-0.5">Kwota ({currency})</label>
-            <input type="number" step="0.01" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500" value={amount} onChange={e => setAmount(e.target.value)} />
+            <input
+              type="number"
+              step="0.01"
+              className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+            />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-0.5">Notatka</label>
-            <input type="text" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500" value={notes} onChange={e => setNotes(e.target.value)} />
+            <label className="block text-xs text-gray-400 mb-0.5">Kategoria</label>
+            <CategorySelect value={category} onChange={setCategory} className="w-full" />
           </div>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-0.5">Notatka</label>
+          <input
+            type="text"
+            className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+          />
         </div>
         <div className="flex gap-1.5 justify-end">
           <button onClick={onCancel} className="px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded">Anuluj</button>
-          <button onClick={() => onSave(amount, notes)} disabled={saving} className="px-2 py-0.5 text-xs font-medium bg-violet-600 text-white rounded disabled:opacity-50">Zapisz</button>
+          <button
+            onClick={() => onSave(amount, notes, category)}
+            disabled={saving}
+            className="px-2 py-0.5 text-xs font-medium bg-violet-600 text-white rounded disabled:opacity-50"
+          >
+            Zapisz
+          </button>
         </div>
       </div>
     )
@@ -217,15 +288,28 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
       <div className="flex items-center gap-2 min-w-0">
         <span className="w-2 h-2 rounded-full bg-violet-400 shrink-0" />
         <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{alloc.project?.name ?? '—'}</span>
+        <CategoryBadge category={alloc.category || 'materials'} />
         {alloc.notes && <span className="text-xs text-gray-400 truncate">· {alloc.notes}</span>}
       </div>
       <div className="flex items-center gap-2 shrink-0 ml-2">
         <span className="text-xs font-semibold tabular-nums text-gray-800 dark:text-gray-100">{fmt(alloc.amount)} {currency}</span>
-        <button onClick={onEdit} className="p-0.5 text-gray-300 hover:text-violet-500 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-all" title="Edytuj">
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+        <button
+          onClick={onEdit}
+          className="p-0.5 text-gray-300 hover:text-violet-500 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-all"
+          title="Edytuj"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
         </button>
-        <button onClick={onDelete} className="p-0.5 text-gray-300 hover:text-red-500 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-all" title="Usuń">
-          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+        <button
+          onClick={onDelete}
+          className="p-0.5 text-gray-300 hover:text-red-500 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-all"
+          title="Usuń"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+          </svg>
         </button>
       </div>
     </div>
