@@ -264,12 +264,19 @@ export async function terminateSession(): Promise<void> {
 }
 
 /**
- * Pobierz faktury zakupowe za jeden chunk (max 3 miesiące — limit API)
+ * Pobierz faktury za jeden chunk (max 3 miesiące) dla danego subjectType
  */
-async function fetchInvoicesChunk(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
+async function fetchInvoicesChunk(
+  accessToken: string,
+  dateFrom: Date,
+  dateTo: Date,
+  subjectType: 'Subject1' | 'Subject2' | 'Subject3' | 'SubjectAuthorized',
+): Promise<any[]> {
   const all: any[] = []
   let pageOffset = 0
   const pageSize = 100
+  const fromStr = dateFrom.toISOString().split('T')[0]
+  const toStr   = dateTo.toISOString().split('T')[0]
 
   while (true) {
     let res: any
@@ -277,12 +284,8 @@ async function fetchInvoicesChunk(accessToken: string, dateFrom: Date, dateTo: D
       res = await axios.post(
         `${BASE_URL}/invoices/query/metadata`,
         {
-          subjectType: 'Subject3', // nabywca (kupujący)
-          dateRange: {
-            dateType: 'Issue',
-            from: dateFrom.toISOString().split('T')[0],
-            to:   dateTo.toISOString().split('T')[0],
-          },
+          subjectType,
+          dateRange: { dateType: 'Issue', from: fromStr, to: toStr },
         },
         {
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -291,13 +294,14 @@ async function fetchInvoicesChunk(accessToken: string, dateFrom: Date, dateTo: D
         },
       )
     } catch (err: any) {
-      throw new Error(`Invoice query failed: ${axiosError(err)}`)
+      // Loguj i pomiń — nie przerywaj całego sync
+      console.warn(`[KSeF] Chunk ${subjectType} ${fromStr}–${toStr} błąd: ${axiosError(err)}`)
+      break
     }
 
     const invoices: any[] = res.data.invoices ?? []
     all.push(...invoices)
-
-    console.log(`[KSeF] Chunk ${dateFrom.toISOString().split('T')[0]}–${dateTo.toISOString().split('T')[0]}: ${invoices.length} faktur (offset ${pageOffset}), hasMore=${res.data.hasMore}`)
+    console.log(`[KSeF] ${subjectType} ${fromStr}–${toStr}: ${invoices.length} faktur (offset ${pageOffset}), hasMore=${res.data.hasMore}`)
 
     if (!res.data.hasMore || invoices.length === 0) break
     pageOffset += pageSize
@@ -307,20 +311,30 @@ async function fetchInvoicesChunk(accessToken: string, dateFrom: Date, dateTo: D
 }
 
 /**
- * Pobierz faktury zakupowe za cały okres — automatycznie dzieli na chunki 3-miesięczne
+ * Pobierz faktury za cały okres — dzieli na chunki 90-dniowe, pyta o Subject1 i Subject3
+ * Subject1 = wystawca (sprzedażowe)
+ * Subject3 = nabywca (zakupowe)
  */
 async function fetchInvoices(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
   const all: any[] = []
-  const CHUNK_MS = 90 * 24 * 60 * 60 * 1000 // 90 dni w ms
+  const CHUNK_MS  = 89 * 24 * 60 * 60 * 1000 // 89 dni (bezpieczny margines)
+  const subjectTypes = ['Subject1', 'Subject3'] as const
+  const seen = new Set<string>() // deduplikacja po ksefNumber
 
-  let chunkStart = new Date(dateFrom)
-  while (chunkStart < dateTo) {
-    const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
-    const chunk = await fetchInvoicesChunk(accessToken, chunkStart, chunkEnd)
-    all.push(...chunk)
-    chunkStart = new Date(chunkEnd.getTime() + 24 * 60 * 60 * 1000) // następny dzień po końcu chunku
+  for (const subjectType of subjectTypes) {
+    let chunkStart = new Date(dateFrom)
+    while (chunkStart < dateTo) {
+      const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
+      const chunk = await fetchInvoicesChunk(accessToken, chunkStart, chunkEnd, subjectType)
+      for (const inv of chunk) {
+        const key = inv.ksefNumber ?? JSON.stringify(inv)
+        if (!seen.has(key)) { seen.add(key); all.push(inv) }
+      }
+      chunkStart = new Date(chunkEnd.getTime() + 24 * 60 * 60 * 1000)
+    }
   }
 
+  console.log(`[KSeF] Łącznie unikalnych faktur: ${all.length}`)
   return all
 }
 
