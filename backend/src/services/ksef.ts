@@ -294,9 +294,7 @@ async function fetchInvoicesChunk(
         },
       )
     } catch (err: any) {
-      // Loguj i pomiń — nie przerywaj całego sync
-      console.warn(`[KSeF] Chunk ${subjectType} ${fromStr}–${toStr} błąd: ${axiosError(err)}`)
-      break
+      throw new Error(`Invoice query failed (${subjectType} ${fromStr}–${toStr}): ${axiosError(err)}`)
     }
 
     const invoices: any[] = res.data.invoices ?? []
@@ -311,25 +309,37 @@ async function fetchInvoicesChunk(
 }
 
 /**
- * Pobierz faktury za cały okres — dzieli na chunki 90-dniowe, pyta o Subject1 i Subject3
- * Subject1 = wystawca (sprzedażowe)
- * Subject3 = nabywca (zakupowe)
+ * Pobierz faktury za cały okres — dzieli na chunki 89-dniowe
+ * Subject1 = Podmiot1 = sprzedażowe
+ * Subject2 = Podmiot2 = zakupowe
  */
-async function fetchInvoices(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
+async function fetchInvoices(
+  accessToken: string,
+  dateFrom: Date,
+  dateTo: Date,
+  errors: string[],
+): Promise<any[]> {
   const all: any[] = []
-  const CHUNK_MS  = 89 * 24 * 60 * 60 * 1000 // 89 dni (bezpieczny margines)
-  // Subject1 = sprzedażowe (Podmiot1), Subject2 = zakupowe (Podmiot2)
+  const CHUNK_MS     = 89 * 24 * 60 * 60 * 1000
   const subjectTypes = ['Subject1', 'Subject2'] as const
-  const seen = new Set<string>() // deduplikacja po ksefNumber
+  const seen         = new Set<string>()
 
   for (const subjectType of subjectTypes) {
     let chunkStart = new Date(dateFrom)
     while (chunkStart < dateTo) {
-      const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
-      const chunk = await fetchInvoicesChunk(accessToken, chunkStart, chunkEnd, subjectType)
-      for (const inv of chunk) {
-        const key = inv.ksefNumber ?? JSON.stringify(inv)
-        if (!seen.has(key)) { seen.add(key); all.push(inv) }
+      const chunkEnd  = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
+      const fromStr   = chunkStart.toISOString().split('T')[0]
+      const toStr     = chunkEnd.toISOString().split('T')[0]
+      try {
+        const chunk = await fetchInvoicesChunk(accessToken, chunkStart, chunkEnd, subjectType)
+        for (const inv of chunk) {
+          const key = inv.ksefNumber ?? JSON.stringify(inv)
+          if (!seen.has(key)) { seen.add(key); all.push(inv) }
+        }
+      } catch (err: any) {
+        const msg = `${subjectType} ${fromStr}–${toStr}: ${axiosError(err)}`
+        console.warn('[KSeF] Chunk error:', msg)
+        errors.push(msg)
       }
       chunkStart = new Date(chunkEnd.getTime() + 24 * 60 * 60 * 1000)
     }
@@ -378,7 +388,7 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
 
     console.log(`[KSeF] Synchronizacja od ${dateFrom.toISOString()} do ${dateTo.toISOString()}`)
 
-    const invoices = await fetchInvoices(accessToken, dateFrom, dateTo)
+    const invoices = await fetchInvoices(accessToken, dateFrom, dateTo, errors)
     fetched = invoices.length
     console.log(`[KSeF] Pobrano ${fetched} faktur łącznie`)
 
