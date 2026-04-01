@@ -10,30 +10,34 @@ function fmt(n: number) {
 interface InvoiceLineItem { nr: string; name: string; unit: string; qty: string; unitPrice: string; netValue: string; vatRate: string }
 
 function parseXml(xml: string): { fields: Record<string, string>; items: InvoiceLineItem[] } {
-  // Obsługuje tagi z namespace prefix (np. <tns:P_9A>, <fa:P_7>) oraz bez
-  const get = (tag: string, scope?: string) => {
-    const src = scope ?? xml
-    const m = src.match(new RegExp(`<(?:[A-Za-z0-9_]+:)?${tag}[^>]*>([^<]*)<\\/(?:[A-Za-z0-9_]+:)?${tag}>`, 'i'))
-    return m ? m[1].trim() : ''
+  const doc = new DOMParser().parseFromString(xml, 'application/xml')
+
+  const el = (tag: string, parent: Element | Document = doc): string => {
+    const hits = parent.getElementsByTagNameNS('*', tag)
+    if (hits.length > 0) return hits[0].textContent?.trim() ?? ''
+    const hits2 = parent.getElementsByTagName(tag)
+    return hits2.length > 0 ? hits2[0].textContent?.trim() ?? '' : ''
   }
-  const getFirst = (tags: string[], scope?: string) => {
-    for (const tag of tags) { const v = get(tag, scope); if (v) return v }
+  const elFirst = (tags: string[], parent: Element | Document = doc): string => {
+    for (const tag of tags) { const v = el(tag, parent); if (v) return v }
     return ''
   }
-  // Obsługuje <FaWiersz> z dowolnym namespace prefix
-  const itemBlocks = [...xml.matchAll(/<(?:[A-Za-z0-9_]+:)?FaWiersz[^>]*>([\s\S]*?)<\/(?:[A-Za-z0-9_]+:)?FaWiersz>/gi)]
-  const items: InvoiceLineItem[] = itemBlocks.map(m => ({
-    nr:        getFirst(['NrWierszaFa', 'NrWiersza'], m[1]),
-    name:      get('P_7', m[1]),
-    unit:      get('P_8A', m[1]),
-    qty:       get('P_8B', m[1]),
-    unitPrice: getFirst(['P_9A', 'P_9B'], m[1]),   // P_9A=netto, P_9B=brutto — fallback
-    netValue:  getFirst(['P_11', 'P_11A'], m[1]),
-    vatRate:   get('P_12', m[1]),
+
+  const rowsNS = doc.getElementsByTagNameNS('*', 'FaWiersz')
+  const rows   = rowsNS.length > 0 ? rowsNS : doc.getElementsByTagName('FaWiersz')
+  const items: InvoiceLineItem[] = Array.from(rows).map(row => ({
+    nr:        elFirst(['NrWierszaFa', 'NrWiersza'], row),
+    name:      el('P_7',  row),
+    unit:      el('P_8A', row),
+    qty:       el('P_8B', row),
+    unitPrice: elFirst(['P_9A', 'P_9B'], row),
+    netValue:  elFirst(['P_11', 'P_11A'], row),
+    vatRate:   el('P_12', row),
   })).filter(i => i.name)
+
   const fields = {
-    'Nr faktury': get('P_2'), 'Data': get('P_1'), 'Sprzedawca': get('Nazwa'),
-    'Netto': get('P_15'), 'VAT': get('P_16'), 'Brutto': get('P_17'),
+    'Nr faktury': el('P_2'), 'Data': el('P_1'), 'Sprzedawca': elFirst(['Nazwa']),
+    'Netto': el('P_15'), 'VAT': el('P_16'), 'Brutto': el('P_17'),
   }
   return { fields, items }
 }
