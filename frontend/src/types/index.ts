@@ -1,6 +1,6 @@
 export type ProjectType = 'installation' | 'developer' | 'service' | 'purchase'
 export type ProjectStatus = 'offer_submitted' | 'negotiation' | 'ordering' | 'installation' | 'closing' | 'cancelled'
-export type CostCategory = 'materials' | 'subcontractor' | 'other'
+export type CostCategory = 'materials' | 'subcontractor' | 'other' | 'ksef_invoice'
 export type PaymentType = 'standard' | 'additional_works'
 
 export interface Project {
@@ -208,6 +208,7 @@ export const COST_CATEGORY_LABELS: Record<CostCategory, string> = {
   materials: 'Materiały',
   subcontractor: 'Podwykonawca',
   other: 'Inne',
+  ksef_invoice: '📋 KSeF',
 }
 
 export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
@@ -326,6 +327,17 @@ export const SMART_FEATURES: { key: string; label: string; icon: string }[] = [
 
 // ─── KSeF ────────────────────────────────────────────────────────────────────
 
+export interface KsefInvoiceAllocation {
+  id: string
+  invoice_id: string
+  project_id: string
+  amount: number
+  notes: string
+  created_at: string
+  updated_at: string
+  project?: { id: string; name: string; client_name: string }
+}
+
 export interface KsefInvoice {
   id: string
   ksef_number: string | null
@@ -343,6 +355,7 @@ export interface KsefInvoice {
   is_shared: boolean
   created_at: string
   project?: { id: string; name: string; client_name: string } | null
+  allocations?: KsefInvoiceAllocation[]
 }
 
 export interface KsefStatus {

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { ksefApi, projectsApi } from '../api/client'
 import type { KsefInvoice, KsefStatus, Project } from '../types'
+import AllocationPanel from '../components/ksef/AllocationPanel'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -328,8 +329,8 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
   onUpdated: (inv: KsefInvoice) => void
   onRemoved: (id: string) => void
 }) {
-  const [assigning, setAssigning]   = useState(false)
-  const [previewing, setPreviewing] = useState(false)
+  const [showAllocations, setShowAllocations] = useState(false)
+  const [previewing, setPreviewing]           = useState(false)
 
   const handleRemove = async () => {
     if (!confirm('Usunąć tę fakturę z bazy? (Nie usuwa jej z KSeF)')) return
@@ -408,10 +409,12 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
               </svg>
             </button>
             <button
-              onClick={() => setAssigning(true)}
-              className="px-2 py-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded transition-colors"
+              onClick={() => setShowAllocations(v => !v)}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${showAllocations
+                ? 'bg-violet-600 text-white'
+                : 'text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20'}`}
             >
-              {isAssigned ? 'Zmień' : 'Przypisz'}
+              {showAllocations ? '▲ Alokacje' : '▼ Alokacje'}
             </button>
             <button
               onClick={handleRemove}
@@ -425,16 +428,15 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
           </div>
         </td>
       </tr>
+      {showAllocations && (
+        <tr className="border-b border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/10">
+          <td colSpan={6} className="px-4 py-3">
+            <AllocationPanel invoice={invoice} isAdmin={true} />
+          </td>
+        </tr>
+      )}
       {previewing && (
         <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />
-      )}
-      {assigning && (
-        <AssignModal
-          invoice={invoice}
-          projects={projects}
-          onClose={() => setAssigning(false)}
-          onAssigned={upd => { onUpdated(upd); setAssigning(false) }}
-        />
       )}
     </>
   )

@@ -19,6 +19,14 @@ const CAT_COLORS: Record<string, string> = {
   materials: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
   subcontractor: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
   other: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  ksef_invoice: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+}
+
+const CAT_LABELS: Record<string, string> = {
+  materials: 'Materiały',
+  subcontractor: 'Podwykonawca',
+  other: 'Inne',
+  ksef_invoice: '📋 KSeF',
 }
 
 function AttachmentCell({ item, onUpdated }: { item: CostItem; onUpdated?: (i: CostItem) => void }) {
@@ -199,8 +207,8 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated }: Pr
             <tr key={item.id} className="group border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/40">
               <td className="py-2 pr-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{item.date}</td>
               <td className="py-2 pr-3">
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${CAT_COLORS[item.category]}`}>
-                  {COST_CATEGORY_LABELS[item.category]}
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${CAT_COLORS[item.category] ?? CAT_COLORS.other}`}>
+                  {CAT_LABELS[item.category] ?? COST_CATEGORY_LABELS[item.category as keyof typeof COST_CATEGORY_LABELS] ?? item.category}
                 </span>
               </td>
               <td className="py-2 pr-3 text-gray-800 dark:text-gray-100">
@@ -211,19 +219,23 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated }: Pr
               <td className="py-2 pr-3 text-right text-gray-600 dark:text-gray-400">{fmt(item.unit_price)}</td>
               <td className="py-2 pr-3 text-right font-medium text-gray-800 dark:text-gray-100">{fmt(item.total_price)}</td>
               <td className="py-2 pr-3 text-center">
-                <AttachmentCell item={item} onUpdated={handleUpdated} />
+                {item.category !== 'ksef_invoice' && (
+                  <AttachmentCell item={item} onUpdated={handleUpdated} />
+                )}
               </td>
               <td className="py-2">
                 <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setEditingItem(item)}
-                    className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded transition-colors"
-                    title="Edytuj koszt"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                    </svg>
-                  </button>
+                  {item.category !== 'ksef_invoice' && (
+                    <button
+                      onClick={() => setEditingItem(item)}
+                      className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded transition-colors"
+                      title="Edytuj koszt"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     onClick={() => handleDelete(item.id)}
                     className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 dark:text-gray-600 dark:hover:text-red-400 dark:hover:bg-red-950/20 rounded transition-colors"

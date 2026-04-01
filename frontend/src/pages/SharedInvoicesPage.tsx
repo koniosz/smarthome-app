@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
-import { ksefApi, projectsApi } from '../api/client'
-import type { KsefInvoice, Project } from '../types'
+import { ksefApi } from '../api/client'
+import type { KsefInvoice } from '../types'
+import AllocationPanel from '../components/ksef/AllocationPanel'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -26,18 +27,14 @@ function parseXml(xml: string): { fields: Record<string, string>; items: Invoice
   return { fields, items }
 }
 
-function InvoiceCard({ invoice, projects, onUpdated }: {
+function InvoiceCard({ invoice, onUpdated }: {
   invoice: KsefInvoice
-  projects: Project[]
   onUpdated: (inv: KsefInvoice) => void
 }) {
-  const [expanded, setExpanded]   = useState(false)
-  const [xml, setXml]             = useState<string | null>(null)
-  const [loadingXml, setLoadingXml] = useState(false)
-  const [assigning, setAssigning] = useState(false)
-  const [projectId, setProjectId] = useState(invoice.project_id ?? '')
-  const [notes, setNotes]         = useState(invoice.notes ?? '')
-  const [saving, setSaving]       = useState(false)
+  const [expanded, setExpanded]       = useState(false)
+  const [xml, setXml]                 = useState<string | null>(null)
+  const [loadingXml, setLoadingXml]   = useState(false)
+  const [showAllocations, setShowAllocations] = useState(false)
 
   const loadXml = async () => {
     if (xml) { setExpanded(e => !e); return }
@@ -47,15 +44,6 @@ function InvoiceCard({ invoice, projects, onUpdated }: {
       setXml(data)
       setExpanded(true)
     } catch (e) { /* ignore */ } finally { setLoadingXml(false) }
-  }
-
-  const handleAssign = async () => {
-    setSaving(true)
-    try {
-      const updated = await ksefApi.assignShared(invoice.id, projectId || null, notes)
-      onUpdated(updated)
-      setAssigning(false)
-    } finally { setSaving(false) }
   }
 
   const { fields, items } = xml ? parseXml(xml) : { fields: {}, items: [] }
@@ -82,10 +70,12 @@ function InvoiceCard({ invoice, projects, onUpdated }: {
             <span className="text-xs px-2 py-1 bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400 rounded-full">Nieprzypisana</span>
           )}
           <button
-            onClick={() => setAssigning(a => !a)}
-            className="px-2.5 py-1 text-xs font-medium text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
+            onClick={() => setShowAllocations(v => !v)}
+            className={`px-2.5 py-1 text-xs font-medium border rounded-lg transition-colors ${showAllocations
+              ? 'bg-violet-600 border-violet-600 text-white'
+              : 'text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20'}`}
           >
-            {invoice.project ? 'Zmień projekt' : 'Przypisz'}
+            {showAllocations ? '▲ Alokacje' : '▼ Alokacje'}
           </button>
           <button
             onClick={loadXml}
@@ -97,28 +87,10 @@ function InvoiceCard({ invoice, projects, onUpdated }: {
         </div>
       </div>
 
-      {/* Assign panel */}
-      {assigning && (
-        <div className="px-4 pb-4 border-t border-gray-50 dark:border-gray-800 pt-3 space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Projekt</label>
-            <select
-              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
-              value={projectId}
-              onChange={e => setProjectId(e.target.value)}
-            >
-              <option value="">— Nieprzypisana —</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name} ({p.client_name})</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Notatka</label>
-            <input type="text" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={notes} onChange={e => setNotes(e.target.value)} placeholder="np. materiały do salonu" />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setAssigning(false)} className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">Anuluj</button>
-            <button onClick={handleAssign} disabled={saving} className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50">{saving ? 'Zapisuję…' : 'Zapisz'}</button>
-          </div>
+      {/* Allocation panel */}
+      {showAllocations && (
+        <div className="px-4 pb-4 border-t border-violet-100 dark:border-violet-900/30 pt-3 bg-violet-50/30 dark:bg-violet-950/10">
+          <AllocationPanel invoice={invoice} />
         </div>
       )}
 
@@ -163,7 +135,6 @@ function InvoiceCard({ invoice, projects, onUpdated }: {
 
 export default function SharedInvoicesPage() {
   const [invoices, setInvoices] = useState<KsefInvoice[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
   const [total, setTotal]       = useState(0)
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
@@ -173,13 +144,9 @@ export default function SharedInvoicesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [res, projs] = await Promise.all([
-        ksefApi.sharedInvoices({ search: search || undefined, page, limit: LIMIT }),
-        projectsApi.list(),
-      ])
+      const res = await ksefApi.sharedInvoices({ search: search || undefined, page, limit: LIMIT })
       setInvoices(res.invoices)
       setTotal(res.total)
-      setProjects(projs)
     } finally { setLoading(false) }
   }, [search, page])
 
@@ -219,7 +186,6 @@ export default function SharedInvoicesPage() {
             <InvoiceCard
               key={inv.id}
               invoice={inv}
-              projects={projects}
               onUpdated={updated => setInvoices(prev => prev.map(i => i.id === updated.id ? updated : i))}
             />
           ))}

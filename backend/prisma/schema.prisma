@@ -33,7 +33,8 @@ model Project {
   project_members ProjectMember[]
   ai_quotes       AiQuote[]
   cost_audit_log  CostAuditLog[]
-  ksef_invoices   KsefInvoice[]
+  ksef_invoices       KsefInvoice[]
+  ksef_allocations    KsefInvoiceAllocation[]
 
   @@map("projects")
 }
@@ -52,8 +53,10 @@ model CostItem {
   created_at          String
   attachment_filename String?
   attachment_original String?
+  ksef_allocation_id  String?  @unique   // powiązanie z alokacją KSeF
 
   project             Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  ksef_allocation     KsefInvoiceAllocation? @relation(fields: [ksef_allocation_id], references: [id], onDelete: SetNull)
 
   @@map("cost_items")
 }
@@ -284,9 +287,26 @@ model KsefInvoice {
   raw_data         String?            // surowe dane JSON z KSeF (do debugowania)
   created_at       String
 
-  project  Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  project     Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  allocations KsefInvoiceAllocation[]
 
   @@map("ksef_invoices")
+}
+
+model KsefInvoiceAllocation {
+  id         String  @id
+  invoice_id String
+  project_id String
+  amount     Float   @default(0)
+  notes      String  @default("")
+  created_at String
+  updated_at String
+
+  invoice   KsefInvoice @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  project   Project     @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  cost_item CostItem?
+
+  @@map("ksef_invoice_allocations")
 }
 
 model KsefSession {

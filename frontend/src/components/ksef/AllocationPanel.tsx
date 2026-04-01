@@ -1,0 +1,233 @@
+import { useEffect, useState } from 'react'
+import { ksefApi, projectsApi } from '../../api/client'
+import type { KsefInvoice, KsefInvoiceAllocation, Project } from '../../types'
+
+function fmt(n: number) {
+  return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
+}
+
+interface AllocationPanelProps {
+  invoice: KsefInvoice
+  /** Czy user jest adminem (może widzieć wszystkie projekty) */
+  isAdmin?: boolean
+}
+
+export default function AllocationPanel({ invoice, isAdmin = false }: AllocationPanelProps) {
+  const [allocations, setAllocations] = useState<KsefInvoiceAllocation[]>([])
+  const [projects, setProjects]       = useState<Project[]>([])
+  const [loading, setLoading]         = useState(true)
+  const [adding, setAdding]           = useState(false)
+  const [editingId, setEditingId]     = useState<string | null>(null)
+
+  // Form state
+  const [newProjectId, setNewProjectId] = useState('')
+  const [newAmount, setNewAmount]       = useState('')
+  const [newNotes, setNewNotes]         = useState('')
+  const [saving, setSaving]             = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      ksefApi.getAllocations(invoice.id),
+      projectsApi.list(),
+    ]).then(([allocs, projs]) => {
+      setAllocations(allocs)
+      setProjects(projs)
+    }).finally(() => setLoading(false))
+  }, [invoice.id])
+
+  const totalAllocated = allocations.reduce((s, a) => s + a.amount, 0)
+  const remaining      = invoice.gross_amount - totalAllocated
+
+  const handleAdd = async () => {
+    if (!newProjectId || !newAmount) return
+    setSaving(true)
+    try {
+      const alloc = await ksefApi.addAllocation(invoice.id, newProjectId, parseFloat(newAmount), newNotes)
+      setAllocations(prev => [...prev, alloc])
+      setAdding(false)
+      setNewProjectId('')
+      setNewAmount(fmt(remaining).replace(/\s/g, ''))
+      setNewNotes('')
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? e.message)
+    } finally { setSaving(false) }
+  }
+
+  const handleUpdate = async (alloc: KsefInvoiceAllocation, amount: string, notes: string) => {
+    setSaving(true)
+    try {
+      const updated = await ksefApi.updateAllocation(alloc.id, parseFloat(amount), notes)
+      setAllocations(prev => prev.map(a => a.id === updated.id ? updated : a))
+      setEditingId(null)
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? e.message)
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Usunąć alokację? Koszt w projekcie zostanie również usunięty.')) return
+    try {
+      await ksefApi.deleteAllocation(id)
+      setAllocations(prev => prev.filter(a => a.id !== id))
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? e.message)
+    }
+  }
+
+  if (loading) return <div className="text-xs text-gray-400 py-2">Ładowanie alokacji…</div>
+
+  return (
+    <div className="space-y-3">
+      {/* Pasek postępu kwoty */}
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="text-gray-500 dark:text-gray-400">
+          Przypisano: <span className="font-semibold text-gray-700 dark:text-gray-200">{fmt(totalAllocated)}</span> / {fmt(invoice.gross_amount)} {invoice.currency}
+        </span>
+        <span className={remaining < -0.01 ? 'text-red-500 font-semibold' : remaining > 0.01 ? 'text-orange-500' : 'text-green-500 font-semibold'}>
+          {remaining > 0.01 ? `Pozostało: ${fmt(remaining)}` : remaining < -0.01 ? `Przekroczono o ${fmt(-remaining)}` : '✓ Całość przypisana'}
+        </span>
+      </div>
+      {invoice.gross_amount > 0 && (
+        <div className="w-full h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${totalAllocated > invoice.gross_amount ? 'bg-red-500' : 'bg-violet-500'}`}
+            style={{ width: `${Math.min(100, (totalAllocated / invoice.gross_amount) * 100)}%` }}
+          />
+        </div>
+      )}
+
+      {/* Lista alokacji */}
+      {allocations.length > 0 && (
+        <div className="space-y-1">
+          {allocations.map(alloc => (
+            <AllocationRow
+              key={alloc.id}
+              alloc={alloc}
+              currency={invoice.currency}
+              isEditing={editingId === alloc.id}
+              onEdit={() => setEditingId(alloc.id)}
+              onCancel={() => setEditingId(null)}
+              onSave={(amt, notes) => handleUpdate(alloc, amt, notes)}
+              onDelete={() => handleDelete(alloc.id)}
+              saving={saving}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Formularz dodawania */}
+      {adding ? (
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Projekt</label>
+              <select
+                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                value={newProjectId}
+                onChange={e => setNewProjectId(e.target.value)}
+              >
+                <option value="">— wybierz projekt —</option>
+                {projects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.client_name})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Kwota ({invoice.currency})</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                value={newAmount}
+                onChange={e => setNewAmount(e.target.value)}
+                placeholder={remaining > 0 ? fmt(remaining) : '0.00'}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Notatka (opcjonalnie)</label>
+            <input
+              type="text"
+              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              value={newNotes}
+              onChange={e => setNewNotes(e.target.value)}
+              placeholder="np. materiały do salonu"
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setAdding(false)} className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg">Anuluj</button>
+            <button
+              onClick={handleAdd}
+              disabled={saving || !newProjectId || !newAmount}
+              className="px-3 py-1 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50"
+            >
+              {saving ? 'Zapisuję…' : 'Dodaj alokację'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => { setAdding(true); setNewAmount(remaining > 0 ? remaining.toFixed(2) : '') }}
+          className="w-full py-1.5 text-xs text-violet-600 dark:text-violet-400 border border-dashed border-violet-300 dark:border-violet-800 rounded-lg hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors"
+        >
+          + Przypisz kwotę do projektu
+        </button>
+      )}
+    </div>
+  )
+}
+
+function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, onDelete, saving }: {
+  alloc: KsefInvoiceAllocation
+  currency: string
+  isEditing: boolean
+  onEdit: () => void
+  onCancel: () => void
+  onSave: (amount: string, notes: string) => void
+  onDelete: () => void
+  saving: boolean
+}) {
+  const [amount, setAmount] = useState(alloc.amount.toFixed(2))
+  const [notes, setNotes]   = useState(alloc.notes)
+
+  if (isEditing) {
+    return (
+      <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-2 space-y-1.5">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-gray-400 mb-0.5">Kwota ({currency})</label>
+            <input type="number" step="0.01" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500" value={amount} onChange={e => setAmount(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-0.5">Notatka</label>
+            <input type="text" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500" value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+        </div>
+        <div className="flex gap-1.5 justify-end">
+          <button onClick={onCancel} className="px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded">Anuluj</button>
+          <button onClick={() => onSave(amount, notes)} disabled={saving} className="px-2 py-0.5 text-xs font-medium bg-violet-600 text-white rounded disabled:opacity-50">Zapisz</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 group">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="w-2 h-2 rounded-full bg-violet-400 shrink-0" />
+        <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{alloc.project?.name ?? '—'}</span>
+        {alloc.notes && <span className="text-xs text-gray-400 truncate">· {alloc.notes}</span>}
+      </div>
+      <div className="flex items-center gap-2 shrink-0 ml-2">
+        <span className="text-xs font-semibold tabular-nums text-gray-800 dark:text-gray-100">{fmt(alloc.amount)} {currency}</span>
+        <button onClick={onEdit} className="p-0.5 text-gray-300 hover:text-violet-500 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-all" title="Edytuj">
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+        </button>
+        <button onClick={onDelete} className="p-0.5 text-gray-300 hover:text-red-500 dark:text-gray-600 opacity-0 group-hover:opacity-100 transition-all" title="Usuń">
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+        </button>
+      </div>
+    </div>
+  )
+}
