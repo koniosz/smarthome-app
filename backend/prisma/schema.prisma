@@ -280,6 +280,7 @@ model KsefInvoice {
   acquisition_date String?            // Data pobrania z KSeF
   project_id       String?            // null = nieprzypisana
   notes            String?            // notatka admina
+  is_shared        Boolean  @default(false)
   raw_data         String?            // surowe dane JSON z KSeF (do debugowania)
   created_at       String
 

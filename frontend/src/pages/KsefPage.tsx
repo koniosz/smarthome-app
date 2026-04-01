@@ -139,23 +139,47 @@ function AssignModal({ invoice, projects, onClose, onAssigned }: {
   )
 }
 
-/** Parsuj XML faktury KSeF i wyciągnij kluczowe pola do wyświetlenia */
-function parseInvoiceXml(xml: string): Record<string, string> {
-  const get = (tag: string) => {
-    const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`, 'i'))
+interface InvoiceLineItem {
+  nr: string
+  name: string
+  unit: string
+  qty: string
+  unitPrice: string
+  netValue: string
+  vatRate: string
+}
+
+function parseInvoiceXml(xml: string): { fields: Record<string, string>; items: InvoiceLineItem[] } {
+  const get = (tag: string, scope?: string) => {
+    const src = scope ?? xml
+    const m = src.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`, 'i'))
     return m ? m[1].trim() : ''
   }
-  return {
-    'Nr faktury':     get('P_2') || get('NrFaKorygowanej') || '',
+
+  // Pozycje faktury — <FaWiersz> lub <Wiersz>
+  const itemBlocks = [...xml.matchAll(/<FaWiersz>([\s\S]*?)<\/FaWiersz>/gi)]
+  const items: InvoiceLineItem[] = itemBlocks.map(m => ({
+    nr:        get('NrWierszaFa', m[1]) || get('NrWiersza', m[1]),
+    name:      get('P_7', m[1]),
+    unit:      get('P_8A', m[1]),
+    qty:       get('P_8B', m[1]),
+    unitPrice: get('P_9A', m[1]),
+    netValue:  get('P_11', m[1]),
+    vatRate:   get('P_12', m[1]),
+  })).filter(i => i.name)
+
+  const fields: Record<string, string> = {
+    'Nr faktury':       get('P_2') || '',
     'Data wystawienia': get('P_1') || '',
-    'Sprzedawca NIP': get('NIP') || '',
-    'Sprzedawca':     get('Nazwa') || '',
-    'Nabywca':        get('Nazwa') || '',
-    'Wartość netto':  get('P_15') || '',
-    'Kwota VAT':      get('P_16') || '',
-    'Wartość brutto': get('P_17') || '',
-    'Waluta':         get('KodWaluty') || 'PLN',
+    'Sprzedawca':       get('Nazwa') || '',
+    'NIP sprzedawcy':   get('NIP') || '',
+    'Wartość netto':    get('P_15') || '',
+    'Kwota VAT':        get('P_16') || '',
+    'Wartość brutto':   get('P_17') || '',
+    'Waluta':           get('KodWaluty') || 'PLN',
   }
+
+  return { fields, items }
 }
 
 function InvoicePreviewModal({ invoice, onClose }: {
@@ -184,7 +208,7 @@ function InvoicePreviewModal({ invoice, onClose }: {
     URL.revokeObjectURL(url)
   }
 
-  const fields = xml ? parseInvoiceXml(xml) : {}
+  const { fields, items } = xml ? parseInvoiceXml(xml) : { fields: {}, items: [] }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
@@ -228,6 +252,39 @@ function InvoicePreviewModal({ invoice, onClose }: {
                   </div>
                 ))}
               </div>
+
+              {/* Pozycje faktury */}
+              {items.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Pozycje faktury ({items.length})</h3>
+                  <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-800">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+                          <th className="text-left px-3 py-2">Nazwa towaru/usługi</th>
+                          <th className="text-right px-3 py-2">Ilość</th>
+                          <th className="text-left px-3 py-2">J.m.</th>
+                          <th className="text-right px-3 py-2">Cena netto</th>
+                          <th className="text-right px-3 py-2">Wartość netto</th>
+                          <th className="text-right px-3 py-2">VAT %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((item, i) => (
+                          <tr key={i} className="border-t border-gray-50 dark:border-gray-800">
+                            <td className="px-3 py-2 text-gray-800 dark:text-gray-100 font-medium max-w-[200px]">{item.name}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{item.qty}</td>
+                            <td className="px-3 py-2">{item.unit}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{item.unitPrice}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-medium">{item.netValue}</td>
+                            <td className="px-3 py-2 text-right">{item.vatRate}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Dane z naszej bazy */}
               <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
@@ -326,6 +383,20 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
         </td>
         <td className="py-2.5">
           <div className="flex items-center gap-1">
+            <button
+              onClick={async () => {
+                const updated = await ksefApi.share(invoice.id, !invoice.is_shared)
+                onUpdated(updated)
+              }}
+              className={`p-1 rounded transition-colors ${invoice.is_shared
+                ? 'text-green-500 dark:text-green-400 hover:text-green-700'
+                : 'text-gray-300 dark:text-gray-600 hover:text-green-500'}`}
+              title={invoice.is_shared ? 'Cofnij udostępnienie' : 'Udostępnij użytkownikom'}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+            </button>
             <button
               onClick={() => setPreviewing(true)}
               className="p-1 text-gray-400 hover:text-violet-600 dark:hover:text-violet-400 rounded transition-colors"

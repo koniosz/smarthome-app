@@ -340,6 +340,7 @@ export interface KsefInvoice {
   acquisition_date: string | null
   project_id: string | null
   notes: string | null
+  is_shared: boolean
   created_at: string
   project?: { id: string; name: string; client_name: string } | null
 }

@@ -284,4 +284,18 @@ export const ksefApi = {
 
   debugAuth: () =>
     api.get<Record<string, any>>('/ksef/debug-auth').then(r => r.data),
+
+  share: (id: string, is_shared: boolean) =>
+    api.patch<import('../types').KsefInvoice>(`/ksef/invoices/${id}/share`, { is_shared }).then(r => r.data),
+
+  sharedInvoices: (params?: { search?: string; page?: number; limit?: number }) =>
+    api.get<{ invoices: import('../types').KsefInvoice[]; total: number; page: number; limit: number }>(
+      '/ksef/shared', { params }
+    ).then(r => r.data),
+
+  getSharedXml: (id: string) =>
+    api.get<string>(`/ksef/shared/${id}/xml`, { responseType: 'text' }).then(r => r.data),
+
+  assignShared: (id: string, project_id: string | null, notes?: string) =>
+    api.patch<import('../types').KsefInvoice>(`/ksef/shared/${id}/assign`, { project_id, notes }).then(r => r.data),
 }

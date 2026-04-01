@@ -282,6 +282,12 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
         >
           📦 Katalog
         </button>
+        <button
+          onClick={() => navigate('/faktury')}
+          className="px-4 py-2 text-sm font-medium rounded-lg transition-colors text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+        >
+          📄 Faktury
+        </button>
       </nav>
 
       <div className="flex items-center gap-2 flex-1 justify-end">

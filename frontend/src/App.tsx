@@ -10,6 +10,7 @@ import AdminView from './pages/AdminView'
 import ProductCatalogPage from './pages/ProductCatalogPage'
 import AiExamplesPage from './pages/AiExamplesPage'
 import KsefPage from './pages/KsefPage'
+import SharedInvoicesPage from './pages/SharedInvoicesPage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
@@ -77,6 +78,7 @@ function AppContent() {
             <Route path="/ksef" element={
               <AdminRoute><KsefPage /></AdminRoute>
             } />
+            <Route path="/faktury" element={<SharedInvoicesPage />} />
           </Routes>
         </main>
       </div>
