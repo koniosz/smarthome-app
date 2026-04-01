@@ -258,27 +258,27 @@ function InvoicePreviewModal({ invoice, onClose }: {
               {items.length > 0 && (
                 <div>
                   <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Pozycje faktury ({items.length})</h3>
-                  <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-800">
-                    <table className="w-full text-xs">
+                  <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-700">
+                    <table className="w-full text-xs text-gray-800 dark:text-gray-100">
                       <thead>
-                        <tr className="bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
-                          <th className="text-left px-3 py-2">Nazwa towaru/usługi</th>
-                          <th className="text-right px-3 py-2">Ilość</th>
-                          <th className="text-left px-3 py-2">J.m.</th>
-                          <th className="text-right px-3 py-2">Cena netto</th>
-                          <th className="text-right px-3 py-2">Wartość netto</th>
-                          <th className="text-right px-3 py-2">VAT %</th>
+                        <tr className="bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
+                          <th className="text-left px-3 py-2 font-semibold">Nazwa towaru/usługi</th>
+                          <th className="text-right px-3 py-2 font-semibold">Ilość</th>
+                          <th className="text-left px-3 py-2 font-semibold">J.m.</th>
+                          <th className="text-right px-3 py-2 font-semibold">Cena netto</th>
+                          <th className="text-right px-3 py-2 font-semibold">Wartość netto</th>
+                          <th className="text-right px-3 py-2 font-semibold">VAT %</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                         {items.map((item, i) => (
-                          <tr key={i} className="border-t border-gray-50 dark:border-gray-800">
-                            <td className="px-3 py-2 text-gray-800 dark:text-gray-100 font-medium max-w-[200px]">{item.name}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{item.qty}</td>
-                            <td className="px-3 py-2 text-gray-600 dark:text-gray-300">{item.unit}</td>
-                            <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{item.unitPrice}</td>
-                            <td className="px-3 py-2 text-right tabular-nums font-medium text-gray-800 dark:text-gray-100">{item.netValue}</td>
-                            <td className="px-3 py-2 text-right text-gray-600 dark:text-gray-300">{item.vatRate}%</td>
+                          <tr key={i} className="bg-white dark:bg-gray-800">
+                            <td className="px-3 py-2 font-medium max-w-[200px]">{item.name}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{item.qty}</td>
+                            <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{item.unit}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{item.unitPrice}</td>
+                            <td className="px-3 py-2 text-right tabular-nums font-semibold">{item.netValue}</td>
+                            <td className="px-3 py-2 text-right text-gray-500 dark:text-gray-400">{item.vatRate}%</td>
                           </tr>
                         ))}
                       </tbody>
