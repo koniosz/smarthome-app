@@ -270,7 +270,7 @@ async function fetchInvoicesChunk(
   accessToken: string,
   dateFrom: Date,
   dateTo: Date,
-  subjectType: 'Subject1' | 'Subject2' | 'Subject3' | 'SubjectAuthorized',
+  subjectType: 'Subject1' | 'Subject2' | 'Subject3' | 'SubjectAuthorized' | string,
 ): Promise<any[]> {
   const all: any[] = []
   let pageOffset = 0
@@ -318,7 +318,8 @@ async function fetchInvoicesChunk(
 async function fetchInvoices(accessToken: string, dateFrom: Date, dateTo: Date): Promise<any[]> {
   const all: any[] = []
   const CHUNK_MS  = 89 * 24 * 60 * 60 * 1000 // 89 dni (bezpieczny margines)
-  const subjectTypes = ['Subject1', 'Subject3'] as const
+  // Subject1 = sprzedażowe (Podmiot1), Subject2 = zakupowe (Podmiot2)
+  const subjectTypes = ['Subject1', 'Subject2'] as const
   const seen = new Set<string>() // deduplikacja po ksefNumber
 
   for (const subjectType of subjectTypes) {
