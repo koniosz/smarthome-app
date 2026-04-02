@@ -1,6 +1,10 @@
+// WAŻNE: ten import MUSI być jako pierwszy w całej aplikacji
+import 'react-native-gesture-handler';
+
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../src/contexts/AuthContext';
 
@@ -16,10 +20,8 @@ function RootLayoutNav() {
     const inAuthGroup = segments[0] === '(auth)';
 
     if (!user && !inAuthGroup) {
-      // Not signed in — go to login
       router.replace('/(auth)/login');
     } else if (user && inAuthGroup) {
-      // Signed in but still on auth screen — go to app
       router.replace('/(app)/');
     }
   }, [user, loading, segments]);
@@ -35,11 +37,13 @@ function RootLayoutNav() {
 // ─── Root layout ─────────────────────────────────────────────────────────────
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <StatusBar style="light" />
-        <RootLayoutNav />
-      </AuthProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <StatusBar style="light" />
+          <RootLayoutNav />
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
