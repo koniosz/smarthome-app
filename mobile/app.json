@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "SHC Manager",
+    "slug": "shc-manager",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "shcmanager",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#6d28d9"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "pl.smarthomecenter.shcmanager",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Aparat służy do fotografowania dokumentów i kosztów",
+        "NSPhotoLibraryUsageDescription": "Galeria służy do wyboru zdjęć dokumentów",
+        "NSPhotoLibraryAddUsageDescription": "Zapis zdjęć dokumentów"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#6d28d9"
+      },
+      "package": "pl.smarthomecenter.shcmanager"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Aplikacja potrzebuje dostępu do galerii",
+          "cameraPermission": "Aplikacja potrzebuje dostępu do aparatu"
+        }
+      ]
+    ]
+  }
+}
