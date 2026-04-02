@@ -8,6 +8,19 @@ function now() {
   return new Date().toISOString()
 }
 
+function auditUser(req: Request) {
+  const u = (req as any).user
+  return { user_id: u?.id ?? null, user_name: u?.display_name ?? u?.email ?? 'System' }
+}
+
+async function logActivity(projectId: string, user: { user_id: string | null; user_name: string }, action: string, entity: string, description: string, entityId?: string) {
+  await db.cost_audit_log.insert({
+    id: uuidv4(), project_id: projectId, action, entity,
+    entity_id: entityId ?? null, description, user_id: user.user_id,
+    user_name: user.user_name, created_at: now(),
+  })
+}
+
 async function computeCosts(projectId: string) {
   const costItems = await db.cost_items.forProject(projectId)
   const laborEntries = await db.labor_entries.forProject(projectId)
@@ -116,6 +129,12 @@ router.post('/', async (req: Request, res: Response) => {
       await db.project_members.add(project.id, user.id)
     }
 
+    // Log: projekt utworzony
+    const creator = auditUser(req)
+    await logActivity(project.id, creator, 'created', 'project',
+      `Projekt utworzony${client_name ? ` dla klienta: ${client_name}` : ''}${budget_amount ? ` · Budżet: ${budget_amount} PLN` : ''}`,
+      project.id)
+
     res.status(201).json(project)
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })
@@ -185,6 +204,20 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (description !== undefined) patch.description = description
 
     await db.projects.update(req.params.id, patch)
+
+    // Log: co się zmieniło
+    const changes: string[] = []
+    if (status !== undefined && status !== existing.status) changes.push(`Status: ${existing.status} → ${status}`)
+    if (budget_amount !== undefined && budget_amount !== existing.budget_amount) changes.push(`Budżet: ${existing.budget_amount} → ${budget_amount} PLN`)
+    if (name !== undefined && name !== existing.name) changes.push(`Nazwa: ${existing.name} → ${name}`)
+    if (client_name !== undefined && client_name !== existing.client_name) changes.push(`Klient: ${client_name}`)
+    if (start_date !== undefined && start_date !== existing.start_date) changes.push(`Data rozpoczęcia: ${start_date}`)
+    if (end_date !== undefined && end_date !== existing.end_date) changes.push(`Data zakończenia: ${end_date}`)
+    if (changes.length > 0) {
+      const user = auditUser(req)
+      await logActivity(req.params.id, user, 'updated', 'project', `Edytowano projekt: ${changes.join(' · ')}`, req.params.id)
+    }
+
     res.json(await db.projects.find(req.params.id))
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })

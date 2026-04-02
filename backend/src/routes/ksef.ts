@@ -1,10 +1,31 @@
 import { Router, Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
+import { v4 as uuidv4 } from 'uuid'
 import { requireAdmin, requireAuth } from '../middleware/auth'
 import { syncInvoices, getStatus, debugAuth } from '../services/ksef'
+import db from '../db'
 
 const prisma = new PrismaClient()
 const router = Router()
+
+function auditUser(req: Request) {
+  const u = (req as any).user
+  return { user_id: u?.id ?? null, user_name: u?.display_name ?? u?.email ?? 'System' }
+}
+
+async function logKsefActivity(projectId: string, user: { user_id: string | null; user_name: string }, action: string, description: string, entityId?: string) {
+  await db.cost_audit_log.insert({
+    id: uuidv4(), project_id: projectId, action, entity: 'ksef',
+    entity_id: entityId ?? null, description, user_id: user.user_id,
+    user_name: user.user_name, created_at: new Date().toISOString(),
+  })
+}
+
+const CATEGORIES_PL: Record<string, string> = {
+  materials: 'Materiały',
+  subcontractor: 'Podwykonawca',
+  other: 'Inne',
+}
 
 // ── Admin-only endpoints ──────────────────────────────────────────────────────
 
@@ -277,6 +298,12 @@ router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: 
       await prisma.ksefInvoice.update({ where: { id: req.params.id }, data: { project_id } })
     }
 
+    // Log aktywności
+    const user = auditUser(req)
+    await logKsefActivity(project_id, user, 'add',
+      `Przypisano fakturę KSeF: ${invoice.seller_name ?? ''} ${invoice.invoice_number ?? ''} — ${parseFloat(amount).toFixed(2)} ${invoice.currency} (${CATEGORIES_PL[category] ?? category})`,
+      allocationId)
+
     res.status(201).json(allocation)
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
@@ -319,11 +346,25 @@ router.patch('/allocations/:id', requireAuth, async (req: Request, res: Response
 // DELETE /api/ksef/allocations/:id — usuń alokację i powiązany CostItem
 router.delete('/allocations/:id', requireAuth, async (req: Request, res: Response) => {
   try {
+    const alloc = await prisma.ksefInvoiceAllocation.findUnique({
+      where: { id: req.params.id },
+      include: { invoice: true, project: { select: { id: true, name: true } } },
+    })
+
     // Usuń powiązany CostItem
     const costItem = await prisma.costItem.findFirst({ where: { ksef_allocation_id: req.params.id } })
     if (costItem) await prisma.costItem.delete({ where: { id: costItem.id } })
 
     await prisma.ksefInvoiceAllocation.delete({ where: { id: req.params.id } })
+
+    // Log aktywności
+    if (alloc) {
+      const user = auditUser(req)
+      await logKsefActivity(alloc.project_id, user, 'delete',
+        `Usunięto alokację faktury KSeF: ${alloc.invoice.seller_name ?? ''} — ${alloc.amount.toFixed(2)} ${alloc.invoice.currency}`,
+        req.params.id)
+    }
+
     res.json({ success: true })
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })

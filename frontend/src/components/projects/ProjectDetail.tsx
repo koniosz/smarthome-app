@@ -19,6 +19,120 @@ function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
 }
 
+// ── Helpers dla panelu historii ──────────────────────────────────────────────
+
+type EntityType = 'cost' | 'labor' | 'payment' | 'ksef' | 'project' | string
+
+const ENTITY_ICON: Record<EntityType, string> = {
+  cost:    '🧾',
+  labor:   '👷',
+  payment: '💰',
+  ksef:    '📋',
+  project: '🏗️',
+}
+
+const ACTION_ICON: Record<string, string> = {
+  add:     '➕',
+  edit:    '✏️',
+  delete:  '🗑️',
+  created: '🚀',
+  updated: '✏️',
+}
+
+const ACTION_LABEL: Record<string, string> = {
+  add:     'Dodano',
+  edit:    'Edytowano',
+  delete:  'Usunięto',
+  created: 'Utworzono',
+  updated: 'Edytowano',
+}
+
+const ACTION_COLOR: Record<string, string> = {
+  add:     'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  edit:    'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  delete:  'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+  created: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
+  updated: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+}
+
+function formatDate(iso: string) {
+  const d = new Date(iso)
+  return d.toLocaleDateString('pl-PL', { day: '2-digit', month: 'long', year: 'numeric' })
+}
+
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+}
+
+function HistoryTab({ auditLog, project }: { auditLog: CostAuditEntry[]; project: ProjectDetailType }) {
+  if (auditLog.length === 0) {
+    return <p className="text-sm text-gray-400 py-10 text-center">Brak wpisów w historii.</p>
+  }
+
+  // Grupowanie po dacie
+  const groups: Record<string, CostAuditEntry[]> = {}
+  for (const entry of auditLog) {
+    const day = formatDate(entry.created_at)
+    if (!groups[day]) groups[day] = []
+    groups[day].push(entry)
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Baner: kto i kiedy stworzył projekt */}
+      <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-violet-50 dark:bg-violet-950/20 border border-violet-100 dark:border-violet-900/30">
+        <span className="text-2xl">🚀</span>
+        <div>
+          <p className="text-sm font-semibold text-violet-700 dark:text-violet-300">Projekt utworzony</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {new Date(project.created_at).toLocaleString('pl-PL', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </p>
+        </div>
+      </div>
+
+      {/* Oś czasu pogrupowana po dniach */}
+      {Object.entries(groups).map(([day, entries]) => (
+        <div key={day}>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="h-px flex-1 bg-gray-100 dark:bg-gray-800" />
+            <span className="text-xs font-medium text-gray-400 dark:text-gray-500 whitespace-nowrap">{day}</span>
+            <div className="h-px flex-1 bg-gray-100 dark:bg-gray-800" />
+          </div>
+
+          <div className="space-y-1.5">
+            {entries.map(entry => {
+              const entity = (entry.entity ?? 'cost') as EntityType
+              const actionKey = entry.action in ACTION_ICON ? entry.action : 'edit'
+              return (
+                <div key={entry.id} className="flex items-start gap-3 px-3 py-2.5 rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600 transition-colors">
+                  {/* Ikona encji */}
+                  <div className="shrink-0 w-8 h-8 rounded-lg bg-gray-50 dark:bg-gray-700 flex items-center justify-center text-base">
+                    {ENTITY_ICON[entity] ?? '📝'}
+                  </div>
+
+                  {/* Treść */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-800 dark:text-gray-100 leading-snug">{entry.description}</p>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className={`inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded font-medium ${ACTION_COLOR[actionKey] ?? ACTION_COLOR.edit}`}>
+                        {ACTION_ICON[actionKey]} {ACTION_LABEL[actionKey] ?? actionKey}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        👤 <span className="font-medium text-gray-500 dark:text-gray-400">{entry.user_name ?? 'System'}</span>
+                      </span>
+                      <span className="text-xs text-gray-400">{formatTime(entry.created_at)}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function fmtDec(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
@@ -335,31 +449,7 @@ export default function ProjectDetail() {
           />
         )}
         {tab === 'history' && (
-          <div className="space-y-1">
-            {auditLog.length === 0 ? (
-              <p className="text-sm text-gray-400 py-8 text-center">Brak wpisów w historii zmian.</p>
-            ) : (
-              auditLog.map(entry => {
-                const actionIcon = entry.action === 'add' ? '➕' : entry.action === 'edit' ? '✏️' : '🗑️'
-                const actionColor = entry.action === 'add'
-                  ? 'text-green-600 dark:text-green-400'
-                  : entry.action === 'edit'
-                  ? 'text-blue-600 dark:text-blue-400'
-                  : 'text-red-500 dark:text-red-400'
-                return (
-                  <div key={entry.id} className="flex items-start gap-3 px-4 py-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
-                    <span className="text-base mt-0.5">{actionIcon}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium ${actionColor}`}>{entry.description}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        👤 {entry.user_name} · {new Date(entry.created_at).toLocaleString('pl-PL')}
-                      </p>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
+          <HistoryTab auditLog={auditLog} project={project} />
         )}
         {tab === 'ai_quote' && (
           <AIQuoteTab
