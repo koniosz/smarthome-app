@@ -210,7 +210,7 @@ function SendToClientModal({
   onSent: (ids: string[], sentAt: string) => void
 }) {
   const pendingItems = items.filter(i => i.status === 'pending')
-  const [selected, setSelected] = useState<Set<string>>(new Set(pendingItems.map(i => i.id)))
+  const [selected, setSelected] = useState<Set<string>>(new Set(pendingItems.length > 0 ? pendingItems.map(i => i.id) : items.map(i => i.id)))
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [sentAt, setSentAt] = useState('')
@@ -219,9 +219,10 @@ function SendToClientModal({
   const [emailError, setEmailError] = useState('')
   const printRef = useRef<HTMLDivElement>(null)
 
+  const allItems = items
   const toggleAll = () => {
-    if (selected.size === pendingItems.length) setSelected(new Set())
-    else setSelected(new Set(pendingItems.map(i => i.id)))
+    if (selected.size === allItems.length) setSelected(new Set())
+    else setSelected(new Set(allItems.map(i => i.id)))
   }
 
   const selectedItems = items.filter(i => selected.has(i.id))
@@ -351,10 +352,9 @@ function SendToClientModal({
                 <hr className="mt-4" />
               </div>
 
-              {pendingItems.length === 0 ? (
+              {allItems.length === 0 ? (
                 <div className="text-center py-8 text-gray-400">
-                  Brak oczekujących kosztów do wysłania.<br />
-                  <span className="text-xs">Wszystkie pozycje zostały już wysłane do klienta.</span>
+                  Brak kosztów dodatkowych w tym projekcie.
                 </div>
               ) : (
                 <>
@@ -362,11 +362,11 @@ function SendToClientModal({
                   <div className="flex items-center gap-2 mb-3 print:hidden">
                     <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
                       <input type="checkbox"
-                        checked={selected.size === pendingItems.length && pendingItems.length > 0}
+                        checked={selected.size === allItems.length && allItems.length > 0}
                         onChange={toggleAll}
                         className="accent-violet-500"
                       />
-                      Zaznacz wszystkie ({pendingItems.length})
+                      Zaznacz wszystkie ({allItems.length})
                     </label>
                     <span className="text-xs text-gray-400">· Zaznaczono: {selected.size}</span>
                   </div>
@@ -386,7 +386,7 @@ function SendToClientModal({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                        {pendingItems.map((item, idx) => {
+                        {allItems.map((item) => {
                           const isSel = selected.has(item.id)
                           return (
                             <tr
@@ -593,12 +593,12 @@ export default function ExtraCostsTab({ projectId, projectName }: { projectId: s
 
         {/* Action buttons */}
         <div className="flex gap-2">
-          {pendingCount > 0 && (
+          {items.length > 0 && (
             <button
               onClick={() => setShowSend(true)}
               className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1.5"
             >
-              📤 Wyślij do klienta ({pendingCount})
+              📧 Wyślij do klienta
             </button>
           )}
           <button
