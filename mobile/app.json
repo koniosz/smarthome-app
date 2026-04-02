@@ -18,15 +18,20 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Aparat służy do fotografowania dokumentów i kosztów",
         "NSPhotoLibraryUsageDescription": "Galeria służy do wyboru zdjęć dokumentów",
-        "NSPhotoLibraryAddUsageDescription": "Zapis zdjęć dokumentów"
-      }
+        "NSPhotoLibraryAddUsageDescription": "Zapis zdjęć dokumentów",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "buildNumber": "2"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#6d28d9"
       },
-      "package": "pl.smarthomecenter.shcmanager"
+      "package": "pl.smarthomecenter.shcmanager",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -41,8 +46,12 @@
     ],
     "extra": {
       "eas": {
-        "projectId": ""
+        "projectId": "0e1d577c-6a75-432b-871e-6ea21747f8f4"
+      },
+      "router": {
+        "origin": false
       }
-    }
+    },
+    "owner": "koniosz"
   }
 }
