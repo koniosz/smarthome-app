@@ -193,6 +193,8 @@ model ExtraCost {
   created_at      String
   updated_at      String
   sent_at         String?
+  client_email    String?
+  approval_token  String?  // token współdzielony przez pozycje z jednej wysyłki
 
   project         Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
 

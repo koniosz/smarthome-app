@@ -182,6 +182,9 @@ export const extraCostsApi = {
 
   send: (projectId: string, ids: string[]): Promise<{ sent: number; sent_at: string }> =>
     api.post(`/projects/${projectId}/extra-costs/send`, { ids }).then(r => r.data),
+
+  sendEmail: (projectId: string, ids: string[], client_email: string): Promise<{ sent: number; sent_at: string; email: string }> =>
+    api.post(`/projects/${projectId}/extra-costs/send-email`, { ids, client_email }).then(r => r.data),
 }
 
 export const productCatalogApi = {

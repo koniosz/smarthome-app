@@ -181,6 +181,8 @@ export const db = {
       }),
     find: (id: string) =>
       prisma.extraCost.findUnique({ where: { id } }),
+    findByToken: (token: string) =>
+      prisma.extraCost.findMany({ where: { approval_token: token } }),
     insert: (item: any) =>
       prisma.extraCost.create({ data: item }),
     update: (id: string, patch: any) =>

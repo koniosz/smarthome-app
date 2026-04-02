@@ -214,6 +214,9 @@ function SendToClientModal({
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [sentAt, setSentAt] = useState('')
+  const [sentEmail, setSentEmail] = useState('')
+  const [clientEmail, setClientEmail] = useState('')
+  const [emailError, setEmailError] = useState('')
   const printRef = useRef<HTMLDivElement>(null)
 
   const toggleAll = () => {
@@ -226,13 +229,36 @@ function SendToClientModal({
 
   const handlePrint = () => { window.print() }
 
-  const handleMarkSent = async (projectId: string) => {
+  const handleSendEmail = async () => {
+    if (selected.size === 0) return
+    if (!clientEmail.trim() || !clientEmail.includes('@')) {
+      setEmailError('Podaj poprawny adres email klienta.')
+      return
+    }
+    setEmailError('')
+    setSending(true)
+    try {
+      const res = await extraCostsApi.sendEmail(projectId, Array.from(selected), clientEmail.trim())
+      const at = new Date(res.sent_at).toLocaleString('pl-PL')
+      setSentAt(at)
+      setSentEmail(res.email)
+      setSent(true)
+      onSent(Array.from(selected), res.sent_at)
+    } catch (err: any) {
+      setEmailError(err?.response?.data?.error ?? 'Błąd wysyłania emaila.')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleMarkSent = async () => {
     if (selected.size === 0) return
     setSending(true)
     try {
       const res = await extraCostsApi.send(projectId, Array.from(selected))
       const at = new Date(res.sent_at).toLocaleString('pl-PL')
       setSentAt(at)
+      setSentEmail('')
       setSent(true)
       onSent(Array.from(selected), res.sent_at)
     } catch (err: any) {
@@ -259,11 +285,20 @@ function SendToClientModal({
         {sent ? (
           /* Success state */
           <div className="px-6 py-10 text-center flex-1">
-            <div className="text-5xl mb-4">✅</div>
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">Zestawienie przygotowane!</h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
-              {selected.size} {selected.size === 1 ? 'pozycja oznaczona' : 'pozycji oznaczonych'} jako <strong>„Wysłane do klienta"</strong>
-            </p>
+            <div className="text-5xl mb-4">{sentEmail ? '📧' : '✅'}</div>
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">
+              {sentEmail ? 'Email wysłany do klienta!' : 'Zestawienie przygotowane!'}
+            </h3>
+            {sentEmail ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+                Email z prośbą o akceptację został wysłany na adres{' '}
+                <strong className="text-violet-600 dark:text-violet-400">{sentEmail}</strong>
+              </p>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
+                {selected.size} {selected.size === 1 ? 'pozycja oznaczona' : 'pozycji oznaczonych'} jako <strong>„Wysłane do klienta"</strong>
+              </p>
+            )}
             <p className="text-xs text-gray-400">{sentAt}</p>
             <button onClick={onClose}
               className="mt-6 px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg transition-colors">
@@ -272,6 +307,39 @@ function SendToClientModal({
           </div>
         ) : (
           <>
+            {/* ── Email do klienta — widoczne od razu pod nagłówkiem ── */}
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-green-50 dark:bg-green-950/20 print:hidden">
+              <label className="text-xs font-semibold text-green-800 dark:text-green-300 block mb-2">
+                📧 Wyślij do klienta emailem — adres email klienta
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="email"
+                  placeholder="np. jan.kowalski@firma.pl"
+                  value={clientEmail}
+                  onChange={e => { setClientEmail(e.target.value); setEmailError('') }}
+                  disabled={sending}
+                  className="flex-1 border border-green-200 dark:border-green-800 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-green-400 disabled:opacity-50"
+                />
+                <button
+                  onClick={handleSendEmail}
+                  disabled={sending || selected.size === 0}
+                  className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap flex-shrink-0"
+                >
+                  {sending
+                    ? <><svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Wysyłam…</>
+                    : `📧 Wyślij email (${selected.size})`
+                  }
+                </button>
+              </div>
+              {emailError && (
+                <p className="text-xs text-red-600 dark:text-red-400 mt-1.5">{emailError}</p>
+              )}
+              <p className="text-xs text-green-700 dark:text-green-400 mt-1.5 opacity-70">
+                Klient otrzyma email z przyciskami „Akceptuję" i „Nie akceptuję"
+              </p>
+            </div>
+
             {/* Printable summary area */}
             <div ref={printRef} className="flex-1 overflow-y-auto px-6 py-4 print:px-0 print:py-0">
 
@@ -409,20 +477,17 @@ function SendToClientModal({
                 className="px-3 py-2 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors flex items-center gap-1.5">
                 🖨️ Drukuj / Eksportuj PDF
               </button>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center">
                 <button onClick={onClose} disabled={sending}
-                  className="px-4 py-2 text-sm border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50">
+                  className="px-3 py-1.5 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50">
                   Anuluj
                 </button>
                 <button
-                  onClick={() => handleMarkSent(projectId)}
+                  onClick={handleMarkSent}
                   disabled={sending || selected.size === 0}
-                  className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors flex items-center gap-2"
+                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 rounded-lg transition-colors"
                 >
-                  {sending
-                    ? <><svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Wysyłam…</>
-                    : `✉️ Oznacz jako wysłane (${selected.size})`
-                  }
+                  Oznacz jako wysłane (bez emaila)
                 </button>
               </div>
             </div>

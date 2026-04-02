@@ -19,7 +19,7 @@ import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import aiQuotesRouter from './routes/ai-quotes'
 import productCatalogRouter from './routes/product-catalog'
-import extraCostsRouter, { updateExtraCost, deleteExtraCost } from './routes/extra-costs'
+import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost } from './routes/extra-costs'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -38,6 +38,10 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 app.use('/api/auth', authRouter)
+
+// Publiczne endpointy zatwierdzenia kosztów dodatkowych (klient klika link z emaila — bez JWT)
+app.get('/api/extra-costs/approve/:token', approveExtraCost)
+app.get('/api/extra-costs/reject/:token',  rejectExtraCost)
 
 // Publiczne serwowanie załączników (pliki mają losowe nazwy — bezpieczeństwo przez obscurity)
 // MUSI być przed requireAuth, bo przeglądarka otwierając link w nowej karcie nie wysyła JWT
