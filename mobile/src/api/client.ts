@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // ─── Base URL ────────────────────────────────────────────────────────────────
 // Update this URL once your backend is deployed / you know the final address.
-export const API_BASE_URL = 'https://smarthome-app.onrender.com';
+export const API_BASE_URL = 'https://smarthome-app-ssrv.onrender.com';
 
 // ─── Axios instance ──────────────────────────────────────────────────────────
 const api = axios.create({
