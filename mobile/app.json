@@ -8,6 +8,8 @@
     "scheme": "shcmanager",
     "userInterfaceStyle": "automatic",
     "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#6d28d9"
     },
     "ios": {
@@ -36,6 +38,11 @@
           "cameraPermission": "Aplikacja potrzebuje dostępu do aparatu"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": ""
+      }
+    }
   }
 }
