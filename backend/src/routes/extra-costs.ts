@@ -1,8 +1,11 @@
 import { Router, Request, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { randomBytes } from 'crypto'
+import jwt from 'jsonwebtoken'
 import db from '../db'
 import { sendExtraCostApprovalEmail, approvalConfirmationHtml } from '../services/mailer'
+
+const JWT_SECRET = process.env.JWT_SECRET || 'shc-secret-key'
 
 const router = Router({ mergeParams: true })
 
@@ -19,7 +22,8 @@ router.get('/', async (req: Request, res: Response) => {
   }
 })
 
-// POST /api/projects/:projectId/extra-costs/sms-token — generuj token dla akceptacji SMS
+// POST /api/projects/:projectId/extra-costs/sms-token — generuj JWT token dla akceptacji SMS
+// JWT approach: token is self-contained (ids + projectId), no DB lookup needed on approve
 router.post('/sms-token', async (req: Request, res: Response) => {
   try {
     const { ids } = req.body as { ids?: string[] }
@@ -27,43 +31,42 @@ router.post('/sms-token', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Brak pozycji' }); return
     }
     const projectId = req.params.projectId
-    console.log('[sms-token] projectId:', projectId, 'ids:', ids)
 
     const project = await db.projects.find(projectId)
     if (!project) {
-      console.warn('[sms-token] project not found:', projectId)
       res.status(404).json({ error: 'Projekt nie znaleziony' }); return
     }
 
-    // Pobierz wszystkie pozycje projektu jednym zapytaniem — bezpieczniejsze niż per-item find
+    // Verify items belong to this project
     const allProjectItems = await db.extra_costs.forProject(projectId)
     const idSet = new Set(ids)
     const itemsToUpdate = allProjectItems.filter((i: any) => idSet.has(i.id))
 
-    console.log('[sms-token] allProjectItems count:', allProjectItems.length, 'matching ids:', itemsToUpdate.length)
-
     if (itemsToUpdate.length === 0) {
-      console.error('[sms-token] No matching items found for ids:', ids)
       res.status(400).json({ error: 'Nie znaleziono pozycji należących do tego projektu' }); return
     }
 
-    const token = randomBytes(32).toString('hex')
+    // Mark items as sent (no token saved to DB — JWT is self-contained)
     const sentAt = now()
-    const appUrl = (process.env.APP_URL ?? 'https://smarthome-app-ssrv.onrender.com').replace(/\/$/, '')
-
     for (const item of itemsToUpdate) {
       await db.extra_costs.update(item.id, {
         status: 'sent',
         sent_at: sentAt,
         updated_at: sentAt,
-        approval_token: token,
       })
-      console.log('[sms-token] saved token for item:', item.id)
     }
 
-    const approveUrl = `${appUrl}/api/extra-costs/approve/${token}`
-    console.log('[sms-token] success, approveUrl:', approveUrl)
-    res.json({ token, approveUrl, sent_at: sentAt })
+    // Sign JWT with item ids and projectId — valid for 14 days
+    const jwtToken = jwt.sign(
+      { type: 'sms_approval', ids: itemsToUpdate.map((i: any) => i.id), projectId },
+      JWT_SECRET,
+      { expiresIn: '14d' }
+    )
+
+    const appUrl = (process.env.APP_URL ?? 'https://smarthome-app-ssrv.onrender.com').replace(/\/$/, '')
+    const approveUrl = `${appUrl}/api/extra-costs/approve-sms/${jwtToken}`
+
+    res.json({ token: jwtToken, approveUrl, sent_at: sentAt })
   } catch (e) {
     console.error('[sms-token] error:', e)
     res.status(500).json({ error: 'Błąd serwera' })
@@ -252,6 +255,76 @@ export async function approveExtraCost(req: Request, res: Response): Promise<voi
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(approvalConfirmationHtml(true, project?.name ?? '', total))
   } catch (e) {
+    res.status(500).send('<h1>Błąd serwera. Spróbuj ponownie.</h1>')
+  }
+}
+
+// GET /api/extra-costs/approve-sms/:jwtToken — JWT-based SMS approval (no DB token required)
+export async function approveSmsByJwt(req: Request, res: Response): Promise<void> {
+  try {
+    const { jwtToken } = req.params
+
+    let payload: any
+    try {
+      payload = jwt.verify(jwtToken, JWT_SECRET)
+    } catch (e: any) {
+      res.status(400).send(`
+        <html><body style="font-family:sans-serif;text-align:center;padding:40px">
+        <h2>⚠️ Link nieważny lub wygasł</h2>
+        <p>Ten link wygasł (ważny 14 dni) lub jest nieprawidłowy.</p>
+        <p>Skontaktuj się z wykonawcą, aby uzyskać nowy link.</p>
+        </body></html>
+      `); return
+    }
+
+    if (payload.type !== 'sms_approval' || !Array.isArray(payload.ids) || !payload.projectId) {
+      res.status(400).send('<h2>Nieprawidłowy link.</h2>'); return
+    }
+
+    const { ids, projectId } = payload as { ids: string[]; projectId: string }
+
+    // Fetch current items — check they are not already approved/rejected
+    const allItems = await db.extra_costs.forProject(projectId)
+    const items = allItems.filter((i: any) => ids.includes(i.id))
+
+    if (items.length === 0) {
+      res.status(404).send(`
+        <html><body style="font-family:sans-serif;text-align:center;padding:40px">
+        <h2>⚠️ Pozycje nie znalezione</h2>
+        <p>Koszty mogły zostać usunięte. Skontaktuj się z wykonawcą.</p>
+        </body></html>
+      `); return
+    }
+
+    // Check if already processed
+    const alreadyDone = items.every((i: any) => i.status === 'approved' || i.status === 'rejected')
+    if (alreadyDone) {
+      const project = await db.projects.find(projectId)
+      const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
+      const wasApproved = items[0].status === 'approved'
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.send(approvalConfirmationHtml(wasApproved, project?.name ?? '', total))
+      return
+    }
+
+    const project = await db.projects.find(projectId)
+    const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
+
+    const approvedAt = now()
+    const approvedAtPl = new Date(approvedAt).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' })
+    for (const item of items) {
+      const currentNotes = item.notes ? item.notes + '\n' : ''
+      await db.extra_costs.update(item.id, {
+        status: 'approved',
+        updated_at: approvedAt,
+        notes: `${currentNotes}✅ Klient zaakceptował SMS-em ${approvedAtPl}`,
+      })
+    }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.send(approvalConfirmationHtml(true, project?.name ?? '', total))
+  } catch (e) {
+    console.error('[approve-sms]', e)
     res.status(500).send('<h1>Błąd serwera. Spróbuj ponownie.</h1>')
   }
 }

@@ -184,7 +184,7 @@ export async function sendExtraCostApprovalEmail(opts: {
   const { transport, from: cfgFrom, fromName: cfgFromName } = await buildTransport()
   // Allow caller to override from/fromName via companyName arg
   const senderName = companyName !== 'Wykonawca' ? companyName : cfgFromName
-  const senderAddr = from ?? cfgFrom
+  const senderAddr = cfgFrom
   await transport.sendMail({
     from: `${senderName} <${senderAddr}>`,
     to,

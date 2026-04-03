@@ -268,7 +268,6 @@ export const db = {
     listAll: () =>
       prisma.ksefInvoice.findMany({ orderBy: { invoice_date: 'desc' } }),
   },
-}
 
   smtp_settings: {
     get: () =>
