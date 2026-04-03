@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
-import { ksefApi, projectsApi } from '../api/client'
+import { ksefApi, bankApi, projectsApi } from '../api/client'
 import type { KsefInvoice, KsefStatus, Project } from '../types'
 import AllocationPanel from '../components/ksef/AllocationPanel'
+import PaymentVerificationModal from '../components/ksef/PaymentVerificationModal'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -333,6 +334,68 @@ function InvoicePreviewModal({ invoice, onClose }: {
   )
 }
 
+function PaymentBadge({ invoice, onUpdated }: { invoice: KsefInvoice; onUpdated: (inv: KsefInvoice) => void }) {
+  const [changing, setChanging] = useState(false)
+
+  const handleChange = async (newStatus: 'paid' | 'unpaid') => {
+    setChanging(true)
+    try {
+      const updated = await bankApi.updatePayment(invoice.id, newStatus)
+      onUpdated(updated as KsefInvoice)
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? e.message)
+    } finally {
+      setChanging(false)
+    }
+  }
+
+  const { payment_status: status, payment_source: source } = invoice
+
+  let badgeClass = 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+  let label = 'Nieznana'
+
+  if (status === 'paid') {
+    badgeClass = 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+    label = 'Oplacona'
+  } else if (status === 'unpaid') {
+    badgeClass = 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+    label = 'Nieoplacona'
+  } else if (status === 'partial') {
+    badgeClass = 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
+    label = 'Czesciowa'
+  }
+
+  const sourceLabel = source === 'mt940' ? 'MT940' : source === 'przelewy24' ? 'P24' : source === 'manual' ? 'reczna' : null
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium cursor-default ${badgeClass}`}>
+        {label}
+      </span>
+      {sourceLabel && (
+        <span className="text-xs text-gray-400 dark:text-gray-500">{sourceLabel}</span>
+      )}
+      {!changing && (
+        <div className="flex gap-1 mt-0.5">
+          {status !== 'paid' && (
+            <button
+              onClick={() => handleChange('paid')}
+              className="text-xs text-green-600 dark:text-green-400 hover:underline"
+            >Oplacona</button>
+          )}
+          {status !== 'unpaid' && (
+            <button
+              onClick={() => handleChange('unpaid')}
+              className="text-xs text-red-500 dark:text-red-400 hover:underline"
+            >Nieoplacona</button>
+          )}
+        </div>
+      )}
+      {changing && <span className="text-xs text-gray-400">Zapisywanie…</span>}
+    </div>
+  )
+}
+
 function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
   invoice: KsefInvoice
   projects: Project[]
@@ -392,6 +455,9 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
             </span>
           )}
         </td>
+        <td className="py-2.5 pr-3">
+          <PaymentBadge invoice={invoice} onUpdated={onUpdated} />
+        </td>
         <td className="py-2.5">
           <div className="flex items-center gap-1">
             <button
@@ -440,7 +506,7 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
       </tr>
       {showAllocations && (
         <tr className="border-b border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/10">
-          <td colSpan={6} className="px-4 py-3">
+          <td colSpan={7} className="px-4 py-3">
             <AllocationPanel invoice={invoice} isAdmin={true} />
           </td>
         </tr>
@@ -466,6 +532,7 @@ export default function KsefPage() {
   const [debugInfo, setDebugInfo] = useState<any>(null)
   const [debugging, setDebugging] = useState(false)
   const [dateFrom, setDateFrom]   = useState('2024-01-01')
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
   const LIMIT = 50
 
   const load = useCallback(async () => {
@@ -534,10 +601,23 @@ export default function KsefPage() {
     <div className="p-6 space-y-4 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100">📋 KSeF — Faktury zakupowe</h1>
+          <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100">KSeF — Faktury zakupowe</h1>
           <p className="text-xs text-gray-400 mt-0.5">Faktury pobrane z Krajowego Systemu e-Faktur</p>
         </div>
+        <button
+          onClick={() => setShowPaymentModal(true)}
+          className="px-4 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors flex items-center gap-2"
+        >
+          Weryfikacja platnosci
+        </button>
       </div>
+
+      {showPaymentModal && (
+        <PaymentVerificationModal
+          onClose={() => setShowPaymentModal(false)}
+          onPaymentsUpdated={load}
+        />
+      )}
 
       <StatusBar status={status} onSync={handleSync} syncing={syncing} dateFrom={dateFrom} onDateFromChange={setDateFrom} />
 
@@ -630,6 +710,7 @@ export default function KsefPage() {
                   <th className="text-right py-3 pr-3">Kwota</th>
                   <th className="text-left py-3 pr-3">Data</th>
                   <th className="text-left py-3 pr-3">Projekt</th>
+                  <th className="text-left py-3 pr-3">Platnosc</th>
                   <th className="py-3">Akcje</th>
                 </tr>
               </thead>

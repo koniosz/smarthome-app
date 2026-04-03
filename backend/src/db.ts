@@ -241,6 +241,33 @@ export const db = {
     insert: (item: any) =>
       prisma.costAuditLog.create({ data: item }),
   },
+
+  bank_transactions: {
+    insert: (data: any) =>
+      prisma.bankTransaction.create({ data }),
+    list: (filter?: any) =>
+      prisma.bankTransaction.findMany({ where: filter, orderBy: { transaction_date: 'desc' } }),
+    find: (id: string) =>
+      prisma.bankTransaction.findUnique({ where: { id } }),
+    update: (id: string, data: any) =>
+      prisma.bankTransaction.update({ where: { id }, data }),
+    deleteAll: () =>
+      prisma.bankTransaction.deleteMany(),
+    findUnmatched: () =>
+      prisma.bankTransaction.findMany({ where: { matched_invoice_id: null } }),
+  },
+
+  ksef_invoices: {
+    updatePayment: (id: string, data: {
+      payment_status?: string | null
+      payment_source?: string | null
+      paid_amount?:    number | null
+      paid_at?:        string | null
+      bank_tx_id?:     string | null
+    }) => prisma.ksefInvoice.update({ where: { id }, data }),
+    listAll: () =>
+      prisma.ksefInvoice.findMany({ orderBy: { invoice_date: 'desc' } }),
+  },
 }
 
 export default db

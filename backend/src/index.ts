@@ -24,6 +24,7 @@ import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
 import ksefRouter from './routes/ksef'
+import bankRouter, { updateKsefPayment, p24WebhookHandler } from './routes/bank'
 import { syncInvoices } from './services/ksef'
 import { requireAuth } from './middleware/auth'
 
@@ -46,6 +47,9 @@ app.get('/api/extra-costs/reject/:token',  rejectExtraCost)
 // Publiczne serwowanie załączników (pliki mają losowe nazwy — bezpieczeństwo przez obscurity)
 // MUSI być przed requireAuth, bo przeglądarka otwierając link w nowej karcie nie wysyła JWT
 app.use('/api', attachmentsRouter)
+
+// P24 webhook — public (przed requireAuth), weryfikacja przez podpis CRC
+app.post('/api/bank/przelewy24/webhook', p24WebhookHandler)
 
 // All routes below require authentication
 app.use('/api', requireAuth)
@@ -90,6 +94,10 @@ app.use('/api/notifications', notificationsRouter)
 
 // KSeF — Krajowy System e-Faktur (admin only)
 app.use('/api/ksef', ksefRouter)
+
+// Bank payment verification
+app.use('/api/bank', bankRouter)
+app.patch('/api/ksef/invoices/:id/payment', updateKsefPayment)
 
 // ── Serve frontend static files (production / network mode) ──────────────────
 const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist')

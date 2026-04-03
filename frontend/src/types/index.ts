@@ -355,8 +355,28 @@ export interface KsefInvoice {
   notes: string | null
   is_shared: boolean
   created_at: string
+  payment_status?: 'paid' | 'unpaid' | 'partial' | null
+  payment_source?: 'mt940' | 'przelewy24' | 'manual' | null
+  paid_amount?: number | null
+  paid_at?: string | null
+  bank_tx_id?: string | null
   project?: { id: string; name: string; client_name: string } | null
   allocations?: KsefInvoiceAllocation[]
+}
+
+export interface BankTransaction {
+  id: string
+  source: 'mt940' | 'przelewy24'
+  transaction_date: string
+  amount: number
+  currency: string
+  description: string
+  counterparty: string
+  counterparty_iban?: string
+  reference: string
+  matched_invoice_id?: string | null
+  match_confidence?: number | null
+  created_at: string
 }
 
 export interface KsefStatus {

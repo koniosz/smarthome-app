@@ -2,6 +2,7 @@ import axios from 'axios'
 import type {
   Project, ProjectDetail, CostItem, LaborEntry, ClientPayment, Employee, DashboardStats,
   AiQuote, ProductCatalogItem, ExtraCost, AccessRequest, AppNotification, CostAuditEntry,
+  BankTransaction,
 } from '../types'
 
 const BASE = '/api'
@@ -233,6 +234,28 @@ export const productCatalogApi = {
   },
 }
 
+export const bankApi = {
+  importMT940: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post<{ imported: number; transactions: BankTransaction[] }>(
+      '/bank/import-mt940', fd, { headers: { 'Content-Type': 'multipart/form-data' } }
+    ).then(r => r.data)
+  },
+  match: () =>
+    api.post<{ matched: number; details: any[] }>('/bank/match').then(r => r.data),
+  transactions: (params?: { source?: string; matched?: string }) =>
+    api.get<BankTransaction[]>('/bank/transactions', { params }).then(r => r.data),
+  clearTransactions: () =>
+    api.delete('/bank/transactions').then(r => r.data),
+  p24Status: () =>
+    api.get<{ configured: boolean; sandbox: boolean; merchantId: string }>('/bank/przelewy24/status').then(r => r.data),
+  p24Sync: () =>
+    api.post<{ imported: number; transactions: BankTransaction[] }>('/bank/przelewy24/sync').then(r => r.data),
+  updatePayment: (invoiceId: string, status: 'paid' | 'unpaid', paidAmount?: number, paidAt?: string) =>
+    api.patch(`/ksef/invoices/${invoiceId}/payment`, { status, paid_amount: paidAmount, paid_at: paidAt }).then(r => r.data),
+}
+
 export const accessRequestsApi = {
   request: (projectId: string) =>
     api.post<AccessRequest>('/access-requests', { project_id: projectId }).then(r => r.data),
@@ -301,6 +324,9 @@ export const ksefApi = {
 
   assignShared: (id: string, project_id: string | null, notes?: string) =>
     api.patch<import('../types').KsefInvoice>(`/ksef/shared/${id}/assign`, { project_id, notes }).then(r => r.data),
+
+  updatePayment: (invoiceId: string, status: 'paid' | 'unpaid', paidAmount?: number, paidAt?: string) =>
+    api.patch(`/ksef/invoices/${invoiceId}/payment`, { status, paid_amount: paidAmount, paid_at: paidAt }).then(r => r.data),
 
   // Alokacje
   getAllocations: (invoiceId: string) =>

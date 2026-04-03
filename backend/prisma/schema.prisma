@@ -287,6 +287,11 @@ model KsefInvoice {
   notes            String?            // notatka admina
   is_shared        Boolean  @default(false)
   raw_data         String?            // surowe dane JSON z KSeF (do debugowania)
+  payment_status   String?            // 'paid' | 'unpaid' | 'partial' | null (unknown)
+  payment_source   String?            // 'mt940' | 'przelewy24' | 'manual'
+  paid_amount      Float?
+  paid_at          String?
+  bank_tx_id       String?            // reference to BankTransaction
   created_at       String
 
   project     Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
@@ -310,6 +315,23 @@ model KsefInvoiceAllocation {
   cost_item CostItem?
 
   @@map("ksef_invoice_allocations")
+}
+
+model BankTransaction {
+  id                String  @id
+  source            String  // 'mt940' | 'przelewy24'
+  transaction_date  String
+  amount            Float
+  currency          String  @default("PLN")
+  description       String  @default("")  // transfer title / opis
+  counterparty      String  @default("")  // name of sender/receiver
+  counterparty_iban String  @default("")
+  reference         String  @default("")  // bank reference number / P24 order ID
+  matched_invoice_id String?
+  match_confidence  Float?  // 0-1 confidence score
+  created_at        String
+
+  @@map("bank_transactions")
 }
 
 model KsefSession {
