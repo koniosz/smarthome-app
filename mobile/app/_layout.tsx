@@ -1,5 +1,7 @@
-// WAŻNE: ten import MUSI być jako pierwszy w całej aplikacji
+// WAŻNE: te importy MUSZĄ być pierwsze
 import 'react-native-gesture-handler';
+import { enableScreens } from 'react-native-screens';
+enableScreens();
 
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
@@ -8,7 +10,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../src/contexts/AuthContext';
 
-// ─── Inner component that handles redirect logic ──────────────────────────────
 function RootLayoutNav() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -16,9 +17,7 @@ function RootLayoutNav() {
 
   useEffect(() => {
     if (loading) return;
-
     const inAuthGroup = segments[0] === '(auth)';
-
     if (!user && !inAuthGroup) {
       router.replace('/(auth)/login');
     } else if (user && inAuthGroup) {
@@ -34,7 +33,6 @@ function RootLayoutNav() {
   );
 }
 
-// ─── Root layout ─────────────────────────────────────────────────────────────
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

@@ -21,7 +21,7 @@
         "NSPhotoLibraryAddUsageDescription": "Zapis zdjęć dokumentów",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "2"
+      "buildNumber": "3"
     },
     "android": {
       "adaptiveIcon": {

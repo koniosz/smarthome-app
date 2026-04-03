@@ -14,7 +14,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { projectsApi, Project, ProjectStatus } from '../../src/api/client';
 
