@@ -26,29 +26,46 @@ router.post('/sms-token', async (req: Request, res: Response) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       res.status(400).json({ error: 'Brak pozycji' }); return
     }
-    const project = await db.projects.find(req.params.projectId)
-    if (!project) { res.status(404).json({ error: 'Projekt nie znaleziony' }); return }
+    const projectId = req.params.projectId
+    console.log('[sms-token] projectId:', projectId, 'ids:', ids)
+
+    const project = await db.projects.find(projectId)
+    if (!project) {
+      console.warn('[sms-token] project not found:', projectId)
+      res.status(404).json({ error: 'Projekt nie znaleziony' }); return
+    }
+
+    // Pobierz wszystkie pozycje projektu jednym zapytaniem — bezpieczniejsze niż per-item find
+    const allProjectItems = await db.extra_costs.forProject(projectId)
+    const idSet = new Set(ids)
+    const itemsToUpdate = allProjectItems.filter((i: any) => idSet.has(i.id))
+
+    console.log('[sms-token] allProjectItems count:', allProjectItems.length, 'matching ids:', itemsToUpdate.length)
+
+    if (itemsToUpdate.length === 0) {
+      console.error('[sms-token] No matching items found for ids:', ids)
+      res.status(400).json({ error: 'Nie znaleziono pozycji należących do tego projektu' }); return
+    }
 
     const token = randomBytes(32).toString('hex')
     const sentAt = now()
     const appUrl = (process.env.APP_URL ?? 'https://smarthome-app-ssrv.onrender.com').replace(/\/$/, '')
 
-    for (const id of ids) {
-      const item = await db.extra_costs.find(id)
-      if (item && item.project_id === req.params.projectId) {
-        await db.extra_costs.update(id, {
-          status: 'sent', sent_at: sentAt, updated_at: sentAt,
-          approval_token: token,
-        })
-      }
+    for (const item of itemsToUpdate) {
+      await db.extra_costs.update(item.id, {
+        status: 'sent',
+        sent_at: sentAt,
+        updated_at: sentAt,
+        approval_token: token,
+      })
+      console.log('[sms-token] saved token for item:', item.id)
     }
 
-    res.json({
-      token,
-      approveUrl: `${appUrl}/api/extra-costs/approve/${token}`,
-      sent_at: sentAt,
-    })
+    const approveUrl = `${appUrl}/api/extra-costs/approve/${token}`
+    console.log('[sms-token] success, approveUrl:', approveUrl)
+    res.json({ token, approveUrl, sent_at: sentAt })
   } catch (e) {
+    console.error('[sms-token] error:', e)
     res.status(500).json({ error: 'Błąd serwera' })
   }
 })
@@ -204,9 +221,17 @@ export async function deleteExtraCost(req: Request, res: Response): Promise<void
 export async function approveExtraCost(req: Request, res: Response): Promise<void> {
   try {
     const { token } = req.params
+    console.log('[approve] looking up token:', token)
     const items = await db.extra_costs.findByToken(token)
+    console.log('[approve] found items:', items?.length ?? 0)
     if (!items || items.length === 0) {
-      res.status(404).send('<h1>Link nieważny lub już wykorzystany.</h1>'); return
+      res.status(404).send(`
+        <html><body style="font-family:sans-serif;text-align:center;padding:40px">
+        <h2>⚠️ Link nieważny lub już wykorzystany</h2>
+        <p>Ten link wygasł lub koszty zostały już zaakceptowane/odrzucone.</p>
+        <p>Skontaktuj się z wykonawcą, jeśli potrzebujesz nowego linku.</p>
+        </body></html>
+      `); return
     }
 
     const project = await db.projects.find(items[0].project_id)
