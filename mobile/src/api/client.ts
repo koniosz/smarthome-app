@@ -76,6 +76,53 @@ export interface CreateExtraCostData {
 
 export type UpdateExtraCostData = Partial<CreateExtraCostData>;
 
+// ─── Cost Items (Materiał / Podwykonawca / Inne) ─────────────────────────────
+export type CostCategory = 'materials' | 'subcontractor' | 'other';
+
+export interface CostItem {
+  id: string;
+  project_id: string;
+  category: CostCategory;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  supplier: string;
+  invoice_number: string;
+  date: string;
+  created_at: string;
+}
+
+export interface CreateCostItemData {
+  category: CostCategory;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  supplier?: string;
+  invoice_number?: string;
+  date: string;
+}
+
+// ─── Labor Entries (Robocizna) ────────────────────────────────────────────────
+export interface LaborEntry {
+  id: string;
+  project_id: string;
+  worker_name: string;
+  date: string;
+  hours: number;
+  hourly_rate: number;
+  description: string;
+  created_at: string;
+}
+
+export interface CreateLaborEntryData {
+  worker_name: string;
+  date: string;
+  hours: number;
+  hourly_rate: number;
+  description?: string;
+}
+
 // ─── Auth API ────────────────────────────────────────────────────────────────
 export const authApi = {
   login: async (email: string, password: string): Promise<LoginResponse> => {
@@ -153,6 +200,50 @@ export const extraCostsApi = {
       { ids }
     );
     return response.data;
+  },
+};
+
+// ─── Cost Items API ───────────────────────────────────────────────────────────
+export const costItemsApi = {
+  list: async (projectId: string): Promise<CostItem[]> => {
+    const response = await api.get<CostItem[]>(`/api/projects/${projectId}/costs`);
+    return response.data;
+  },
+
+  create: async (projectId: string, data: CreateCostItemData): Promise<CostItem> => {
+    const response = await api.post<CostItem>(`/api/projects/${projectId}/costs`, data);
+    return response.data;
+  },
+
+  update: async (id: string, data: Partial<CreateCostItemData>): Promise<CostItem> => {
+    const response = await api.put<CostItem>(`/api/costs/${id}`, data);
+    return response.data;
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await api.delete(`/api/costs/${id}`);
+  },
+};
+
+// ─── Labor API ────────────────────────────────────────────────────────────────
+export const laborApi = {
+  list: async (projectId: string): Promise<LaborEntry[]> => {
+    const response = await api.get<LaborEntry[]>(`/api/projects/${projectId}/labor`);
+    return response.data;
+  },
+
+  create: async (projectId: string, data: CreateLaborEntryData): Promise<LaborEntry> => {
+    const response = await api.post<LaborEntry>(`/api/projects/${projectId}/labor`, data);
+    return response.data;
+  },
+
+  update: async (id: string, data: Partial<CreateLaborEntryData>): Promise<LaborEntry> => {
+    const response = await api.put<LaborEntry>(`/api/labor/${id}`, data);
+    return response.data;
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await api.delete(`/api/labor/${id}`);
   },
 };
 
