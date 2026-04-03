@@ -1,26 +1,63 @@
 import nodemailer from 'nodemailer'
+import db from '../db'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-function createTransport() {
+// ─── SMTP config: DB first, env vars fallback ─────────────────────────────────
+export async function getSmtpConfig(): Promise<{
+  host: string; port: number; user: string; pass: string
+  from: string; fromName: string
+}> {
+  // 1. Try database settings
+  try {
+    const s = await db.smtp_settings.get()
+    if (s && s.host && s.user && s.pass) {
+      return {
+        host:     s.host,
+        port:     s.port || 587,
+        user:     s.user,
+        pass:     s.pass,
+        from:     s.from_email || s.user,
+        fromName: s.from_name  || process.env.COMPANY_NAME || 'SHC Manager',
+      }
+    }
+  } catch { /* DB not ready — fall through */ }
+
+  // 2. Fall back to environment variables
   const host = process.env.SMTP_HOST
   const port = parseInt(process.env.SMTP_PORT ?? '587')
   const user = process.env.SMTP_USER
   const pass = process.env.SMTP_PASS
 
   if (!host || !user || !pass) {
-    throw new Error('Brak konfiguracji SMTP. Ustaw SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.')
+    throw new Error(
+      'Brak konfiguracji SMTP. Skonfiguruj pocztę w Panelu Administratora ' +
+      '(⚙️ Ustawienia → Poczta) lub ustaw zmienne SMTP_HOST, SMTP_USER, SMTP_PASS.'
+    )
   }
 
-  return nodemailer.createTransport({
+  return {
     host,
     port,
-    secure: port === 465,
-    auth: { user, pass },
+    user,
+    pass,
+    from:     process.env.SMTP_FROM ?? user,
+    fromName: process.env.COMPANY_NAME ?? 'SHC Manager',
+  }
+}
+
+async function buildTransport() {
+  const cfg = await getSmtpConfig()
+  const transport = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.port === 465,
+    auth: { user: cfg.user, pass: cfg.pass },
     tls: { rejectUnauthorized: false },
   })
+  return { transport, from: cfg.from, fromName: cfg.fromName }
 }
 
 export interface ExtraCostEmailItem {
@@ -40,9 +77,8 @@ export async function sendExtraCostApprovalEmail(opts: {
   approveUrl: string
   rejectUrl: string
 }) {
-  const { to, projectName, companyName = 'Wykonawca', items, approveUrl, rejectUrl } = opts
+  const { to, projectName, companyName, items, approveUrl, rejectUrl } = opts
   const total = items.reduce((s, i) => s + i.total_price, 0)
-  const from = process.env.SMTP_FROM ?? process.env.SMTP_USER
 
   const rows = items.map((item, i) => `
     <tr style="border-bottom:1px solid #e5e7eb">
@@ -145,9 +181,12 @@ export async function sendExtraCostApprovalEmail(opts: {
 </body>
 </html>`
 
-  const transport = createTransport()
+  const { transport, from: cfgFrom, fromName: cfgFromName } = await buildTransport()
+  // Allow caller to override from/fromName via companyName arg
+  const senderName = companyName !== 'Wykonawca' ? companyName : cfgFromName
+  const senderAddr = from ?? cfgFrom
   await transport.sendMail({
-    from: `${companyName} <${from}>`,
+    from: `${senderName} <${senderAddr}>`,
     to,
     subject: `[Akceptacja kosztów] Projekt: ${projectName} — ${fmt(total)} PLN`,
     html,

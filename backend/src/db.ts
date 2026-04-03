@@ -270,4 +270,19 @@ export const db = {
   },
 }
 
+  smtp_settings: {
+    get: () =>
+      prisma.smtpSettings.findUnique({ where: { id: 'default' } }),
+    save: (data: {
+      host: string; port: number; user: string; pass: string;
+      from_email?: string; from_name?: string
+    }) =>
+      prisma.smtpSettings.upsert({
+        where: { id: 'default' },
+        update: { ...data, updated_at: new Date().toISOString() },
+        create: { id: 'default', ...data, updated_at: new Date().toISOString() },
+      }),
+  },
+}
+
 export default db

@@ -344,3 +344,17 @@ model KsefSession {
 
   @@map("ksef_sessions")
 }
+
+// ─── SMTP / Email configuration ───────────────────────────────────────────────
+model SmtpSettings {
+  id         String @id @default("default")
+  host       String @default("")
+  port       Int    @default(587)
+  user       String @default("")
+  pass       String @default("")
+  from_email String @default("")
+  from_name  String @default("")
+  updated_at String @default("")
+
+  @@map("smtp_settings")
+}
