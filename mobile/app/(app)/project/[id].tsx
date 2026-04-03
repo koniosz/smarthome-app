@@ -606,24 +606,36 @@ function SendToClientModal({
       Alert.alert('Błąd', 'Wybierz co najmniej jeden koszt do wysłania.');
       return;
     }
-
     const available = await SMS.isAvailableAsync();
     if (!available) {
       Alert.alert('SMS niedostępny', 'Wysyłanie SMS nie jest dostępne na tym urządzeniu.');
       return;
     }
-
-    const costList = selectedCosts
-      .map((c) => `• ${c.description}: ${fmtPLN(c.total_price)}`)
-      .join('\n');
-
-    const message =
-      `Szanowny Kliencie, przesyłamy zestawienie kosztów dodatkowych do projektu "${projectName}".\n\n` +
-      `${costList}\n\n` +
-      `Łącznie: ${fmtPLN(totalSelected)}\n\n` +
-      `Prosimy o kontakt w celu akceptacji: +48 XXX XXX XXX`;
-
-    await SMS.sendSMSAsync([], message);
+    setSendingEmail(true);
+    try {
+      // Generuj unikalny link akceptacji na backendzie
+      const { approveUrl } = await extraCostsApi.createSmsToken(
+        projectId,
+        Array.from(selectedIds)
+      );
+      const costList = selectedCosts
+        .map((c) => `• ${c.description}: ${fmtPLN(c.total_price)}`)
+        .join('\n');
+      const message =
+        `Szanowny Kliencie,\n\n` +
+        `Przesyłamy zestawienie kosztów dodatkowych do projektu "${projectName}":\n\n` +
+        `${costList}\n\n` +
+        `Łącznie: ${fmtPLN(totalSelected)}\n\n` +
+        `W celu akceptacji kliknij poniższy link lub odpowiedz "Akceptuję":\n` +
+        `${approveUrl}`;
+      await SMS.sendSMSAsync([], message);
+      onSent();
+      onClose();
+    } catch {
+      Alert.alert('Błąd', 'Nie udało się wygenerować linku akceptacji. Sprawdź połączenie.');
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   const colors = {
@@ -1007,11 +1019,13 @@ export default function ProjectDetailScreen() {
         setCosts((prev) => [created, ...prev]);
       }
       setShowAddEdit(false);
-      // NOTE: attachment upload would go here once backend endpoint exists.
-      // See TODO in attachmentsApi.uploadForExtraCost.
-    } catch {
-      Alert.alert('Błąd', 'Nie udało się zapisać kosztu. Spróbuj ponownie.');
-      throw new Error('save failed');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: string }; status?: number } };
+      const msg = axiosErr?.response?.data?.error
+        ?? (axiosErr?.response?.status === 401 ? 'Sesja wygasła — zaloguj się ponownie.' : null)
+        ?? 'Nie udało się zapisać kosztu. Sprawdź połączenie z internetem.';
+      Alert.alert('Błąd zapisu', msg);
+      throw err;
     }
   };
 
@@ -1119,7 +1133,7 @@ export default function ProjectDetailScreen() {
                 <Text style={[pStyles.budgetLabel, { color: subColor }]}>
                   {' '}Budżet:{'  '}
                 </Text>
-                <Text style={pStyles.budgetValue}>{fmtPLN(project.budget)}</Text>
+                <Text style={pStyles.budgetValue}>{fmtPLN(project.budget_amount)}</Text>
               </View>
             </View>
 

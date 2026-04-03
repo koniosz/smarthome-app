@@ -30,7 +30,7 @@ export interface Project {
   name: string;
   client_name: string;
   status: ProjectStatus;
-  budget: number | null;
+  budget_amount: number | null;
   address: string | null;
   created_at: string;
 }
@@ -141,6 +141,18 @@ export const extraCostsApi = {
       ids,
       client_email: clientEmail,
     });
+  },
+
+  // Generuje token SMS — zwraca link do akceptacji
+  createSmsToken: async (
+    projectId: string,
+    ids: string[]
+  ): Promise<{ token: string; approveUrl: string; sent_at: string }> => {
+    const response = await api.post(
+      `/api/projects/${projectId}/extra-costs/sms-token`,
+      { ids }
+    );
+    return response.data;
   },
 };
 

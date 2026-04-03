@@ -19,6 +19,40 @@ router.get('/', async (req: Request, res: Response) => {
   }
 })
 
+// POST /api/projects/:projectId/extra-costs/sms-token — generuj token dla akceptacji SMS
+router.post('/sms-token', async (req: Request, res: Response) => {
+  try {
+    const { ids } = req.body as { ids?: string[] }
+    if (!Array.isArray(ids) || ids.length === 0) {
+      res.status(400).json({ error: 'Brak pozycji' }); return
+    }
+    const project = await db.projects.find(req.params.projectId)
+    if (!project) { res.status(404).json({ error: 'Projekt nie znaleziony' }); return }
+
+    const token = randomBytes(32).toString('hex')
+    const sentAt = now()
+    const appUrl = (process.env.APP_URL ?? 'https://smarthome-app-ssrv.onrender.com').replace(/\/$/, '')
+
+    for (const id of ids) {
+      const item = await db.extra_costs.find(id)
+      if (item && item.project_id === req.params.projectId) {
+        await db.extra_costs.update(id, {
+          status: 'sent', sent_at: sentAt, updated_at: sentAt,
+          approval_token: token,
+        })
+      }
+    }
+
+    res.json({
+      token,
+      approveUrl: `${appUrl}/api/extra-costs/approve/${token}`,
+      sent_at: sentAt,
+    })
+  } catch (e) {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
 // POST /api/projects/:projectId/extra-costs/send — stara ścieżka (oznacz jako wysłane bez emaila)
 router.post('/send', async (req: Request, res: Response) => {
   try {
@@ -178,11 +212,15 @@ export async function approveExtraCost(req: Request, res: Response): Promise<voi
     const project = await db.projects.find(items[0].project_id)
     const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
 
+    const approvedAt = now()
+    const approvedAtPl = new Date(approvedAt).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' })
     for (const item of items) {
+      const currentNotes = item.notes ? item.notes + '\n' : ''
       await db.extra_costs.update(item.id, {
         status: 'approved',
-        updated_at: now(),
-        approval_token: null, // unieważnij token po użyciu
+        updated_at: approvedAt,
+        approval_token: null,
+        notes: `${currentNotes}✅ Klient zaakceptował kliknięciem linku ${approvedAtPl}`,
       })
     }
 

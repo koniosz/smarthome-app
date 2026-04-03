@@ -111,7 +111,7 @@ function ProjectCard({ project, onPress, isDark }: ProjectCardProps) {
         <View style={styles.cardRow}>
           <Ionicons name="cash-outline" size={13} color="#059669" />
           <Text style={[styles.cardBudget, { color: '#059669' }]}>
-            {' '}{fmt(project.budget)}
+            {' '}{fmt(project.budget_amount)}
           </Text>
         </View>
         <View style={styles.cardRowRight}>
