@@ -46,11 +46,11 @@ router.post('/sms-token', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Nie znaleziono pozycji należących do tego projektu' }); return
     }
 
-    // Mark items as sent (no token saved to DB — JWT is self-contained)
+    // Record that the SMS link was sent (sent_at timestamp) without changing status
+    // Status stays 'pending' until the client actually clicks the link → then becomes 'approved'
     const sentAt = now()
     for (const item of itemsToUpdate) {
       await db.extra_costs.update(item.id, {
-        status: 'sent',
         sent_at: sentAt,
         updated_at: sentAt,
       })

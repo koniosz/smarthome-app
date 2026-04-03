@@ -540,7 +540,7 @@ function SendToClientModal({ visible, onClose, projectName, costs, projectId, on
     try {
       const { approveUrl } = await extraCostsApi.createSmsToken(projectId, Array.from(selectedIds));
       const costList = selectedCosts.map(c => `• ${c.description}: ${fmtPLN(c.total_price)}`).join('\n');
-      const message = `Szanowny Kliencie,\n\nPrzesyłamy zestawienie kosztów dodatkowych do projektu "${projectName}":\n\n${costList}\n\nŁącznie: ${fmtPLN(totalSelected)}\n\nW celu akceptacji kliknij poniższy link lub odpowiedz "Akceptuję":\n${approveUrl}`;
+      const message = `Szanowny Kliencie,\n\nPrzesyłamy zestawienie kosztów dodatkowych do projektu "${projectName}":\n\n${costList}\n\nŁącznie: ${fmtPLN(totalSelected)}\n\nAby zaakceptować koszty, kliknij poniższy link:\n${approveUrl}\n\nJeśli nie akceptujesz dodatkowych kosztów, skontaktuj się z nadawcą tej wiadomości.\n\nLink jest ważny przez 14 dni.`;
       await SMS.sendSMSAsync([], message);
       onSent(); onClose();
     } catch { Alert.alert('Błąd', 'Nie udało się wygenerować linku akceptacji. Sprawdź połączenie.'); }
