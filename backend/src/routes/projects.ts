@@ -150,11 +150,12 @@ router.get('/:id', async (req: Request, res: Response) => {
       return
     }
 
-    const [costs, costItems, laborEntries, clientPayments] = await Promise.all([
+    const [costs, costItems, laborEntries, clientPayments, extraCosts] = await Promise.all([
       computeCosts(req.params.id),
       db.cost_items.forProject(req.params.id),
       db.labor_entries.forProject(req.params.id),
       db.client_payments.forProject(req.params.id),
+      db.extra_costs.forProject(req.params.id),
     ])
 
     const revenue = Math.max(project.budget_amount, costs.payments_total)
@@ -169,6 +170,7 @@ router.get('/:id', async (req: Request, res: Response) => {
       cost_items: costItems,
       labor_entries: laborEntries,
       client_payments: clientPayments,
+      extra_costs_count: extraCosts.length,
     })
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })

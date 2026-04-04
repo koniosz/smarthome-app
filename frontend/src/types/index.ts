@@ -83,6 +83,7 @@ export interface ProjectDetail extends Project {
   cost_items: CostItem[]
   labor_entries: LaborEntry[]
   client_payments: ClientPayment[]
+  extra_costs_count: number
 }
 
 export interface CostItem {

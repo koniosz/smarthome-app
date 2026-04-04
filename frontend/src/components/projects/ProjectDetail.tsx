@@ -237,7 +237,7 @@ export default function ProjectDetail() {
     { key: 'labor' as Tab, label: `Robocizna (${project.labor_entries.length})` },
     ...(isAdmin ? [{ key: 'payments' as Tab, label: `💳 Wpłaty (${payments.length})` }] : []),
     { key: 'ai_quote' as Tab, label: `🤖 Wycena AI${aiQuotes.length > 0 ? ` (${aiQuotes.length})` : ''}` },
-    { key: 'extra_costs' as Tab, label: '📋 Koszty dodatkowe' },
+    { key: 'extra_costs' as Tab, label: `📋 Koszty dodatkowe${project.extra_costs_count > 0 ? ` (${project.extra_costs_count})` : ''}` },
     { key: 'history' as Tab, label: '🕓 Historia zmian' },
   ]
 

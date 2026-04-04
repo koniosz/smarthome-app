@@ -77,8 +77,14 @@ export async function sendExtraCostApprovalEmail(opts: {
   approveUrl: string
   rejectUrl: string
 }) {
-  const { to, projectName, companyName, items, approveUrl, rejectUrl } = opts
+  const { to, projectName, items, approveUrl, rejectUrl } = opts
   const total = items.reduce((s, i) => s + i.total_price, 0)
+
+  // Resolve company name before building HTML — opts.companyName → SMTP from_name → fallback
+  const { transport, from: cfgFrom, fromName: cfgFromName } = await buildTransport()
+  const companyName = (opts.companyName && opts.companyName !== 'Wykonawca')
+    ? opts.companyName
+    : (cfgFromName || 'Smart Home Center')
 
   const rows = items.map((item, i) => `
     <tr style="border-bottom:1px solid #e5e7eb">
@@ -181,12 +187,9 @@ export async function sendExtraCostApprovalEmail(opts: {
 </body>
 </html>`
 
-  const { transport, from: cfgFrom, fromName: cfgFromName } = await buildTransport()
-  // Allow caller to override from/fromName via companyName arg
-  const senderName = companyName !== 'Wykonawca' ? companyName : cfgFromName
   const senderAddr = cfgFrom
   await transport.sendMail({
-    from: `${senderName} <${senderAddr}>`,
+    from: `${companyName} <${senderAddr}>`,
     to,
     subject: `[Akceptacja kosztów] Projekt: ${projectName} — ${fmt(total)} PLN`,
     html,
