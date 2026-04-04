@@ -202,20 +202,24 @@ function SendToClientModal({
   items,
   onClose,
   onSent,
+  clientContact,
 }: {
   projectId: string
   projectName: string
   items: ExtraCost[]
   onClose: () => void
   onSent: (ids: string[], sentAt: string) => void
+  clientContact?: string
 }) {
+  // Pre-fill email if client_contact looks like an email address
+  const prefillEmail = clientContact?.includes('@') ? clientContact.trim() : ''
   const pendingItems = items.filter(i => i.status === 'pending')
   const [selected, setSelected] = useState<Set<string>>(new Set(pendingItems.length > 0 ? pendingItems.map(i => i.id) : items.map(i => i.id)))
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [sentAt, setSentAt] = useState('')
   const [sentEmail, setSentEmail] = useState('')
-  const [clientEmail, setClientEmail] = useState('')
+  const [clientEmail, setClientEmail] = useState(prefillEmail)
   const [emailError, setEmailError] = useState('')
   const printRef = useRef<HTMLDivElement>(null)
 
@@ -499,7 +503,7 @@ function SendToClientModal({
 }
 
 // ─── Main ExtraCostsTab ────────────────────────────────────────────────────────
-export default function ExtraCostsTab({ projectId, projectName }: { projectId: string; projectName: string }) {
+export default function ExtraCostsTab({ projectId, projectName, clientContact }: { projectId: string; projectName: string; clientContact?: string }) {
   const [items, setItems] = useState<ExtraCost[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<ExtraCostStatus | 'all'>('all')
@@ -718,6 +722,7 @@ export default function ExtraCostsTab({ projectId, projectName }: { projectId: s
           items={items}
           onClose={() => setShowSend(false)}
           onSent={handleSent}
+          clientContact={clientContact}
         />
       )}
     </div>

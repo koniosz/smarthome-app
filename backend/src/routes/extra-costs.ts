@@ -115,7 +115,7 @@ router.post('/send-email', async (req: Request, res: Response) => {
     // Generuj wspólny token dla całej wysyłki (batch)
     const token = randomBytes(32).toString('hex')
     const sentAt = now()
-    const appUrl = (process.env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')
+    const appUrl = (process.env.APP_URL ?? 'https://smarthome-app-ssrv.onrender.com').replace(/\/$/, '')
 
     // Zapisz token i email do każdej pozycji
     for (const item of items) {

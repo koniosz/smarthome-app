@@ -446,6 +446,7 @@ export default function ProjectDetail() {
           <ExtraCostsTab
             projectId={project.id}
             projectName={project.name}
+            clientContact={project.client_contact}
           />
         )}
         {tab === 'history' && (
