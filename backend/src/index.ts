@@ -19,7 +19,7 @@ import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import aiQuotesRouter from './routes/ai-quotes'
 import productCatalogRouter from './routes/product-catalog'
-import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, approveSmsByJwt } from './routes/extra-costs'
+import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, submitRejectExtraCost, approveSmsByJwt } from './routes/extra-costs'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -42,8 +42,9 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRouter)
 
 // Publiczne endpointy zatwierdzenia kosztów dodatkowych (klient klika link z emaila — bez JWT)
-app.get('/api/extra-costs/approve/:token', approveExtraCost)
-app.get('/api/extra-costs/reject/:token',  rejectExtraCost)
+app.get('/api/extra-costs/approve/:token',      approveExtraCost)
+app.get('/api/extra-costs/reject/:token',       rejectExtraCost)
+app.post('/api/extra-costs/reject/:token',      submitRejectExtraCost)
 // JWT-based SMS approval — token is self-contained, no DB lookup
 app.get('/api/extra-costs/approve-sms/:jwtToken', approveSmsByJwt)
 

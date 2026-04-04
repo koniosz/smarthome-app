@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { randomBytes } from 'crypto'
 import jwt from 'jsonwebtoken'
 import db from '../db'
-import { sendExtraCostApprovalEmail, approvalConfirmationHtml } from '../services/mailer'
+import { sendExtraCostApprovalEmail, approvalConfirmationHtml, rejectionFormHtml } from '../services/mailer'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'shc-secret-key'
 
@@ -329,28 +329,55 @@ export async function approveSmsByJwt(req: Request, res: Response): Promise<void
   }
 }
 
-// GET /api/extra-costs/reject/:token
+// GET /api/extra-costs/reject/:token — pokaż formularz z powodem odmowy
 export async function rejectExtraCost(req: Request, res: Response): Promise<void> {
   try {
     const { token } = req.params
     const items = await db.extra_costs.findByToken(token)
     if (!items || items.length === 0) {
-      res.status(404).send('<h1>Link nieważny lub już wykorzystany.</h1>'); return
+      res.status(404).send('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>⚠️ Link nieważny lub już wykorzystany.</h2></body></html>'); return
     }
 
     const project = await db.projects.find(items[0].project_id)
     const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
+    const appUrl = (process.env.APP_URL ?? 'https://smarthome-app-ssrv.onrender.com').replace(/\/$/, '')
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.send(rejectionFormHtml(project?.name ?? '', total, `${appUrl}/api/extra-costs/reject/${token}`))
+  } catch (e) {
+    res.status(500).send('<h1>Błąd serwera. Spróbuj ponownie.</h1>')
+  }
+}
+
+// POST /api/extra-costs/reject/:token — zapisz odmowę z komentarzem
+export async function submitRejectExtraCost(req: Request, res: Response): Promise<void> {
+  try {
+    const { token } = req.params
+    const comment: string = (req.body?.comment ?? '').toString().trim()
+
+    const items = await db.extra_costs.findByToken(token)
+    if (!items || items.length === 0) {
+      res.status(404).send('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>⚠️ Link nieważny lub już wykorzystany.</h2></body></html>'); return
+    }
+
+    const project = await db.projects.find(items[0].project_id)
+    const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
+    const rejectedAt = now()
+    const rejectedAtPl = new Date(rejectedAt).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' })
 
     for (const item of items) {
+      const currentNotes = item.notes ? item.notes + '\n' : ''
+      const commentNote = comment ? `\nPowód odmowy: ${comment}` : ''
       await db.extra_costs.update(item.id, {
         status: 'rejected',
-        updated_at: now(),
+        updated_at: rejectedAt,
         approval_token: null,
+        notes: `${currentNotes}❌ Klient odrzucił ${rejectedAtPl}${commentNote}`,
       })
     }
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
-    res.send(approvalConfirmationHtml(false, project?.name ?? '', total))
+    res.send(approvalConfirmationHtml(false, project?.name ?? '', total, comment || undefined))
   } catch (e) {
     res.status(500).send('<h1>Błąd serwera. Spróbuj ponownie.</h1>')
   }

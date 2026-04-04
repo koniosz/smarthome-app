@@ -197,13 +197,21 @@ export async function sendExtraCostApprovalEmail(opts: {
 }
 
 // Prosty HTML do zwrócenia klientowi po kliknięciu linku
-export function approvalConfirmationHtml(approved: boolean, projectName: string, total: number) {
-  const icon  = approved ? '✅' : '❌'
+export function approvalConfirmationHtml(approved: boolean, projectName: string, total: number, clientComment?: string) {
+  const icon  = approved ? '😊' : '😔'
   const title = approved ? 'Koszty zaakceptowane' : 'Koszty odrzucone'
   const color = approved ? '#16a34a' : '#dc2626'
+  const bg    = approved ? 'linear-gradient(135deg,#16a34a,#15803d)' : 'linear-gradient(135deg,#dc2626,#b91c1c)'
   const msg   = approved
     ? 'Dziękujemy za akceptację. Firma wykonawcza została powiadomiona i wkrótce skontaktuje się z Państwem w celu ustalenia szczegółów.'
     : 'Dziękujemy za odpowiedź. Firma wykonawcza została powiadomiona o odmowie i skontaktuje się z Państwem w celu omówienia dalszych kroków.'
+
+  const commentBlock = (!approved && clientComment)
+    ? `<div style="margin:16px 0 0;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px 16px">
+        <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:.05em">Powód odmowy</p>
+        <p style="margin:0;color:#374151;font-size:15px;line-height:1.5">${clientComment}</p>
+       </div>`
+    : ''
 
   return `<!DOCTYPE html>
 <html lang="pl">
@@ -214,17 +222,63 @@ export function approvalConfirmationHtml(approved: boolean, projectName: string,
 </head>
 <body style="margin:0;padding:0;background:#f9fafb;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center">
   <div style="max-width:520px;margin:60px auto;background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.1);overflow:hidden">
-    <div style="background:${color};padding:48px 40px;text-align:center">
-      <div style="font-size:64px;margin-bottom:16px">${icon}</div>
+    <div style="background:${bg};padding:48px 40px;text-align:center">
+      <div style="font-size:80px;margin-bottom:16px;line-height:1">${icon}</div>
       <h1 style="margin:0;color:#fff;font-size:26px;font-weight:700">${title}</h1>
     </div>
     <div style="padding:40px">
       <p style="margin:0 0 12px;color:#374151;font-size:16px;line-height:1.6">${msg}</p>
       <p style="margin:0;color:#6b7280;font-size:14px">Projekt: <strong style="color:#374151">${projectName}</strong></p>
       ${total > 0 ? `<p style="margin:8px 0 0;color:#6b7280;font-size:14px">Kwota: <strong style="color:${color}">${fmt(total)} PLN</strong></p>` : ''}
+      ${commentBlock}
     </div>
     <div style="background:#f9fafb;padding:20px 40px;border-top:1px solid #e5e7eb;text-align:center">
       <p style="margin:0;font-size:12px;color:#9ca3af">Możesz zamknąć tę stronę.</p>
+    </div>
+  </div>
+</body>
+</html>`
+}
+
+export function rejectionFormHtml(projectName: string, total: number, postUrl: string) {
+  return `<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Odmowa akceptacji kosztów</title>
+</head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center">
+  <div style="max-width:520px;margin:60px auto;background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.1);overflow:hidden">
+    <div style="background:linear-gradient(135deg,#dc2626,#b91c1c);padding:40px;text-align:center">
+      <div style="font-size:72px;margin-bottom:12px;line-height:1">😔</div>
+      <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">Odmowa akceptacji kosztów</h1>
+    </div>
+    <div style="padding:36px 40px">
+      <p style="margin:0 0 6px;color:#6b7280;font-size:14px">Projekt: <strong style="color:#374151">${projectName}</strong></p>
+      ${total > 0 ? `<p style="margin:0 0 20px;color:#6b7280;font-size:14px">Kwota: <strong style="color:#dc2626">${fmt(total)} PLN</strong></p>` : '<div style="margin-bottom:20px"></div>'}
+      <form method="POST" action="${postUrl}">
+        <label style="display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">
+          Powód odmowy <span style="font-weight:400;color:#9ca3af">(opcjonalnie)</span>
+        </label>
+        <textarea
+          name="comment"
+          rows="4"
+          placeholder="Napisz dlaczego nie akceptujesz tych kosztów..."
+          style="width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;font-family:inherit;color:#374151;resize:vertical;outline:none"
+          onfocus="this.style.borderColor='#dc2626'"
+          onblur="this.style.borderColor='#d1d5db'"
+        ></textarea>
+        <button
+          type="submit"
+          style="margin-top:20px;width:100%;background:#dc2626;color:#fff;border:none;border-radius:10px;padding:16px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit"
+        >
+          ❌&nbsp; Potwierdź odmowę
+        </button>
+      </form>
+    </div>
+    <div style="background:#f9fafb;padding:16px 40px;border-top:1px solid #e5e7eb;text-align:center">
+      <p style="margin:0;font-size:12px;color:#9ca3af">Twoja odpowiedź zostanie przekazana firmie wykonawczej.</p>
     </div>
   </div>
 </body>
