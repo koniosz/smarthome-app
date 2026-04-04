@@ -645,9 +645,27 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact }:
                   <td className="px-3 py-2.5 text-gray-400 whitespace-nowrap">{fmtDate(item.date)}</td>
                   <td className="px-3 py-2.5">
                     <div className="text-gray-700 dark:text-gray-300 font-medium">{item.description}</div>
-                    {item.notes && (
-                      <div className="text-gray-400 text-xs mt-0.5">{item.notes}</div>
-                    )}
+                    {item.notes && (() => {
+                      const rejectionMatch = item.notes.match(/Powód odmowy:\s*(.+?)(\n|$)/s)
+                      const rejectionReason = rejectionMatch ? rejectionMatch[1].trim() : null
+                      const otherNotes = item.notes.replace(/Powód odmowy:.*$/s, '').replace(/❌ Klient odrzucił[^\n]*\n?/g, '').trim()
+                      return (
+                        <>
+                          {item.status === 'rejected' && rejectionReason && (
+                            <div className="mt-1 flex items-start gap-1.5 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md px-2 py-1.5">
+                              <span className="text-red-500 text-xs mt-0.5 shrink-0">💬</span>
+                              <div>
+                                <div className="text-xs font-semibold text-red-600 dark:text-red-400 leading-none mb-0.5">Powód odmowy klienta</div>
+                                <div className="text-xs text-red-700 dark:text-red-300">{rejectionReason}</div>
+                              </div>
+                            </div>
+                          )}
+                          {otherNotes && (
+                            <div className="text-gray-400 text-xs mt-0.5 whitespace-pre-line">{otherNotes}</div>
+                          )}
+                        </>
+                      )
+                    })()}
                   </td>
                   <td className="px-3 py-2.5 text-right text-gray-500 dark:text-gray-400">{item.quantity}</td>
                   <td className="px-3 py-2.5 text-right text-gray-500 dark:text-gray-400">{fmt(item.unit_price)}</td>
