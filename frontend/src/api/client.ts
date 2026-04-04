@@ -1,6 +1,7 @@
 import axios from 'axios'
 import type {
-  Project, ProjectDetail, CostItem, LaborEntry, ClientPayment, Employee, DashboardStats,
+  Project, ProjectDetail, CostItem, LaborEntry, ClientPayment, Employee, EmployeeDetail,
+  EmployeeAsset, EmployeeDocument, DashboardStats,
   AiQuote, ProductCatalogItem, ExtraCost, AccessRequest, AppNotification, CostAuditEntry,
   BankTransaction,
 } from '../types'
@@ -74,9 +75,25 @@ export const paymentsApi = {
 
 export const employeesApi = {
   list: () => api.get<Employee[]>('/employees').then(r => r.data),
+  get: (id: string): Promise<EmployeeDetail> =>
+    api.get(`/employees/${id}`).then(r => r.data),
   create: (data: Partial<Employee>) => api.post<Employee>('/employees', data).then(r => r.data),
   update: (id: string, data: Partial<Employee>) => api.put<Employee>(`/employees/${id}`, data).then(r => r.data),
   delete: (id: string) => api.delete(`/employees/${id}`).then(r => r.data),
+  // Assets
+  addAsset: (employeeId: string, data: any): Promise<EmployeeAsset> =>
+    api.post(`/employees/${employeeId}/assets`, data).then(r => r.data),
+  updateAsset: (assetId: string, data: any): Promise<EmployeeAsset> =>
+    api.put(`/employees/assets/${assetId}`, data).then(r => r.data),
+  deleteAsset: (assetId: string): Promise<void> =>
+    api.delete(`/employees/assets/${assetId}`).then(r => r.data),
+  // Documents
+  uploadDocument: (employeeId: string, data: any): Promise<EmployeeDocument> =>
+    api.post(`/employees/${employeeId}/documents`, data).then(r => r.data),
+  downloadDocument: (docId: string) =>
+    api.get(`/employees/documents/${docId}/download`, { responseType: 'blob' }).then(r => r.data),
+  deleteDocument: (docId: string): Promise<void> =>
+    api.delete(`/employees/documents/${docId}`).then(r => r.data),
 }
 
 export const attachmentsApi = {

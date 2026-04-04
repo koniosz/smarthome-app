@@ -128,7 +128,44 @@ export interface Employee {
   id: string
   name: string
   hourly_rate: number
+  employment_type: string
+  position: string
+  email: string
+  phone: string
+  address: string
+  start_date?: string | null
+  end_date?: string | null
+  notes: string
   created_at: string
+  updated_at: string
+}
+
+export interface EmployeeAsset {
+  id: string
+  employee_id: string
+  asset_type: string
+  name: string
+  serial_no: string
+  notes: string
+  assigned_at: string
+  created_at: string
+}
+
+export interface EmployeeDocument {
+  id: string
+  employee_id: string
+  doc_type: string
+  name: string
+  file_name: string
+  mime_type: string
+  expires_at?: string | null
+  notes: string
+  uploaded_at: string
+}
+
+export interface EmployeeDetail extends Employee {
+  assets: EmployeeAsset[]
+  documents: EmployeeDocument[]
 }
 
 export interface DashboardStats {

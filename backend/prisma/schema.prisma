@@ -92,12 +92,54 @@ model ClientPayment {
 }
 
 model Employee {
-  id          String   @id
-  name        String
-  hourly_rate Float    @default(0)
-  created_at  String
+  id              String  @id
+  name            String
+  hourly_rate     Float   @default(0)
+  employment_type String  @default("employment")
+  position        String  @default("")
+  email           String  @default("")
+  phone           String  @default("")
+  address         String  @default("")
+  start_date      String?
+  end_date        String?
+  notes           String  @default("")
+  created_at      String
+  updated_at      String  @default("")
+
+  assets      EmployeeAsset[]
+  documents   EmployeeDocument[]
 
   @@map("employees")
+}
+
+model EmployeeAsset {
+  id          String @id
+  employee_id String
+  asset_type  String
+  name        String
+  serial_no   String @default("")
+  notes       String @default("")
+  assigned_at String
+  created_at  String
+
+  employee    Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  @@map("employee_assets")
+}
+
+model EmployeeDocument {
+  id          String  @id
+  employee_id String
+  doc_type    String
+  name        String
+  file_name   String
+  mime_type   String  @default("application/octet-stream")
+  file_data   String
+  expires_at  String?
+  notes       String  @default("")
+  uploaded_at String
+
+  employee    Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  @@map("employee_documents")
 }
 
 model User {
