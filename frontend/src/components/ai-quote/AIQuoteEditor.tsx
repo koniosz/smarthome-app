@@ -48,6 +48,8 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
   const [refineHistoryOpen, setRefineHistoryOpen] = useState(false)
 
   // ── Approve as example ────────────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState<'rooms' | 'flat'>('rooms')
+
   const [approveModalOpen, setApproveModalOpen] = useState(false)
   const [approveForm, setApproveForm] = useState({
     title: '',
@@ -136,6 +138,74 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
   const grandTotal = totalAfterDiscount + laborCost
 
   const rooms = Array.from(new Set(items.map(i => i.room)))
+
+  // ── Flat / aggregated view ────────────────────────────────────────────────
+  // Items with the same name+brand+unit_price are merged (qty summed)
+  // Then grouped by category
+  type AggItem = { key: string; name: string; brand: QuoteBrand; category: string; unit: string; qty: number; unit_price: number; discount_pct: number; total: number }
+
+  const aggregatedItems: AggItem[] = (() => {
+    const map = new Map<string, AggItem>()
+    for (const item of items) {
+      const key = `${item.brand}||${item.category}||${item.name}||${item.unit_price}`
+      if (map.has(key)) {
+        const existing = map.get(key)!
+        existing.qty += item.qty
+        existing.total += itemTotal(item)
+      } else {
+        map.set(key, {
+          key,
+          name: item.name,
+          brand: item.brand,
+          category: item.category,
+          unit: item.unit,
+          qty: item.qty,
+          unit_price: item.unit_price,
+          discount_pct: item.discount_pct ?? 0,
+          total: itemTotal(item),
+        })
+      }
+    }
+    return Array.from(map.values())
+  })()
+
+  // Sections: "Instalacja / Rozdzielnia" room → first section, then by category
+  const SECTION_ORDER = [
+    'Instalacja / Rozdzielnia',
+    'Sterowanie oświetleniem',
+    'Sterowanie żaluzjami',
+    'Sterowanie HVAC',
+    'HVAC',
+    'Panel dotykowy',
+    'Czujnik',
+    'Czujniki',
+    'Bezpieczeństwo',
+    'Alarm',
+    'Monitoring',
+    'CCTV',
+    'Audio / Video',
+    'Wizualizacja',
+    'Sieć',
+    'WiFi',
+    'Domofon',
+    'Inne',
+    'Usługi',
+  ]
+
+  const flatCategories: Map<string, AggItem[]> = (() => {
+    // Group by category
+    const map = new Map<string, AggItem[]>()
+    for (const item of aggregatedItems) {
+      if (!map.has(item.category)) map.set(item.category, [])
+      map.get(item.category)!.push(item)
+    }
+    // Sort: known sections first, rest alphabetically
+    const sorted = new Map<string, AggItem[]>()
+    const known = SECTION_ORDER.filter(s => map.has(s))
+    const rest = Array.from(map.keys()).filter(k => !SECTION_ORDER.includes(k)).sort()
+    for (const k of [...known, ...rest]) sorted.set(k, map.get(k)!)
+    return sorted
+  })()
 
   const brandTotals = QUOTE_BRANDS.reduce<Record<string, number>>((acc, b) => {
     acc[b] = items.filter(i => i.brand === b).reduce((s, i) => s + itemTotal(i), 0)
@@ -787,8 +857,77 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
         </div>
       </div>
 
+      {/* View mode toggle */}
+      <div className="flex items-center gap-1 text-xs">
+        <button
+          onClick={() => setViewMode('rooms')}
+          className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${viewMode === 'rooms' ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+        >
+          🏠 Widok pomieszczeń
+        </button>
+        <button
+          onClick={() => setViewMode('flat')}
+          className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${viewMode === 'flat' ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+        >
+          📋 Lista zbiorcza
+        </button>
+      </div>
+
       {/* Items table */}
       <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+        {viewMode === 'flat' ? (
+          /* ── FLAT / AGGREGATED VIEW ─────────────────────────────────────── */
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 dark:bg-gray-800/60 text-gray-500 dark:text-gray-400 text-left">
+                <th className="px-3 py-2 font-medium w-24">Marka</th>
+                <th className="px-3 py-2 font-medium">Nazwa produktu</th>
+                <th className="px-3 py-2 font-medium w-16 text-right">Ilość</th>
+                <th className="px-3 py-2 font-medium w-12">J.m.</th>
+                <th className="px-3 py-2 font-medium w-24 text-right">Cena netto</th>
+                <th className="px-3 py-2 font-medium w-16 text-right">Rab.%</th>
+                <th className="px-3 py-2 font-medium w-24 text-right">Razem</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {Array.from(flatCategories.entries()).map(([category, catItems]) => {
+                const catTotal = catItems.reduce((s, i) => s + i.total, 0)
+                return (
+                  <>
+                    <tr key={`cat-${category}`} className="bg-gray-50 dark:bg-gray-800/40">
+                      <td colSpan={7} className="px-3 py-2 font-semibold text-gray-700 dark:text-gray-200 text-xs">
+                        {category}
+                        <span className="ml-2 font-normal text-gray-400">({catItems.length} pozycji)</span>
+                      </td>
+                    </tr>
+                    {catItems
+                      .sort((a, b) => a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name, 'pl'))
+                      .map(item => (
+                        <tr key={item.key} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+                          <td className="px-3 py-2"><BrandBadge brand={item.brand} /></td>
+                          <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{item.name}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-gray-800 dark:text-gray-100">{item.qty}</td>
+                          <td className="px-3 py-2 text-gray-400">{item.unit}</td>
+                          <td className="px-3 py-2 text-right text-gray-600 dark:text-gray-400">{fmtInt(item.unit_price)}</td>
+                          <td className="px-3 py-2 text-right">
+                            {item.discount_pct > 0
+                              ? <span className="text-amber-600 dark:text-amber-400 font-medium">{item.discount_pct}%</span>
+                              : <span className="text-gray-300 dark:text-gray-600">—</span>
+                            }
+                          </td>
+                          <td className="px-3 py-2 text-right font-medium text-gray-700 dark:text-gray-200">{fmtInt(item.total)}</td>
+                        </tr>
+                      ))}
+                    <tr key={`cat-total-${category}`} className="bg-gray-50/70 dark:bg-gray-800/20">
+                      <td colSpan={6} className="px-3 py-1.5 text-right text-xs text-gray-500 dark:text-gray-400 italic">Razem {category}:</td>
+                      <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700 dark:text-gray-200">{fmtInt(catTotal)}</td>
+                    </tr>
+                  </>
+                )
+              })}
+            </tbody>
+          </table>
+        ) : (
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-gray-50 dark:bg-gray-800/60 text-gray-500 dark:text-gray-400 text-left">
@@ -907,6 +1046,7 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
             ))}
           </tbody>
         </table>
+        )}
       </div>
 
       {/* Add row */}
