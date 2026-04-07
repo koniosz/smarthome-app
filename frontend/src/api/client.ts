@@ -3,7 +3,7 @@ import type {
   Project, ProjectDetail, CostItem, LaborEntry, ClientPayment, Employee, EmployeeDetail,
   EmployeeAsset, EmployeeDocument, DashboardStats,
   AiQuote, ProductCatalogItem, ExtraCost, AccessRequest, AppNotification, CostAuditEntry,
-  BankTransaction,
+  BankTransaction, ProjectDocument,
 } from '../types'
 
 const BASE = '/api'
@@ -94,6 +94,25 @@ export const employeesApi = {
     api.get(`/employees/documents/${docId}/download`, { responseType: 'blob' }).then(r => r.data),
   deleteDocument: (docId: string): Promise<void> =>
     api.delete(`/employees/documents/${docId}`).then(r => r.data),
+}
+
+export const projectDocumentsApi = {
+  list: (projectId: string): Promise<ProjectDocument[]> =>
+    api.get(`/projects/${projectId}/documents`).then(r => r.data),
+
+  upload: (projectId: string, data: {
+    doc_type: string; name: string; file_name: string; mime_type: string; file_data: string; notes?: string
+  }): Promise<ProjectDocument> =>
+    api.post(`/projects/${projectId}/documents`, data).then(r => r.data),
+
+  download: (projectId: string, docId: string): Promise<Blob> =>
+    api.get(`/projects/${projectId}/documents/${docId}/download`, { responseType: 'blob' }).then(r => r.data),
+
+  delete: (projectId: string, docId: string): Promise<void> =>
+    api.delete(`/projects/${projectId}/documents/${docId}`).then(r => r.data),
+
+  generateContract: (projectId: string, data: Record<string, any>): Promise<Blob> =>
+    api.post(`/projects/${projectId}/documents/generate-contract`, data, { responseType: 'blob' }).then(r => r.data),
 }
 
 export const attachmentsApi = {

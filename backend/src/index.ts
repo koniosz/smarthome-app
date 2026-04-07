@@ -26,6 +26,7 @@ import aiQuoteExamplesRouter from './routes/ai-quote-examples'
 import ksefRouter from './routes/ksef'
 import bankRouter, { updateKsefPayment, p24WebhookHandler } from './routes/bank'
 import settingsRouter from './routes/settings'
+import projectDocumentsRouter from './routes/project-documents'
 import { syncInvoices } from './services/ksef'
 import { requireAuth } from './middleware/auth'
 
@@ -105,6 +106,9 @@ app.patch('/api/ksef/invoices/:id/payment', updateKsefPayment)
 
 // App settings (admin only)
 app.use('/api/settings', settingsRouter)
+
+// Project documents & contract generator
+app.use('/api/projects/:projectId/documents', projectDocumentsRouter)
 
 // ── Serve frontend static files (production / network mode) ──────────────────
 const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist')

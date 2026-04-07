@@ -417,6 +417,29 @@ export interface BankTransaction {
   created_at: string
 }
 
+// ─── Project Documents ────────────────────────────────────────────────────────
+
+export type ProjectDocType = 'offer' | 'contract' | 'annex' | 'other'
+
+export interface ProjectDocument {
+  id: string
+  project_id: string
+  doc_type: ProjectDocType
+  name: string
+  file_name: string
+  mime_type: string
+  notes: string
+  uploaded_at: string
+  uploaded_by: string
+}
+
+export const PROJECT_DOC_TYPE_LABELS: Record<ProjectDocType, string> = {
+  offer:    'Oferta/Wycena',
+  contract: 'Umowa',
+  annex:    'Aneks',
+  other:    'Inne',
+}
+
 export interface KsefStatus {
   configured: boolean
   env: string

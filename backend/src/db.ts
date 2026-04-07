@@ -283,6 +283,17 @@ export const db = {
     delete: (id: string) => prisma.employeeDocument.delete({ where: { id } }),
   },
 
+  project_documents: {
+    forProject: (projectId: string) =>
+      prisma.projectDocument.findMany({ where: { project_id: projectId }, orderBy: { uploaded_at: 'desc' } }),
+    find: (id: string) =>
+      prisma.projectDocument.findUnique({ where: { id } }),
+    insert: (data: any) =>
+      prisma.projectDocument.create({ data }),
+    delete: (id: string) =>
+      prisma.projectDocument.delete({ where: { id } }),
+  },
+
   smtp_settings: {
     get: () =>
       prisma.smtpSettings.findUnique({ where: { id: 'default' } }),

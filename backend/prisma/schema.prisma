@@ -35,6 +35,7 @@ model Project {
   cost_audit_log  CostAuditLog[]
   ksef_invoices       KsefInvoice[]
   ksef_allocations    KsefInvoiceAllocation[]
+  documents           ProjectDocument[]
 
   @@map("projects")
 }
@@ -385,6 +386,23 @@ model KsefSession {
   created_at    String
 
   @@map("ksef_sessions")
+}
+
+// ─── Project Documents ────────────────────────────────────────────────────────
+model ProjectDocument {
+  id          String  @id
+  project_id  String
+  doc_type    String  @default("offer")  // offer, contract, annex, other
+  name        String
+  file_name   String
+  mime_type   String  @default("application/octet-stream")
+  file_data   String
+  notes       String  @default("")
+  uploaded_at String
+  uploaded_by String  @default("")
+
+  project     Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  @@map("project_documents")
 }
 
 // ─── SMTP / Email configuration ───────────────────────────────────────────────

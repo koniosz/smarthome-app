@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { projectsApi, aiQuotesApi, costsApi } from '../../api/client'
+import { projectsApi, aiQuotesApi, costsApi, projectDocumentsApi } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
-import type { ProjectDetail as ProjectDetailType, CostItem, LaborEntry, ClientPayment, AiQuote, CostAuditEntry } from '../../types'
-import { SMART_FEATURES } from '../../types'
+import type { ProjectDetail as ProjectDetailType, CostItem, LaborEntry, ClientPayment, AiQuote, CostAuditEntry, ProjectDocument } from '../../types'
+import { SMART_FEATURES, PROJECT_DOC_TYPE_LABELS } from '../../types'
 import { StatusBadge, TypeBadge } from '../ui/StatusBadge'
 import AddProjectModal from './AddProjectModal'
 import AddCostModal from '../costs/AddCostModal'
@@ -137,7 +137,381 @@ function fmtDec(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'ai_quote' | 'extra_costs' | 'history'
+type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'ai_quote' | 'extra_costs' | 'documents' | 'history'
+
+// ── Project Documents Tab ────────────────────────────────────────────────────
+
+function ProjectDocumentsTab({ projectId, project }: { projectId: string; project: ProjectDetailType }) {
+  const [docs, setDocs] = useState<ProjectDocument[]>([])
+  const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [showUpload, setShowUpload] = useState(false)
+  const [showContract, setShowContract] = useState(false)
+  const [uploadForm, setUploadForm] = useState({ doc_type: 'offer', name: '', notes: '' })
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Contract form state
+  const [cf, setCf] = useState({
+    contract_date: new Date().toISOString().slice(0, 10),
+    client_company: project.client_name || '',
+    client_address: '',
+    client_krs: '',
+    client_nip: '',
+    client_representative: '',
+    scope_description: '',
+    start_date: project.start_date || '',
+    end_date: project.end_date || '',
+    total_amount_net: project.budget_amount || 0,
+    guarantee_months: 24,
+    shc_representative: 'Prezesa Zarządu - Dorotę Szychtę',
+    location_name: '',
+    tranches: [
+      { label: 'zaliczka', amount: 0, due_date: '' },
+      { label: 'po zakończeniu', amount: 0, due_date: '' },
+    ],
+  })
+  const [generatingContract, setGeneratingContract] = useState(false)
+
+  useEffect(() => {
+    projectDocumentsApi.list(projectId).then(data => {
+      setDocs(data)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [projectId])
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadFile(file)
+    if (!uploadForm.name) setUploadForm(f => ({ ...f, name: file.name }))
+  }
+
+  const handleUpload = async () => {
+    if (!uploadFile) return
+    setUploading(true)
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(uploadFile)
+      })
+      const doc = await projectDocumentsApi.upload(projectId, {
+        doc_type: uploadForm.doc_type,
+        name: uploadForm.name || uploadFile.name,
+        file_name: uploadFile.name,
+        mime_type: uploadFile.type || 'application/octet-stream',
+        file_data: base64,
+        notes: uploadForm.notes,
+      })
+      setDocs(prev => [doc, ...prev])
+      setShowUpload(false)
+      setUploadForm({ doc_type: 'offer', name: '', notes: '' })
+      setUploadFile(null)
+      if (fileRef.current) fileRef.current.value = ''
+    } catch {
+      alert('Błąd podczas wgrywania pliku')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleDownload = async (doc: ProjectDocument) => {
+    const blob = await projectDocumentsApi.download(projectId, doc.id)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = doc.file_name
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleDelete = async (doc: ProjectDocument) => {
+    if (!confirm(`Usunąć dokument "${doc.name}"?`)) return
+    await projectDocumentsApi.delete(projectId, doc.id)
+    setDocs(prev => prev.filter(d => d.id !== doc.id))
+  }
+
+  const handleGenerateContract = async () => {
+    setGeneratingContract(true)
+    try {
+      const blob = await projectDocumentsApi.generateContract(projectId, cf)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const safeName = `Umowa_${(cf.client_company || 'Klient').replace(/[^a-zA-Z0-9]/g, '_')}_${cf.contract_date.replace(/-/g, '')}.docx`
+      a.download = safeName
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      alert('Błąd generowania umowy')
+    } finally {
+      setGeneratingContract(false)
+    }
+  }
+
+  const updateTranche = (i: number, field: string, value: string | number) => {
+    setCf(prev => {
+      const t = [...prev.tranches]
+      t[i] = { ...t[i], [field]: value }
+      return { ...prev, tranches: t }
+    })
+  }
+
+  const docTypeColor: Record<string, string> = {
+    offer:    'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300',
+    contract: 'bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-300',
+    annex:    'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300',
+    other:    'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  }
+
+  if (loading) return <p className="text-sm text-gray-400 text-center py-10">Ładowanie...</p>
+
+  return (
+    <div className="space-y-4">
+      {/* Action bar */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+          Dokumenty projektu ({docs.length})
+        </h3>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowContract(c => !c)}
+            className="px-3 py-1.5 text-xs font-medium border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
+          >
+            📝 Generuj umowę
+          </button>
+          <button
+            onClick={() => setShowUpload(c => !c)}
+            className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors"
+          >
+            + Wgraj dokument
+          </button>
+        </div>
+      </div>
+
+      {/* Upload form */}
+      {showUpload && (
+        <div className="border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-3 bg-gray-50 dark:bg-gray-800/50">
+          <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Wgraj dokument</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Typ dokumentu</label>
+              <select
+                value={uploadForm.doc_type}
+                onChange={e => setUploadForm(f => ({ ...f, doc_type: e.target.value }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200"
+              >
+                {Object.entries(PROJECT_DOC_TYPE_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Nazwa (opcjonalna)</label>
+              <input
+                type="text"
+                value={uploadForm.name}
+                onChange={e => setUploadForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="np. Oferta v2"
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Plik</label>
+            <input ref={fileRef} type="file" onChange={handleFileChange} className="text-sm text-gray-600 dark:text-gray-400" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Notatka (opcjonalna)</label>
+            <input
+              type="text"
+              value={uploadForm.notes}
+              onChange={e => setUploadForm(f => ({ ...f, notes: e.target.value }))}
+              className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleUpload}
+              disabled={!uploadFile || uploading}
+              className="px-4 py-2 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50 transition-colors"
+            >
+              {uploading ? 'Wgrywanie...' : 'Wgraj'}
+            </button>
+            <button onClick={() => setShowUpload(false)} className="px-4 py-2 text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+              Anuluj
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Contract generator form */}
+      {showContract && (
+        <div className="border border-violet-200 dark:border-violet-800 rounded-xl p-4 space-y-4 bg-violet-50/50 dark:bg-violet-950/10">
+          <h4 className="text-sm font-semibold text-violet-700 dark:text-violet-300">📝 Generator standardowej umowy</h4>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Data umowy</label>
+              <input type="date" value={cf.contract_date} onChange={e => setCf(p => ({ ...p, contract_date: e.target.value }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Firma klienta</label>
+              <input type="text" value={cf.client_company} onChange={e => setCf(p => ({ ...p, client_company: e.target.value }))}
+                placeholder="np. ABC Sp. z o.o."
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Adres klienta</label>
+              <input type="text" value={cf.client_address} onChange={e => setCf(p => ({ ...p, client_address: e.target.value }))}
+                placeholder="ul. Przykładowa 1, Warszawa"
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Przedstawiciel klienta</label>
+              <input type="text" value={cf.client_representative} onChange={e => setCf(p => ({ ...p, client_representative: e.target.value }))}
+                placeholder="np. Jana Kowalskiego - Prezesa"
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">KRS klienta (opcjonalnie)</label>
+              <input type="text" value={cf.client_krs} onChange={e => setCf(p => ({ ...p, client_krs: e.target.value }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">NIP klienta (opcjonalnie)</label>
+              <input type="text" value={cf.client_nip} onChange={e => setCf(p => ({ ...p, client_nip: e.target.value }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Przedmiot umowy (opis zakresu)</label>
+            <textarea value={cf.scope_description} onChange={e => setCf(p => ({ ...p, scope_description: e.target.value }))}
+              rows={2} placeholder="np. wykonanie instalacji domu inteligentnego zgodnie z ofertą..."
+              className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 resize-none" />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Termin rozpoczęcia</label>
+              <input type="date" value={cf.start_date} onChange={e => setCf(p => ({ ...p, start_date: e.target.value }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Termin zakończenia</label>
+              <input type="date" value={cf.end_date} onChange={e => setCf(p => ({ ...p, end_date: e.target.value }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Wartość netto (PLN)</label>
+              <input type="number" value={cf.total_amount_net} onChange={e => setCf(p => ({ ...p, total_amount_net: Number(e.target.value) }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Gwarancja (miesiące)</label>
+              <input type="number" value={cf.guarantee_months} onChange={e => setCf(p => ({ ...p, guarantee_months: Number(e.target.value) }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Lokalizacja (opcjonalnie)</label>
+              <input type="text" value={cf.location_name} onChange={e => setCf(p => ({ ...p, location_name: e.target.value }))}
+                placeholder="np. budynku Bagatela 10"
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Przedstawiciel SHC</label>
+              <input type="text" value={cf.shc_representative} onChange={e => setCf(p => ({ ...p, shc_representative: e.target.value }))}
+                className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+            </div>
+          </div>
+
+          {/* Tranches */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Transze płatności</label>
+              <button onClick={() => setCf(p => ({ ...p, tranches: [...p.tranches, { label: '', amount: 0, due_date: '' }] }))}
+                className="text-xs text-violet-600 hover:underline">+ Dodaj transzę</button>
+            </div>
+            <div className="space-y-2">
+              {cf.tranches.map((t, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <input type="text" value={t.label} onChange={e => updateTranche(i, 'label', e.target.value)}
+                    placeholder="Opis (np. zaliczka)"
+                    className="flex-1 text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+                  <input type="number" value={t.amount} onChange={e => updateTranche(i, 'amount', Number(e.target.value))}
+                    placeholder="Kwota PLN netto"
+                    className="w-36 text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+                  <input type="date" value={t.due_date} onChange={e => updateTranche(i, 'due_date', e.target.value)}
+                    className="w-40 text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
+                  <button onClick={() => setCf(p => ({ ...p, tranches: p.tranches.filter((_, j) => j !== i) }))}
+                    className="text-red-400 hover:text-red-600 text-sm px-1">✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleGenerateContract}
+              disabled={generatingContract}
+              className="px-4 py-2 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50 transition-colors"
+            >
+              {generatingContract ? 'Generowanie...' : '⬇️ Pobierz umowę (.docx)'}
+            </button>
+            <button onClick={() => setShowContract(false)} className="px-4 py-2 text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+              Zamknij
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Documents list */}
+      {docs.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-8">Brak dokumentów. Wgraj pierwszą ofertę lub umowę.</p>
+      ) : (
+        <div className="space-y-2">
+          {docs.map(doc => (
+            <div key={doc.id} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600 transition-colors">
+              <div className="text-xl flex-shrink-0">
+                {doc.mime_type === 'application/pdf' ? '📄' : doc.mime_type?.includes('word') ? '📝' : '📎'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{doc.name}</p>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span className={`inline-flex text-xs px-1.5 py-0.5 rounded font-medium ${docTypeColor[doc.doc_type] ?? docTypeColor.other}`}>
+                    {PROJECT_DOC_TYPE_LABELS[doc.doc_type as keyof typeof PROJECT_DOC_TYPE_LABELS] ?? doc.doc_type}
+                  </span>
+                  <span className="text-xs text-gray-400">{doc.file_name}</span>
+                  {doc.notes && <span className="text-xs text-gray-400 italic truncate max-w-xs">{doc.notes}</span>}
+                  <span className="text-xs text-gray-400">{new Date(doc.uploaded_at).toLocaleDateString('pl-PL')}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => handleDownload(doc)}
+                className="px-3 py-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors flex-shrink-0"
+              >
+                ⬇️ Pobierz
+              </button>
+              <button
+                onClick={() => handleDelete(doc)}
+                className="px-3 py-1.5 text-xs font-medium border border-red-200 dark:border-red-900 text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors flex-shrink-0"
+              >
+                🗑
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
@@ -238,6 +612,7 @@ export default function ProjectDetail() {
     ...(isAdmin ? [{ key: 'payments' as Tab, label: `💳 Wpłaty (${payments.length})` }] : []),
     { key: 'ai_quote' as Tab, label: `🤖 Wycena AI${aiQuotes.length > 0 ? ` (${aiQuotes.length})` : ''}` },
     { key: 'extra_costs' as Tab, label: `📋 Koszty dodatkowe${project.extra_costs_count > 0 ? ` (${project.extra_costs_count})` : ''}` },
+    { key: 'documents' as Tab, label: '📁 Dokumenty' },
     { key: 'history' as Tab, label: '🕓 Historia zmian' },
   ]
 
@@ -448,6 +823,9 @@ export default function ProjectDetail() {
             projectName={project.name}
             clientContact={project.client_contact}
           />
+        )}
+        {tab === 'documents' && (
+          <ProjectDocumentsTab projectId={project.id} project={project} />
         )}
         {tab === 'history' && (
           <HistoryTab auditLog={auditLog} project={project} />
