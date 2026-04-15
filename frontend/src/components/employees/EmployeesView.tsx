@@ -60,6 +60,8 @@ function EmployeeFormModal({ initial, onClose, onSaved }: {
     start_date: initial?.start_date ?? '',
     end_date: initial?.end_date ?? '',
     notes: initial?.notes ?? '',
+    medical_exam_date: initial?.medical_exam_date ?? '',
+    bhp_date: initial?.bhp_date ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -132,6 +134,14 @@ function EmployeeFormModal({ initial, onClose, onSaved }: {
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data zakończenia</label>
               <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.end_date ?? ''} onChange={e => set('end_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Ważność badań okresowych</label>
+              <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.medical_exam_date ?? ''} onChange={e => set('medical_exam_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Ważność szkolenia BHP</label>
+              <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.bhp_date ?? ''} onChange={e => set('bhp_date', e.target.value)} />
             </div>
             <div className="col-span-2">
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Notatki</label>
@@ -450,6 +460,25 @@ function EmployeeDetailPanel({ employee, onClose, onUpdated, onDeleted }: {
                   </div>
                 ) : null)}
               </div>
+              {(detail.medical_exam_date || detail.bhp_date) && (
+                <div className="space-y-2">
+                  {([
+                    { field: detail.medical_exam_date, label: '🩺 Badania okresowe' },
+                    { field: detail.bhp_date, label: '🦺 Szkolenie BHP' },
+                  ] as { field: string | null | undefined; label: string }[]).map(({ field, label }) => {
+                    if (!field) return null
+                    const s = expiryStatus(field)
+                    return (
+                      <div key={label} className={`flex items-center justify-between px-4 py-3 rounded-xl border text-sm ${s === 'expired' ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800' : s === 'soon' ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-700'}`}>
+                        <span className="font-medium text-gray-700 dark:text-gray-200">{label}</span>
+                        <span className={`text-xs font-semibold ${s === 'expired' ? 'text-red-600 dark:text-red-400' : s === 'soon' ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                          {fmtDate(field)} {s === 'expired' ? '❌' : s === 'soon' ? '⚠️' : '✅'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               {detail.notes && (
                 <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900 rounded-xl p-4">
                   <div className="text-xs text-amber-600 font-medium mb-1">📝 Notatki</div>

@@ -101,11 +101,13 @@ model Employee {
   email           String  @default("")
   phone           String  @default("")
   address         String  @default("")
-  start_date      String?
-  end_date        String?
-  notes           String  @default("")
-  created_at      String
-  updated_at      String  @default("")
+  start_date         String?
+  end_date           String?
+  notes              String  @default("")
+  created_at         String
+  updated_at         String  @default("")
+  medical_exam_date  String?
+  bhp_date           String?
 
   assets      EmployeeAsset[]
   documents   EmployeeDocument[]

@@ -90,6 +90,32 @@ router.get('/', async (req: Request, res: Response) => {
     }
     carAlerts.sort((a, b) => a.days_left - b.days_left)
 
+    // ── Employee medical/BHP alerts (within 7 days) ────────────────────────
+    const empList = await db.employees.allForAlerts()
+    const employeeAlerts: any[] = []
+    for (const emp of empList as any[]) {
+      for (const { field, label } of [
+        { field: 'medical_exam_date', label: 'Badania okresowe' },
+        { field: 'bhp_date',          label: 'Szkolenie BHP' },
+      ]) {
+        const dateStr = emp[field]
+        if (!dateStr) continue
+        const d = new Date(dateStr); d.setHours(0, 0, 0, 0)
+        const daysLeft = Math.round((d.getTime() - today.getTime()) / 86_400_000)
+        if (daysLeft <= 7) {
+          employeeAlerts.push({
+            employee_id:   emp.id,
+            employee_name: emp.name,
+            alert_type:    field,
+            alert_label:   label,
+            expires_at:    dateStr,
+            days_left:     daysLeft,
+          })
+        }
+      }
+    }
+    employeeAlerts.sort((a, b) => a.days_left - b.days_left)
+
     const recentProjects = await Promise.all(
       [...projects]
         .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))
@@ -121,6 +147,7 @@ router.get('/', async (req: Request, res: Response) => {
       by_type: byType,
       recent_projects: recentProjects,
       car_alerts: carAlerts,
+      employee_alerts: employeeAlerts,
     })
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })

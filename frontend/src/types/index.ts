@@ -138,6 +138,8 @@ export interface Employee {
   notes: string
   created_at: string
   updated_at: string
+  medical_exam_date?: string | null
+  bhp_date?: string | null
 }
 
 export interface EmployeeAsset {
@@ -159,6 +161,15 @@ export interface CarAlert {
   car_name: string
   serial_no: string
   alert_type: 'car_inspection_date' | 'car_insurance_date'
+  alert_label: string
+  expires_at: string
+  days_left: number
+}
+
+export interface EmployeeAlert {
+  employee_id: string
+  employee_name: string
+  alert_type: 'medical_exam_date' | 'bhp_date'
   alert_label: string
   expires_at: string
   days_left: number
@@ -194,6 +205,7 @@ export interface DashboardStats {
   by_type: Record<string, number>
   recent_projects: (Project & { cost_total: number; margin_pct: number })[]
   car_alerts: CarAlert[]
+  employee_alerts: EmployeeAlert[]
 }
 
 export interface OverBudgetProject {

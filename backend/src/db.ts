@@ -75,6 +75,11 @@ export const db = {
       prisma.employee.update({ where: { id }, data: patch }),
     delete: (id: string) =>
       prisma.employee.delete({ where: { id } }),
+    allForAlerts: () =>
+      prisma.employee.findMany({
+        where: { OR: [{ medical_exam_date: { not: null } }, { bhp_date: { not: null } }] },
+        select: { id: true, name: true, medical_exam_date: true, bhp_date: true },
+      }),
   },
 
   users: {

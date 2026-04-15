@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { dashboardApi } from '../../api/client'
-import type { DashboardStats, CarAlert } from '../../types'
+import type { DashboardStats, CarAlert, EmployeeAlert } from '../../types'
 import { PROJECT_STATUS_LABELS, PROJECT_TYPE_LABELS } from '../../types'
 import { StatusBadge, TypeBadge, MarginBadge } from '../ui/StatusBadge'
 
@@ -203,6 +203,39 @@ export default function DashboardView() {
           </div>
         )}
       </div>
+
+      {/* Employee medical/BHP alerts */}
+      {stats.employee_alerts && stats.employee_alerts.length > 0 && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-blue-200 dark:border-blue-800 p-5">
+          <h2 className="text-sm font-semibold text-blue-700 dark:text-blue-400 mb-3 flex items-center gap-2">
+            👷 Przypomnienia — pracownicy
+            <span className="ml-1 text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 px-2 py-0.5 rounded-full font-medium">
+              {stats.employee_alerts.length}
+            </span>
+          </h2>
+          <div className="space-y-2">
+            {stats.employee_alerts.map((alert: EmployeeAlert, i: number) => {
+              const expired = alert.days_left < 0
+              const urgent  = alert.days_left <= 3
+              return (
+                <div key={i} className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm ${expired ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800' : urgent ? 'bg-orange-50 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800' : 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'}`}>
+                  <span className="text-xl flex-shrink-0">{alert.alert_type === 'medical_exam_date' ? '🩺' : '🦺'}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="font-medium text-gray-800 dark:text-gray-100">{alert.alert_label}</span>
+                    <span className="text-gray-400 dark:text-gray-500"> · 👤 {alert.employee_name}</span>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className={`font-semibold ${expired ? 'text-red-600 dark:text-red-400' : urgent ? 'text-orange-600 dark:text-orange-400' : 'text-blue-700 dark:text-blue-400'}`}>
+                      {expired ? `Przeterminowane ${Math.abs(alert.days_left)} dni temu` : alert.days_left === 0 ? 'Wygasa DZIŚ' : `Za ${alert.days_left} ${alert.days_left === 1 ? 'dzień' : 'dni'}`}
+                    </div>
+                    <div className="text-xs text-gray-400">{new Date(alert.expires_at).toLocaleDateString('pl-PL')}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Car alerts */}
       {stats.car_alerts && stats.car_alerts.length > 0 && (
