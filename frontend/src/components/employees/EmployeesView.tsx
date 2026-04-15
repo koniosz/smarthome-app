@@ -162,6 +162,8 @@ function AssetModal({ employeeId, initial, onClose, onSaved }: {
     serial_no: initial?.serial_no ?? '',
     notes: initial?.notes ?? '',
     assigned_at: initial?.assigned_at ?? new Date().toISOString().slice(0, 10),
+    car_inspection_date: initial?.car_inspection_date ?? '',
+    car_insurance_date: initial?.car_insurance_date ?? '',
   })
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
@@ -205,6 +207,18 @@ function AssetModal({ employeeId, initial, onClose, onSaved }: {
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data przydzielenia</label>
             <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.assigned_at} onChange={e => set('assigned_at', e.target.value)} />
           </div>
+          {form.asset_type === 'car' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data ważności badań technicznych</label>
+                <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.car_inspection_date ?? ''} onChange={e => set('car_inspection_date', e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data końca ubezpieczenia</label>
+                <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.car_insurance_date ?? ''} onChange={e => set('car_insurance_date', e.target.value)} />
+              </div>
+            </>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Uwagi</label>
             <input className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Opcjonalne uwagi" />
@@ -456,6 +470,26 @@ function EmployeeDetailPanel({ employee, onClose, onUpdated, onDeleted }: {
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{asset.name}</div>
                     <div className="text-xs text-gray-400">{ASSET_TYPES[asset.asset_type]?.replace(/^.\s/, '') ?? 'Inne'}{asset.serial_no ? ` · ${asset.serial_no}` : ''} · od {fmtDate(asset.assigned_at)}</div>
+                    {asset.asset_type === 'car' && (asset.car_inspection_date || asset.car_insurance_date) && (
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {asset.car_inspection_date && (() => {
+                          const s = expiryStatus(asset.car_inspection_date)
+                          return (
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${s === 'expired' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : s === 'soon' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'}`}>
+                              🔧 Przegląd: {fmtDate(asset.car_inspection_date)} {s === 'expired' ? '❌' : s === 'soon' ? '⚠️' : '✅'}
+                            </span>
+                          )
+                        })()}
+                        {asset.car_insurance_date && (() => {
+                          const s = expiryStatus(asset.car_insurance_date)
+                          return (
+                            <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${s === 'expired' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : s === 'soon' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'}`}>
+                              🛡 Ubezpieczenie: {fmtDate(asset.car_insurance_date)} {s === 'expired' ? '❌' : s === 'soon' ? '⚠️' : '✅'}
+                            </span>
+                          )
+                        })()}
+                      </div>
+                    )}
                     {asset.notes && <div className="text-xs text-gray-400 mt-0.5">{asset.notes}</div>}
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

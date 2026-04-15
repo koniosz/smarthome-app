@@ -149,6 +149,19 @@ export interface EmployeeAsset {
   notes: string
   assigned_at: string
   created_at: string
+  car_inspection_date?: string | null
+  car_insurance_date?: string | null
+}
+
+export interface CarAlert {
+  employee_id: string
+  employee_name: string
+  car_name: string
+  serial_no: string
+  alert_type: 'car_inspection_date' | 'car_insurance_date'
+  alert_label: string
+  expires_at: string
+  days_left: number
 }
 
 export interface EmployeeDocument {
@@ -180,6 +193,7 @@ export interface DashboardStats {
   by_status: Record<string, number>
   by_type: Record<string, number>
   recent_projects: (Project & { cost_total: number; margin_pct: number })[]
+  car_alerts: CarAlert[]
 }
 
 export interface OverBudgetProject {

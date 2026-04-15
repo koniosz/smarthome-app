@@ -275,6 +275,10 @@ export const db = {
     insert: (data: any) => prisma.employeeAsset.create({ data }),
     update: (id: string, data: any) => prisma.employeeAsset.update({ where: { id }, data }),
     delete: (id: string) => prisma.employeeAsset.delete({ where: { id } }),
+    allCars: () => prisma.employeeAsset.findMany({
+      where: { asset_type: 'car' },
+      include: { employee: { select: { id: true, name: true } } },
+    }),
   },
   employee_documents: {
     forEmployee: (employeeId: string) => prisma.employeeDocument.findMany({ where: { employee_id: employeeId }, orderBy: { uploaded_at: 'desc' } }),

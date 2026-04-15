@@ -114,14 +114,16 @@ model Employee {
 }
 
 model EmployeeAsset {
-  id          String @id
-  employee_id String
-  asset_type  String
-  name        String
-  serial_no   String @default("")
-  notes       String @default("")
-  assigned_at String
-  created_at  String
+  id                   String  @id
+  employee_id          String
+  asset_type           String
+  name                 String
+  serial_no            String  @default("")
+  notes                String  @default("")
+  assigned_at          String
+  created_at           String
+  car_inspection_date  String?
+  car_insurance_date   String?
 
   employee    Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
   @@map("employee_assets")

@@ -59,6 +59,37 @@ router.get('/', async (req: Request, res: Response) => {
       ? ((totalBudget - totalCosts) / totalBudget) * 100
       : 0
 
+    // ── Car expiry alerts (within 7 days) ─────────────────────────────────
+    const cars = await db.employee_assets.allCars()
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const in7 = new Date(today); in7.setDate(in7.getDate() + 7)
+
+    const carAlerts: any[] = []
+    for (const car of cars as any[]) {
+      for (const { field, label } of [
+        { field: 'car_inspection_date', label: 'Badanie techniczne' },
+        { field: 'car_insurance_date',  label: 'Ubezpieczenie' },
+      ]) {
+        const dateStr = car[field]
+        if (!dateStr) continue
+        const d = new Date(dateStr); d.setHours(0, 0, 0, 0)
+        const daysLeft = Math.round((d.getTime() - today.getTime()) / 86_400_000)
+        if (daysLeft <= 7) {
+          carAlerts.push({
+            employee_id:   car.employee.id,
+            employee_name: car.employee.name,
+            car_name:      car.name,
+            serial_no:     car.serial_no,
+            alert_type:    field,
+            alert_label:   label,
+            expires_at:    dateStr,
+            days_left:     daysLeft,
+          })
+        }
+      }
+    }
+    carAlerts.sort((a, b) => a.days_left - b.days_left)
+
     const recentProjects = await Promise.all(
       [...projects]
         .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))
@@ -89,6 +120,7 @@ router.get('/', async (req: Request, res: Response) => {
       by_status: byStatus,
       by_type: byType,
       recent_projects: recentProjects,
+      car_alerts: carAlerts,
     })
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })
