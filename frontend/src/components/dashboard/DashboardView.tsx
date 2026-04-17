@@ -204,6 +204,41 @@ export default function DashboardView() {
         )}
       </div>
 
+      {/* Due invoices alert */}
+      {stats.invoices_due && stats.invoices_due.length > 0 && (
+        <div className="bg-white dark:bg-gray-900 rounded-xl border border-red-200 dark:border-red-800 p-5">
+          <h2 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-3 flex items-center gap-2">
+            💳 Faktury do opłacenia dziś
+            <span className="ml-1 text-xs bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 px-2 py-0.5 rounded-full font-medium">
+              {stats.invoices_due.length}
+            </span>
+          </h2>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            Masz {stats.invoices_due.length} {stats.invoices_due.length === 1 ? 'fakturę' : stats.invoices_due.length < 5 ? 'faktury' : 'faktur'} do opłacenia na łączną kwotę{' '}
+            <strong className="text-red-600 dark:text-red-400">
+              {fmt(stats.invoices_due.reduce((s, i) => s + i.gross_amount, 0))} PLN
+            </strong>
+          </p>
+          <div className="space-y-2">
+            {stats.invoices_due.map(inv => (
+              <div key={inv.id} className="flex items-center justify-between bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900 rounded-lg px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{inv.seller_name ?? '—'}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {inv.invoice_number ?? '—'} · termin: {inv.payment_due_date ?? '—'}
+                  </div>
+                </div>
+                <div className="text-right flex-shrink-0 ml-4">
+                  <div className="text-sm font-semibold text-red-600 dark:text-red-400">
+                    {fmt(inv.gross_amount)} {inv.currency}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Employee medical/BHP alerts */}
       {stats.employee_alerts && stats.employee_alerts.length > 0 && (
         <div className="bg-white dark:bg-gray-900 rounded-xl border border-blue-200 dark:border-blue-800 p-5">

@@ -25,6 +25,7 @@ const CATEGORIES_PL: Record<string, string> = {
   materials: 'Materiały',
   subcontractor: 'Podwykonawca',
   other: 'Inne',
+  internal: 'Wewnętrzne potrzeby',
 }
 
 // ── Admin-only endpoints ──────────────────────────────────────────────────────
@@ -134,6 +135,19 @@ router.patch('/invoices/:id/share', requireAdmin, async (req: Request, res: Resp
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
+// PATCH /api/ksef/invoices/:id/due-date
+router.patch('/invoices/:id/due-date', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { payment_due_date } = req.body
+    const updated = await prisma.ksefInvoice.update({
+      where: { id: req.params.id },
+      data: { payment_due_date: payment_due_date ?? null },
+      include: { project: { select: { id: true, name: true, client_name: true } } },
+    })
+    res.json(updated)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
 // DELETE /api/ksef/invoices/:id
 router.delete('/invoices/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
@@ -223,6 +237,25 @@ router.patch('/shared/:id/assign', requireAuth, async (req: Request, res: Respon
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
+// GET /api/ksef/invoices/due-today — faktury z terminem płatności <= dziś (requireAdmin)
+router.get('/invoices/due-today', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const todayStr = new Date().toISOString().split('T')[0]
+    const invoices = await prisma.ksefInvoice.findMany({
+      where: {
+        payment_due_date: { not: null, lte: todayStr },
+        payment_status:   { not: 'paid' },
+      },
+      select: {
+        id: true, invoice_number: true, seller_name: true,
+        gross_amount: true, currency: true, payment_due_date: true, payment_status: true,
+      },
+      orderBy: { payment_due_date: 'asc' },
+    })
+    res.json(invoices)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
 // ── Alokacje faktury do projektów ─────────────────────────────────────────────
 // Alokacja = przypisanie konkretnej kwoty z faktury do projektu + tworzenie CostItem
 
@@ -275,8 +308,9 @@ router.get('/invoices/:id/allocations', requireAuth, async (req: Request, res: R
 // POST /api/ksef/invoices/:id/allocations — dodaj alokację
 router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { project_id, amount, notes = '', category = 'materials' } = req.body
-    if (!project_id || !amount) { res.status(400).json({ error: 'Wymagane: project_id, amount' }); return }
+    const { project_id, amount, notes = '', category = 'materials', allocation_type = 'project' } = req.body
+    if (!amount) { res.status(400).json({ error: 'Wymagane: amount' }); return }
+    if (allocation_type === 'project' && !project_id) { res.status(400).json({ error: 'Wymagane: project_id dla alokacji projektowej' }); return }
 
     const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
     if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
@@ -286,23 +320,35 @@ router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: 
     const now = new Date().toISOString()
 
     const allocation = await prisma.ksefInvoiceAllocation.create({
-      data: { id: allocationId, invoice_id: req.params.id, project_id, amount: parseFloat(amount), notes, category, created_at: now, updated_at: now },
+      data: {
+        id: allocationId,
+        invoice_id: req.params.id,
+        project_id: allocation_type === 'project' ? project_id : null,
+        amount: parseFloat(amount),
+        notes,
+        category,
+        allocation_type,
+        created_at: now,
+        updated_at: now,
+      },
       include: { project: { select: { id: true, name: true, client_name: true } } },
     })
 
-    // Utwórz CostItem w projekcie
-    await upsertCostItemForAllocation(allocationId, project_id, invoice, parseFloat(amount), notes, category)
+    if (allocation_type === 'project' && project_id) {
+      // Utwórz CostItem w projekcie
+      await upsertCostItemForAllocation(allocationId, project_id, invoice, parseFloat(amount), notes, category)
 
-    // Zaktualizuj project_id faktury (na pierwszy projekt jeśli jeszcze nie ustawiony)
-    if (!invoice.project_id) {
-      await prisma.ksefInvoice.update({ where: { id: req.params.id }, data: { project_id } })
+      // Zaktualizuj project_id faktury (na pierwszy projekt jeśli jeszcze nie ustawiony)
+      if (!invoice.project_id) {
+        await prisma.ksefInvoice.update({ where: { id: req.params.id }, data: { project_id } })
+      }
+
+      // Log aktywności
+      const user = auditUser(req)
+      await logKsefActivity(project_id, user, 'add',
+        `Przypisano fakturę KSeF: ${invoice.seller_name ?? ''} ${invoice.invoice_number ?? ''} — ${parseFloat(amount).toFixed(2)} ${invoice.currency} (${CATEGORIES_PL[category] ?? category})`,
+        allocationId)
     }
-
-    // Log aktywności
-    const user = auditUser(req)
-    await logKsefActivity(project_id, user, 'add',
-      `Przypisano fakturę KSeF: ${invoice.seller_name ?? ''} ${invoice.invoice_number ?? ''} — ${parseFloat(amount).toFixed(2)} ${invoice.currency} (${CATEGORIES_PL[category] ?? category})`,
-      allocationId)
 
     res.status(201).json(allocation)
   } catch (err: any) { res.status(500).json({ error: err.message }) }
@@ -311,33 +357,38 @@ router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: 
 // PATCH /api/ksef/allocations/:id — edytuj alokację
 router.patch('/allocations/:id', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { amount, notes, category } = req.body
+    const { amount, notes, category, is_paid } = req.body
     const existing = await prisma.ksefInvoiceAllocation.findUnique({
       where: { id: req.params.id },
       include: { invoice: true },
     })
     if (!existing) { res.status(404).json({ error: 'Alokacja nie znaleziona' }); return }
 
+    const updateData: any = {
+      updated_at: new Date().toISOString(),
+    }
+    if (amount   !== undefined) updateData.amount   = parseFloat(amount)
+    if (notes    !== undefined) updateData.notes    = notes
+    if (category !== undefined) updateData.category = category
+    if (is_paid  !== undefined) updateData.is_paid  = Boolean(is_paid)
+
     const updated = await prisma.ksefInvoiceAllocation.update({
       where: { id: req.params.id },
-      data: {
-        amount:   amount   !== undefined ? parseFloat(amount) : undefined,
-        notes:    notes    ?? undefined,
-        category: category ?? undefined,
-        updated_at: new Date().toISOString(),
-      },
+      data: updateData,
       include: { project: { select: { id: true, name: true, client_name: true } } },
     })
 
-    // Zaktualizuj CostItem
-    await upsertCostItemForAllocation(
-      req.params.id,
-      existing.project_id,
-      existing.invoice,
-      parseFloat(amount ?? existing.amount),
-      notes ?? existing.notes,
-      category ?? (existing as any).category ?? 'materials',
-    )
+    // Zaktualizuj CostItem tylko dla alokacji projektowych
+    if (existing.project_id && (existing as any).allocation_type !== 'internal') {
+      await upsertCostItemForAllocation(
+        req.params.id,
+        existing.project_id,
+        existing.invoice,
+        parseFloat(amount ?? existing.amount),
+        notes ?? existing.notes,
+        category ?? (existing as any).category ?? 'materials',
+      )
+    }
 
     res.json(updated)
   } catch (err: any) { res.status(500).json({ error: err.message }) }
@@ -357,8 +408,8 @@ router.delete('/allocations/:id', requireAuth, async (req: Request, res: Respons
 
     await prisma.ksefInvoiceAllocation.delete({ where: { id: req.params.id } })
 
-    // Log aktywności
-    if (alloc) {
+    // Log aktywności (tylko dla alokacji projektowych z project_id)
+    if (alloc && alloc.project_id) {
       const user = auditUser(req)
       await logKsefActivity(alloc.project_id, user, 'delete',
         `Usunięto alokację faktury KSeF: ${alloc.invoice.seller_name ?? ''} — ${alloc.amount.toFixed(2)} ${alloc.invoice.currency}`,

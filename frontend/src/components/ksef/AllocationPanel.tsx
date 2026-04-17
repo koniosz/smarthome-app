@@ -56,6 +56,7 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
   const [newAmount, setNewAmount]       = useState('')
   const [newNotes, setNewNotes]         = useState('')
   const [newCategory, setNewCategory]   = useState('materials')
+  const [newAllocType, setNewAllocType] = useState<'project' | 'internal'>('project')
   const [saving, setSaving]             = useState(false)
 
   useEffect(() => {
@@ -72,16 +73,25 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
   const remaining      = invoice.gross_amount - totalAllocated
 
   const handleAdd = async () => {
-    if (!newProjectId || !newAmount) return
+    if (!newAmount) return
+    if (newAllocType === 'project' && !newProjectId) return
     setSaving(true)
     try {
-      const alloc = await ksefApi.addAllocation(invoice.id, newProjectId, parseFloat(newAmount), newNotes, newCategory)
+      const alloc = await ksefApi.addAllocation(
+        invoice.id,
+        newAllocType === 'project' ? newProjectId : null,
+        parseFloat(newAmount),
+        newNotes,
+        newCategory,
+        newAllocType,
+      )
       setAllocations(prev => [...prev, alloc])
       setAdding(false)
       setNewProjectId('')
       setNewAmount('')
       setNewNotes('')
       setNewCategory('materials')
+      setNewAllocType('project')
     } catch (e: any) {
       alert(e.response?.data?.error ?? e.message)
     } finally { setSaving(false) }
@@ -90,12 +100,21 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
   const handleUpdate = async (alloc: KsefInvoiceAllocation, amount: string, notes: string, category: string) => {
     setSaving(true)
     try {
-      const updated = await ksefApi.updateAllocation(alloc.id, parseFloat(amount), notes, category)
+      const updated = await ksefApi.updateAllocation(alloc.id, parseFloat(amount), notes, category, undefined)
       setAllocations(prev => prev.map(a => a.id === updated.id ? updated : a))
       setEditingId(null)
     } catch (e: any) {
       alert(e.response?.data?.error ?? e.message)
     } finally { setSaving(false) }
+  }
+
+  const handleTogglePaid = async (alloc: KsefInvoiceAllocation) => {
+    try {
+      const updated = await ksefApi.toggleInternalAllocationPaid(alloc.id, !alloc.is_paid)
+      setAllocations(prev => prev.map(a => a.id === updated.id ? updated : a))
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? e.message)
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -143,6 +162,7 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
               onCancel={() => setEditingId(null)}
               onSave={(amt, notes, category) => handleUpdate(alloc, amt, notes, category)}
               onDelete={() => handleDelete(alloc.id)}
+              onTogglePaid={() => handleTogglePaid(alloc)}
               saving={saving}
             />
           ))}
@@ -152,7 +172,21 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
       {/* Formularz dodawania */}
       {adding ? (
         <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 space-y-2">
-          {/* Wiersz 1: Projekt */}
+          {/* Wiersz 0: Typ alokacji */}
+          <div>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Typ alokacji</label>
+            <select
+              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              value={newAllocType}
+              onChange={e => setNewAllocType(e.target.value as 'project' | 'internal')}
+            >
+              <option value="project">Projekt</option>
+              <option value="internal">🏢 Wewnętrzne potrzeby prowadzenia działalności</option>
+            </select>
+          </div>
+
+          {/* Wiersz 1: Projekt (tylko dla alokacji projektowych) */}
+          {newAllocType === 'project' && (
           <div>
             <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Projekt</label>
             <select
@@ -166,6 +200,7 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
               ))}
             </select>
           </div>
+          )}
 
           {/* Wiersz 2: Kwota + Kategoria */}
           <div className="grid grid-cols-2 gap-2">
@@ -201,14 +236,14 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
 
           <div className="flex gap-2 justify-end">
             <button
-              onClick={() => { setAdding(false); setNewProjectId(''); setNewAmount(''); setNewNotes(''); setNewCategory('materials') }}
+              onClick={() => { setAdding(false); setNewProjectId(''); setNewAmount(''); setNewNotes(''); setNewCategory('materials'); setNewAllocType('project') }}
               className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg"
             >
               Anuluj
             </button>
             <button
               onClick={handleAdd}
-              disabled={saving || !newProjectId || !newAmount}
+              disabled={saving || !newAmount || (newAllocType === 'project' && !newProjectId)}
               className="px-3 py-1 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50"
             >
               {saving ? 'Zapisuję…' : 'Dodaj alokację'}
@@ -227,7 +262,7 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
   )
 }
 
-function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, onDelete, saving }: {
+function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, onDelete, onTogglePaid, saving }: {
   alloc: KsefInvoiceAllocation
   currency: string
   isEditing: boolean
@@ -235,6 +270,7 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
   onCancel: () => void
   onSave: (amount: string, notes: string, category: string) => void
   onDelete: () => void
+  onTogglePaid: () => void
   saving: boolean
 }) {
   const [amount, setAmount]     = useState(alloc.amount.toFixed(2))
@@ -283,13 +319,32 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
     )
   }
 
+  const isInternal = alloc.allocation_type === 'internal'
+
   return (
     <div className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/50 group">
       <div className="flex items-center gap-2 min-w-0">
         <span className="w-2 h-2 rounded-full bg-violet-400 shrink-0" />
-        <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{alloc.project?.name ?? '—'}</span>
+        {isInternal ? (
+          <span className="text-xs font-medium text-gray-500 dark:text-gray-400 truncate">🏢 Wewnętrzne</span>
+        ) : (
+          <span className="text-xs font-medium text-gray-700 dark:text-gray-300 truncate">{alloc.project?.name ?? '—'}</span>
+        )}
         <CategoryBadge category={alloc.category || 'materials'} />
         {alloc.notes && <span className="text-xs text-gray-400 truncate">· {alloc.notes}</span>}
+        {isInternal && (
+          <button
+            onClick={onTogglePaid}
+            className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
+              alloc.is_paid
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 hover:bg-green-200'
+                : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-200'
+            }`}
+            title="Kliknij aby zmienić status"
+          >
+            {alloc.is_paid ? '✅ Opłacono' : '💳 Nieopłacono'}
+          </button>
+        )}
       </div>
       <div className="flex items-center gap-2 shrink-0 ml-2">
         <span className="text-xs font-semibold tabular-nums text-gray-800 dark:text-gray-100">{fmt(alloc.amount)} {currency}</span>

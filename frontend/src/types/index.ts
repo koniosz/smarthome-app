@@ -206,6 +206,10 @@ export interface DashboardStats {
   recent_projects: (Project & { cost_total: number; margin_pct: number })[]
   car_alerts: CarAlert[]
   employee_alerts: EmployeeAlert[]
+  invoices_due: Array<{
+    id: string; invoice_number: string | null; seller_name: string | null
+    gross_amount: number; currency: string; payment_due_date: string | null; payment_status: string | null
+  }>
 }
 
 export interface OverBudgetProject {
@@ -398,6 +402,8 @@ export interface KsefInvoiceAllocation {
   amount: number
   notes: string
   category: string
+  allocation_type?: string
+  is_paid?: boolean
   created_at: string
   updated_at: string
   project?: { id: string; name: string; client_name: string }
@@ -423,6 +429,7 @@ export interface KsefInvoice {
   payment_source?: 'mt940' | 'przelewy24' | 'manual' | null
   paid_amount?: number | null
   paid_at?: string | null
+  payment_due_date?: string | null
   bank_tx_id?: string | null
   project?: { id: string; name: string; client_name: string } | null
   allocations?: KsefInvoiceAllocation[]

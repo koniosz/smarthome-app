@@ -338,6 +338,7 @@ model KsefInvoice {
   payment_source   String?            // 'mt940' | 'przelewy24' | 'manual'
   paid_amount      Float?
   paid_at          String?
+  payment_due_date String?
   bank_tx_id       String?            // reference to BankTransaction
   created_at       String
 
@@ -348,17 +349,19 @@ model KsefInvoice {
 }
 
 model KsefInvoiceAllocation {
-  id         String  @id
-  invoice_id String
-  project_id String
-  amount     Float   @default(0)
-  notes      String  @default("")
-  category   String  @default("materials")
-  created_at String
-  updated_at String
+  id              String  @id
+  invoice_id      String
+  project_id      String?
+  amount          Float   @default(0)
+  notes           String  @default("")
+  category        String  @default("materials")
+  allocation_type String  @default("project")
+  is_paid         Boolean @default(false)
+  created_at      String
+  updated_at      String
 
   invoice   KsefInvoice @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
-  project   Project     @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  project   Project?    @relation(fields: [project_id], references: [id], onDelete: Cascade)
   cost_item CostItem?
 
   @@map("ksef_invoice_allocations")

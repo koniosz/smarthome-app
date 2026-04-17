@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express'
+import { PrismaClient } from '@prisma/client'
 import db from '../db'
 
 const router = Router()
+const prisma = new PrismaClient()
 
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -116,6 +118,17 @@ router.get('/', async (req: Request, res: Response) => {
     }
     employeeAlerts.sort((a, b) => a.days_left - b.days_left)
 
+    // ── Invoices due today (or overdue) ───────────────────────────────────────
+    const todayStr = today.toISOString().split('T')[0]
+    const dueInvoices = await prisma.ksefInvoice.findMany({
+      where: {
+        payment_due_date: { not: null, lte: todayStr },
+        payment_status:   { not: 'paid' },
+      },
+      select: { id: true, invoice_number: true, seller_name: true, gross_amount: true, currency: true, payment_due_date: true, payment_status: true },
+      orderBy: { payment_due_date: 'asc' },
+    })
+
     const recentProjects = await Promise.all(
       [...projects]
         .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))
@@ -148,6 +161,7 @@ router.get('/', async (req: Request, res: Response) => {
       recent_projects: recentProjects,
       car_alerts: carAlerts,
       employee_alerts: employeeAlerts,
+      invoices_due: dueInvoices,
     })
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })

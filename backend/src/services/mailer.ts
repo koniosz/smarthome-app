@@ -240,6 +240,53 @@ export function approvalConfirmationHtml(approved: boolean, projectName: string,
 </html>`
 }
 
+export async function sendDueInvoicesEmail(invoices: Array<{
+  id: string; invoice_number: string | null; seller_name: string | null
+  gross_amount: number; currency: string; payment_due_date: string | null
+}>, adminEmail: string): Promise<void> {
+  const { transport, from: cfgFrom, fromName: cfgFromName } = await buildTransport()
+  const total = invoices.reduce((s, i) => s + i.gross_amount, 0)
+  const dateStr = new Date().toLocaleDateString('pl-PL', { day: '2-digit', month: 'long', year: 'numeric' })
+
+  const rows = invoices.map(inv => `
+    <tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;">${inv.seller_name ?? '—'}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;">${inv.invoice_number ?? '—'}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;">${fmt(inv.gross_amount)} ${inv.currency}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;">${inv.payment_due_date ?? '—'}</td>
+    </tr>
+  `).join('')
+
+  const html = `
+  <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+    <div style="background:#4C1D95;padding:20px;border-radius:8px 8px 0 0;">
+      <h1 style="color:white;margin:0;font-size:20px;">💳 Przypomnienie o płatnościach</h1>
+      <p style="color:#DDD6FE;margin:4px 0 0;">${dateStr}</p>
+    </div>
+    <div style="background:#F9FAFB;padding:20px;">
+      <p style="font-size:16px;color:#111827;">Dzisiaj masz <strong>${invoices.length} ${invoices.length === 1 ? 'fakturę' : invoices.length < 5 ? 'faktury' : 'faktur'}</strong> do opłacenia na łączną kwotę <strong>${fmt(total)} PLN</strong>.</p>
+      <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;overflow:hidden;margin-top:12px;">
+        <thead>
+          <tr style="background:#EDE9FE;">
+            <th style="padding:10px 12px;text-align:left;font-size:13px;color:#5B21B6;">Sprzedawca</th>
+            <th style="padding:10px 12px;text-align:left;font-size:13px;color:#5B21B6;">Nr faktury</th>
+            <th style="padding:10px 12px;text-align:right;font-size:13px;color:#5B21B6;">Kwota brutto</th>
+            <th style="padding:10px 12px;text-align:left;font-size:13px;color:#5B21B6;">Termin</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`
+
+  await transport.sendMail({
+    from: `"${cfgFromName}" <${cfgFrom}>`,
+    to: adminEmail,
+    subject: `💳 [${dateStr}] ${invoices.length} faktur do opłacenia — ${fmt(total)} PLN`,
+    html,
+  })
+}
+
 export function rejectionFormHtml(projectName: string, total: number, postUrl: string) {
   return `<!DOCTYPE html>
 <html lang="pl">

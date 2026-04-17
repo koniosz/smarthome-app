@@ -28,6 +28,8 @@ import bankRouter, { updateKsefPayment, p24WebhookHandler } from './routes/bank'
 import settingsRouter from './routes/settings'
 import projectDocumentsRouter from './routes/project-documents'
 import { syncInvoices } from './services/ksef'
+import { sendDueInvoicesEmail } from './services/mailer'
+import { PrismaClient } from '@prisma/client'
 import { requireAuth } from './middleware/auth'
 
 const app = express()
@@ -147,6 +149,33 @@ const server = app.listen(Number(PORT), '0.0.0.0', () => {
   }
   console.log()
 })
+
+// ── Dzienna wysyłka przypomnień o płatnościach ────────────────────────────────
+const _prismaIndex = new PrismaClient()
+async function sendDailyPaymentReminder() {
+  try {
+    const todayStr = new Date().toISOString().split('T')[0]
+    const dueInvoices = await _prismaIndex.ksefInvoice.findMany({
+      where: { payment_due_date: { not: null, lte: todayStr }, payment_status: { not: 'paid' } },
+      select: { id: true, invoice_number: true, seller_name: true, gross_amount: true, currency: true, payment_due_date: true },
+    })
+    if (dueInvoices.length === 0) { console.log('[Płatności] Brak faktur do opłacenia na dziś.'); return }
+    // Get admin emails from DB
+    const admins = await _prismaIndex.user.findMany({ where: { role: 'admin' }, select: { email: true } })
+    for (const admin of admins) {
+      await sendDueInvoicesEmail(dueInvoices as any, admin.email)
+      console.log(`[Płatności] Wysłano przypomnienie do ${admin.email} (${dueInvoices.length} faktur)`)
+    }
+  } catch (e: any) {
+    console.error('[Płatności] Błąd wysyłki przypomnień:', e.message)
+  }
+}
+// Run once after 3 minutes from startup, then every 24 hours
+setTimeout(async () => {
+  await sendDailyPaymentReminder()
+  setInterval(sendDailyPaymentReminder, 24 * 60 * 60 * 1000)
+}, 3 * 60 * 1000)
+console.log('[Płatności] Dzienna wysyłka przypomnień włączona')
 
 // ── KSeF — automatyczna synchronizacja co 30 minut ───────────────────────────
 if (process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
