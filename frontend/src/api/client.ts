@@ -367,10 +367,33 @@ export const ksefApi = {
   // Alokacje
   getAllocations: (invoiceId: string) =>
     api.get<import('../types').KsefInvoiceAllocation[]>(`/ksef/invoices/${invoiceId}/allocations`).then(r => r.data),
-  addAllocation: (invoiceId: string, project_id: string | null, amount: number, notes?: string, category?: string, allocation_type?: string) =>
-    api.post<import('../types').KsefInvoiceAllocation>(`/ksef/invoices/${invoiceId}/allocations`, { project_id, amount, notes, category, allocation_type }).then(r => r.data),
-  updateAllocation: (allocationId: string, amount: number, notes?: string, category?: string, is_paid?: boolean) =>
-    api.patch<import('../types').KsefInvoiceAllocation>(`/ksef/allocations/${allocationId}`, { amount, notes, category, is_paid }).then(r => r.data),
+  addAllocation: (
+    invoiceId: string,
+    project_id: string | null,
+    amount: number,
+    notes?: string,
+    category?: string,
+    allocation_type?: string,
+    cost_category?: string,
+    subcategory?: string,
+    business_unit?: string,
+  ) =>
+    api.post<import('../types').KsefInvoiceAllocation>(`/ksef/invoices/${invoiceId}/allocations`,
+      { project_id, amount, notes, category, allocation_type, cost_category, subcategory, business_unit }
+    ).then(r => r.data),
+  updateAllocation: (
+    allocationId: string,
+    amount: number,
+    notes?: string,
+    category?: string,
+    is_paid?: boolean,
+    cost_category?: string,
+    subcategory?: string,
+    business_unit?: string,
+  ) =>
+    api.patch<import('../types').KsefInvoiceAllocation>(`/ksef/allocations/${allocationId}`,
+      { amount, notes, category, is_paid, cost_category, subcategory, business_unit }
+    ).then(r => r.data),
   deleteAllocation: (allocationId: string) =>
     api.delete(`/ksef/allocations/${allocationId}`).then(r => r.data),
 
@@ -382,4 +405,7 @@ export const ksefApi = {
 
   dueToday: () =>
     api.get('/ksef/invoices/due-today').then(r => r.data),
+
+  pnl: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string }) =>
+    api.get<import('../types').PnLReport>('/ksef/pnl', { params }).then(r => r.data),
 }

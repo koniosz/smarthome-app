@@ -404,9 +404,42 @@ export interface KsefInvoiceAllocation {
   category: string
   allocation_type?: string
   is_paid?: boolean
+  // CFO financial taxonomy
+  cost_category?: string
+  subcategory?: string
+  business_unit?: string
   created_at: string
   updated_at: string
   project?: { id: string; name: string; client_name: string }
+  invoice?: { invoice_number: string | null; seller_name: string | null; invoice_date: string | null; currency: string }
+}
+
+export interface PnLCategoryData {
+  total: number
+  subcategories: Record<string, number>
+  by_bu: Record<string, number>
+}
+
+export interface PnLReport {
+  period: { from: string | null; to: string | null }
+  business_unit: string
+  revenue: number
+  revenue_by_project: Record<string, number>
+  cogs: PnLCategoryData
+  sales: PnLCategoryData
+  ga: PnLCategoryData
+  operations: PnLCategoryData
+  financial: PnLCategoryData
+  gross_margin: number
+  gross_margin_pct: number
+  opex: number
+  ebitda: number
+  ebitda_pct: number
+  ebit: number
+  ebit_pct: number
+  allocation_count: number
+  payment_count: number
+  allocations: KsefInvoiceAllocation[]
 }
 
 export interface KsefInvoice {

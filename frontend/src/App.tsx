@@ -11,6 +11,7 @@ import ProductCatalogPage from './pages/ProductCatalogPage'
 import AiExamplesPage from './pages/AiExamplesPage'
 import KsefPage from './pages/KsefPage'
 import SharedInvoicesPage from './pages/SharedInvoicesPage'
+import FinansePage from './pages/FinansePage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
@@ -77,6 +78,9 @@ function AppContent() {
             } />
             <Route path="/ksef" element={
               <AdminRoute><KsefPage /></AdminRoute>
+            } />
+            <Route path="/finanse" element={
+              <AdminRoute><FinansePage /></AdminRoute>
             } />
             <Route path="/faktury" element={<SharedInvoicesPage />} />
           </Routes>

@@ -388,6 +388,12 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                     >
                       📋 KSeF — Faktury
                     </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/finanse') }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+                    >
+                      📊 P&amp;L / EBITDA
+                    </button>
                   </>
                 )}
                 <button

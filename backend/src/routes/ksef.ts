@@ -28,6 +28,95 @@ const CATEGORIES_PL: Record<string, string> = {
   internal: 'Wewnętrzne potrzeby',
 }
 
+// ── CFO financial taxonomy ────────────────────────────────────────────────────
+
+export const COST_TAXONOMY: Record<string, { label: string; subcategories: Record<string, string> }> = {
+  cogs:       { label: 'COGS — Koszt własny sprzedaży', subcategories: {
+    hardware:               'Sprzęt (KNX/HDL/Control4…)',
+    subcontractor:          'Podwykonawca',
+    installation_material:  'Materiały instalacyjne',
+    labor:                  'Robocizna własna',
+  }},
+  sales:      { label: 'Sprzedaż i Marketing', subcategories: {
+    advertising:    'Reklama (Facebook/Google Ads)',
+    commission:     'Prowizja / pośrednictwo',
+    crm_software:   'CRM / narzędzia sprzedaży',
+    marketing:      'Marketing ogólny',
+  }},
+  ga:         { label: 'G&A — Ogólno-administracyjne', subcategories: {
+    rent:           'Czynsz biuro / magazyn',
+    utilities:      'Media (prąd, internet, woda)',
+    salary_admin:   'Wynagrodzenia — administracja',
+    software:       'Oprogramowanie / licencje',
+    accounting:     'Księgowość / doradztwo podatkowe',
+    legal:          'Usługi prawne',
+    office_supplies:'Materiały biurowe',
+  }},
+  operations: { label: 'Koszty Operacyjne', subcategories: {
+    car_fuel:    'Paliwo',
+    car_service: 'Serwis pojazdów',
+    tools:       'Narzędzia i sprzęt operacyjny',
+    insurance:   'Ubezpieczenie',
+    travel:      'Podróże służbowe',
+  }},
+  financial:  { label: 'Koszty Finansowe', subcategories: {
+    bank_fee: 'Opłaty bankowe',
+    interest: 'Odsetki',
+    leasing:  'Leasing',
+    fx:       'Różnice kursowe',
+  }},
+}
+
+const BUSINESS_UNITS: Record<string, string> = {
+  shc:       'Smart Home Center',
+  gatelynk:  'GateLynk',
+  shared:    'Wspólne',
+}
+
+/** Auto-classifies allocation based on invoice seller_name + description. */
+function autoClassify(sellerName: string | null, description: string | null): {
+  cost_category: string; subcategory: string; business_unit: string
+} {
+  const text = `${sellerName ?? ''} ${description ?? ''}`.toLowerCase()
+
+  // COGS / Hardware — smart home brands
+  if (/\b(knx|hdl|eelectron|tyba|mdt|control4|hikvision|satel|fibaro|somfy|lutron|ajax|dahua|bosch hager|jung|gira|loxone|teletask|siemens)\b/.test(text))
+    return { cost_category: 'cogs', subcategory: 'hardware', business_unit: 'shc' }
+
+  // Sales — advertising platforms
+  if (/\b(facebook|meta ads?|instagram ads?|google ads?|linkedin|allegro)\b/.test(text))
+    return { cost_category: 'sales', subcategory: 'advertising', business_unit: 'gatelynk' }
+  if (/\b(hubspot|pipedrive|salesforce|crm)\b/.test(text))
+    return { cost_category: 'sales', subcategory: 'crm_software', business_unit: 'shared' }
+
+  // G&A
+  if (/czynsz|najem lok|wynajem.*biur|wynajem.*magazyn/.test(text))
+    return { cost_category: 'ga', subcategory: 'rent', business_unit: 'shared' }
+  if (/księgow|rachunkow|biuro rachunkow|doradca podatk|biuro podatkow/.test(text))
+    return { cost_category: 'ga', subcategory: 'accounting', business_unit: 'shared' }
+  if (/prawnik|kancelari|notariu/.test(text))
+    return { cost_category: 'ga', subcategory: 'legal', business_unit: 'shared' }
+  if (/\b(microsoft|adobe|apple|atlassian|slack|zoom)\b|licencja|subskrypcja/.test(text))
+    return { cost_category: 'ga', subcategory: 'software', business_unit: 'shared' }
+
+  // Operations
+  if (/paliwo|\b(shell|orlen|bp|lotos|circle k|amic)\b|stacja paliw/.test(text))
+    return { cost_category: 'operations', subcategory: 'car_fuel', business_unit: 'shared' }
+  if (/serwis.*auto|warsztat|naprawa.*pojazd|auto.*serwis|auto.*naprawa/.test(text))
+    return { cost_category: 'operations', subcategory: 'car_service', business_unit: 'shared' }
+  if (/ubezpieczen/.test(text))
+    return { cost_category: 'operations', subcategory: 'insurance', business_unit: 'shared' }
+
+  // Financial
+  if (/opłat.*bank|prowizja.*bank|przelew.*bank|\b(pko|mbank|santander|ing|bnp|alior|millennium)\b/.test(text))
+    return { cost_category: 'financial', subcategory: 'bank_fee', business_unit: 'shared' }
+  if (/leasing/.test(text))
+    return { cost_category: 'financial', subcategory: 'leasing', business_unit: 'shared' }
+
+  // Default: COGS hardware
+  return { cost_category: 'cogs', subcategory: 'hardware', business_unit: 'shc' }
+}
+
 // ── Admin-only endpoints ──────────────────────────────────────────────────────
 
 // GET /api/ksef/debug-auth
@@ -237,6 +326,104 @@ router.patch('/shared/:id/assign', requireAuth, async (req: Request, res: Respon
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
+// GET /api/ksef/pnl — raport P&L / EBITDA (requireAdmin)
+// MUST be before /:id routes
+router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { dateFrom, dateTo, business_unit } = req.query
+
+    // ── Costs: all KSeF allocations ──────────────────────────────────────────
+    const allocWhere: any = {}
+    if (business_unit && business_unit !== 'all') allocWhere.business_unit = String(business_unit)
+    // Filter by invoice_date on the parent invoice
+    if (dateFrom || dateTo) {
+      const dateFilter: any = {}
+      if (dateFrom) dateFilter.gte = String(dateFrom)
+      if (dateTo)   dateFilter.lte = String(dateTo) + 'T23:59:59Z'
+      allocWhere.created_at = dateFilter
+    }
+
+    const allocations = await prisma.ksefInvoiceAllocation.findMany({
+      where: allocWhere,
+      include: {
+        invoice: { select: { invoice_number: true, seller_name: true, invoice_date: true, currency: true } },
+        project: { select: { id: true, name: true } },
+      },
+      orderBy: { created_at: 'desc' },
+    })
+
+    // ── Revenue: ClientPayments ───────────────────────────────────────────────
+    const payWhere: any = {}
+    if (dateFrom || dateTo) {
+      const df: any = {}
+      if (dateFrom) df.gte = String(dateFrom)
+      if (dateTo)   df.lte = String(dateTo)
+      payWhere.date = df
+    }
+    const payments = await prisma.clientPayment.findMany({
+      where: payWhere,
+      include: { project: { select: { id: true, name: true } } },
+    })
+
+    // ── Group costs ───────────────────────────────────────────────────────────
+    type CatTotals = { total: number; subcategories: Record<string, number>; by_bu: Record<string, number> }
+    const grouped: Record<string, CatTotals> = {}
+    for (const key of Object.keys(COST_TAXONOMY)) {
+      grouped[key] = { total: 0, subcategories: {}, by_bu: { shc: 0, gatelynk: 0, shared: 0 } }
+    }
+
+    for (const alloc of allocations) {
+      const cat = (alloc as any).cost_category ?? 'cogs'
+      const sub = (alloc as any).subcategory ?? 'hardware'
+      const bu  = (alloc as any).business_unit ?? 'shc'
+      if (!grouped[cat]) grouped[cat] = { total: 0, subcategories: {}, by_bu: {} }
+      grouped[cat].total += alloc.amount
+      grouped[cat].subcategories[sub] = (grouped[cat].subcategories[sub] ?? 0) + alloc.amount
+      grouped[cat].by_bu[bu] = (grouped[cat].by_bu[bu] ?? 0) + alloc.amount
+    }
+
+    const revenue      = payments.reduce((s, p) => s + p.amount, 0)
+    const cogs         = grouped['cogs']?.total ?? 0
+    const sales        = grouped['sales']?.total ?? 0
+    const ga           = grouped['ga']?.total ?? 0
+    const operations   = grouped['operations']?.total ?? 0
+    const financial    = grouped['financial']?.total ?? 0
+    const gross_margin = revenue - cogs
+    const opex         = sales + ga + operations
+    const ebitda       = gross_margin - opex
+    const ebit         = ebitda - financial
+
+    // Revenue by business unit (from project client payments — approximate via project_type)
+    const revenueByProject = payments.reduce((acc: Record<string, number>, p) => {
+      const key = p.project?.name ?? 'other'
+      acc[key] = (acc[key] ?? 0) + p.amount
+      return acc
+    }, {})
+
+    res.json({
+      period:       { from: dateFrom ?? null, to: dateTo ?? null },
+      business_unit: business_unit ?? 'all',
+      revenue,
+      revenue_by_project: revenueByProject,
+      cogs:      grouped['cogs'],
+      sales:     grouped['sales'],
+      ga:        grouped['ga'],
+      operations:grouped['operations'],
+      financial: grouped['financial'],
+      gross_margin,
+      gross_margin_pct: revenue > 0 ? (gross_margin / revenue) * 100 : 0,
+      opex,
+      ebitda,
+      ebitda_pct: revenue > 0 ? (ebitda / revenue) * 100 : 0,
+      ebit,
+      ebit_pct: revenue > 0 ? (ebit / revenue) * 100 : 0,
+      allocation_count: allocations.length,
+      payment_count:    payments.length,
+      allocations,   // full drill-down data
+    })
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
 // GET /api/ksef/invoices/due-today — faktury z terminem płatności <= dziś (requireAdmin)
 router.get('/invoices/due-today', requireAdmin, async (_req: Request, res: Response) => {
   try {
@@ -308,12 +495,19 @@ router.get('/invoices/:id/allocations', requireAuth, async (req: Request, res: R
 // POST /api/ksef/invoices/:id/allocations — dodaj alokację
 router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { project_id, amount, notes = '', category = 'materials', allocation_type = 'project' } = req.body
+    const { project_id, amount, notes = '', category = 'materials', allocation_type = 'project',
+            cost_category, subcategory, business_unit } = req.body
     if (!amount) { res.status(400).json({ error: 'Wymagane: amount' }); return }
     if (allocation_type === 'project' && !project_id) { res.status(400).json({ error: 'Wymagane: project_id dla alokacji projektowej' }); return }
 
     const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
     if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
+
+    // Auto-classify if taxonomy fields not provided
+    const classified = autoClassify(invoice.seller_name, notes || null)
+    const finalCostCat  = cost_category  ?? classified.cost_category
+    const finalSubcat   = subcategory    ?? classified.subcategory
+    const finalBU       = business_unit  ?? classified.business_unit
 
     const { v4: uuidv4 } = require('uuid')
     const allocationId = uuidv4()
@@ -328,6 +522,9 @@ router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: 
         notes,
         category,
         allocation_type,
+        cost_category: finalCostCat,
+        subcategory:   finalSubcat,
+        business_unit: finalBU,
         created_at: now,
         updated_at: now,
       },
@@ -357,7 +554,7 @@ router.post('/invoices/:id/allocations', requireAuth, async (req: Request, res: 
 // PATCH /api/ksef/allocations/:id — edytuj alokację
 router.patch('/allocations/:id', requireAuth, async (req: Request, res: Response) => {
   try {
-    const { amount, notes, category, is_paid } = req.body
+    const { amount, notes, category, is_paid, cost_category, subcategory, business_unit } = req.body
     const existing = await prisma.ksefInvoiceAllocation.findUnique({
       where: { id: req.params.id },
       include: { invoice: true },
@@ -367,10 +564,13 @@ router.patch('/allocations/:id', requireAuth, async (req: Request, res: Response
     const updateData: any = {
       updated_at: new Date().toISOString(),
     }
-    if (amount   !== undefined) updateData.amount   = parseFloat(amount)
-    if (notes    !== undefined) updateData.notes    = notes
-    if (category !== undefined) updateData.category = category
-    if (is_paid  !== undefined) updateData.is_paid  = Boolean(is_paid)
+    if (amount        !== undefined) updateData.amount        = parseFloat(amount)
+    if (notes         !== undefined) updateData.notes         = notes
+    if (category      !== undefined) updateData.category      = category
+    if (is_paid       !== undefined) updateData.is_paid       = Boolean(is_paid)
+    if (cost_category !== undefined) updateData.cost_category = cost_category
+    if (subcategory   !== undefined) updateData.subcategory   = subcategory
+    if (business_unit !== undefined) updateData.business_unit = business_unit
 
     const updated = await prisma.ksefInvoiceAllocation.update({
       where: { id: req.params.id },

@@ -357,6 +357,10 @@ model KsefInvoiceAllocation {
   category        String  @default("materials")
   allocation_type String  @default("project")
   is_paid         Boolean @default(false)
+  // ── CFO financial taxonomy ────────────────────────────────────────────────
+  cost_category   String  @default("cogs")        // cogs | sales | ga | operations | financial
+  subcategory     String  @default("hardware")     // see COST_TAXONOMY
+  business_unit   String  @default("shc")          // shc | gatelynk | shared
   created_at      String
   updated_at      String
 
