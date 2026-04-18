@@ -411,7 +411,18 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
     onRemoved(invoice.id)
   }
 
-  const isAssigned = !!invoice.project_id
+  const isAssignedToProject = !!invoice.project_id
+  const internalAllocs = (invoice.allocations ?? []).filter((a: any) => a.allocation_type === 'internal')
+  const isAssignedInternal = internalAllocs.length > 0
+  const isAssigned = isAssignedToProject || isAssignedInternal
+
+  const COST_CAT_LABELS: Record<string, string> = {
+    cogs: 'COGS', sales: 'Sprzedaż', ga: 'G&A', operations: 'Operacje', financial: 'Finansowe',
+  }
+  const COST_CAT_ICONS: Record<string, string> = {
+    cogs: '🏗️', sales: '📣', ga: '🏢', operations: '⚙️', financial: '💳',
+  }
+  const internalCat = internalAllocs[0]?.cost_category ?? 'cogs'
 
   return (
     <>
@@ -440,13 +451,22 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
           {invoice.invoice_date ?? '—'}
         </td>
         <td className="py-2.5 pr-3">
-          {isAssigned ? (
+          {isAssignedToProject ? (
             <div>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
                 ✓ {invoice.project?.name ?? 'Projekt'}
               </span>
               {invoice.notes && (
                 <div className="text-xs text-gray-400 mt-0.5 truncate max-w-[160px]">{invoice.notes}</div>
+              )}
+            </div>
+          ) : isAssignedInternal ? (
+            <div>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                ✓ {COST_CAT_ICONS[internalCat]} {COST_CAT_LABELS[internalCat] ?? 'Wewnętrzne'}
+              </span>
+              {internalAllocs.length > 1 && (
+                <div className="text-xs text-gray-400 mt-0.5">+{internalAllocs.length - 1} więcej kategorii</div>
               )}
             </div>
           ) : (

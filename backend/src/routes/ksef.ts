@@ -157,7 +157,14 @@ router.get('/invoices', requireAdmin, async (req: Request, res: Response) => {
     const skip = (parseInt(String(page)) - 1) * parseInt(String(limit))
     const take = parseInt(String(limit))
     const [invoices, total] = await Promise.all([
-      prisma.ksefInvoice.findMany({ where, orderBy: { invoice_date: 'desc' }, skip, take, include: { project: { select: { id: true, name: true, client_name: true } } } }),
+      prisma.ksefInvoice.findMany({
+        where, orderBy: { invoice_date: 'desc' }, skip, take,
+        include: {
+          project: { select: { id: true, name: true, client_name: true } },
+          // Minimalne dane alokacji — żeby frontend wiedział czy faktura jest wewnętrznie przypisana i do jakiej kategorii CFO
+          allocations: { select: { id: true, allocation_type: true, cost_category: true }, take: 5 },
+        },
+      }),
       prisma.ksefInvoice.count({ where }),
     ])
     res.json({ invoices, total, page: parseInt(String(page)), limit: take })
