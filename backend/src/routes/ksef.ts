@@ -142,8 +142,9 @@ router.get('/invoices', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { assigned, search, page = '1', limit = '50' } = req.query
     const where: any = {}
-    if (assigned === 'true')  where.project_id = { not: null }
-    if (assigned === 'false') where.project_id = null
+    // Faktura jest "przypisana" jeśli ma project_id LUB ma jakąkolwiek alokację (w tym wewnętrzne)
+    if (assigned === 'true')  where.OR = [{ project_id: { not: null } }, { allocations: { some: {} } }]
+    if (assigned === 'false') where.AND = [{ project_id: null }, { allocations: { none: {} } }]
     if (search) {
       const s = String(search)
       where.OR = [

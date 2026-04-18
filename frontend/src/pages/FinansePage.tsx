@@ -454,12 +454,130 @@ export default function FinansePage() {
               ℹ️ Brak alokacji faktur KSeF w wybranym okresie. Dodaj alokacje w zakładce KSeF → Faktury, aby zobaczyć koszty w raporcie.
             </div>
           )}
+
+          {/* Legenda kategorii */}
+          <CategoryLegend />
         </>
       )}
 
       {loading && !report && (
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin w-8 h-8 border-4 border-violet-500 border-t-transparent rounded-full" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Category Legend ───────────────────────────────────────────────────────────
+const LEGEND_DATA: Array<{
+  key: string; icon: string; label: string; when: string; examples: string; color: string
+}> = [
+  {
+    key: 'cogs', icon: '🏗️', label: 'COGS — Koszt własny sprzedaży',
+    color: 'border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20',
+    when: 'Koszty bezpośrednio związane z realizacją projektu dla klienta',
+    examples: 'Sprzęt KNX / HDL / Control4, materiały instalacyjne, podwykonawcy robót elektycznych',
+  },
+  {
+    key: 'sales', icon: '📣', label: 'Sprzedaż i Marketing',
+    color: 'border-pink-200 dark:border-pink-800 bg-pink-50/60 dark:bg-pink-950/20',
+    when: 'Koszty pozyskiwania klientów i promocji firmy',
+    examples: 'Facebook Ads, Google Ads, prowizja dla pośrednika, HubSpot CRM, targi branżowe',
+  },
+  {
+    key: 'ga', icon: '🏢', label: 'G&A — Ogólno-administracyjne',
+    color: 'border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/20',
+    when: 'Koszty utrzymania biura, administracji i zarządzania firmą',
+    examples: 'Czynsz biura, księgowość, licencje (Microsoft 365), system urlopowy, usługi prawne, materiały biurowe',
+  },
+  {
+    key: 'operations', icon: '⚙️', label: 'Koszty Operacyjne',
+    color: 'border-green-200 dark:border-green-800 bg-green-50/60 dark:bg-green-950/20',
+    when: 'Koszty codziennego funkcjonowania — transport, narzędzia, ubezpieczenia',
+    examples: 'Paliwo, serwis samochodów firmowych, narzędzia monterskie, ubezpieczenie floty, delegacje',
+  },
+  {
+    key: 'financial', icon: '💳', label: 'Koszty Finansowe',
+    color: 'border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20',
+    when: 'Koszty wynikające z obsługi finansowej, kredytów i instrumentów bankowych',
+    examples: 'Prowizje i opłaty bankowe, odsetki od kredytu obrotowego, raty leasingowe, różnice kursowe',
+  },
+]
+
+const BU_LEGEND = [
+  { label: 'Smart Home Center (SHC)', desc: 'Projekty inteligentnych instalacji dla klientów końcowych — KNX, HDL, Hikvision, Satel' },
+  { label: 'GateLynk', desc: 'Platforma / produkt SaaS, marketing cyfrowy, sprzedaż online' },
+  { label: 'Wspólne', desc: 'Koszty wspólne obu działalności — biuro, administracja, kadry, finanse' },
+]
+
+function CategoryLegend() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-gray-800 dark:text-gray-200">📖 Legenda kategorii CFO</span>
+          <span className="text-xs text-gray-400">— czego dotyczy każda kategoria</span>
+        </div>
+        <span className="text-gray-400 text-sm">{open ? '▾' : '▸'}</span>
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
+          {/* Cost categories */}
+          <div className="p-5 space-y-3">
+            <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Typy kosztów (wpływają na P&amp;L)</h3>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {LEGEND_DATA.map(item => (
+                <div key={item.key} className={`rounded-xl border p-3 ${item.color}`}>
+                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
+                    {item.icon} {item.label}
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400 mb-1.5">{item.when}</div>
+                  <div className="text-[11px] text-gray-400 dark:text-gray-500 italic">
+                    Przykłady: {item.examples}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Business units */}
+          <div className="p-5 space-y-3">
+            <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Jednostki biznesowe (Business Unit)</h3>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {BU_LEGEND.map(bu => (
+                <div key={bu.label} className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 bg-gray-50/60 dark:bg-gray-800/30">
+                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">{bu.label}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">{bu.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* P&L flow */}
+          <div className="px-5 py-4 bg-gray-50/60 dark:bg-gray-800/20">
+            <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Schemat rachunku P&amp;L</h3>
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              {[
+                { label: 'Przychody', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
+                { label: '− COGS', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
+                { label: '= Marża brutto', color: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+                { label: '− Sales − G&A − Operacje', color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
+                { label: '= EBITDA', color: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+                { label: '− Koszty finansowe', color: 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400' },
+                { label: '= EBIT', color: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+              ].map(item => (
+                <span key={item.label} className={`px-2 py-0.5 rounded-full font-medium ${item.color}`}>
+                  {item.label}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>

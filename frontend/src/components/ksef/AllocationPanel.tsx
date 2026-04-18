@@ -116,18 +116,63 @@ function FinancialBadges({ alloc }: { alloc: KsefInvoiceAllocation }) {
   )
 }
 
+const CATEGORY_LEGEND: Record<string, { examples: string; when: string }> = {
+  cogs:       { when: 'Koszty bezpośrednio związane z realizacją projektu dla klienta', examples: 'Sprzęt KNX/HDL, materiały instalacyjne, podwykonawcy robót' },
+  sales:      { when: 'Koszty pozyskiwania klientów i promocji firmy', examples: 'Facebook Ads, Google Ads, prowizja dla pośrednika, CRM (HubSpot)' },
+  ga:         { when: 'Koszty utrzymania biura i zarządzania firmą', examples: 'Czynsz biura, księgowość, licencje (Microsoft 365), system urlopowy, usługi prawne' },
+  operations: { when: 'Koszty codziennego funkcjonowania operacyjnego', examples: 'Paliwo, serwis samochodów, narzędzia, ubezpieczenia, delegacje' },
+  financial:  { when: 'Koszty wynikające z obsługi finansowej i zadłużenia', examples: 'Opłaty bankowe, odsetki od kredytu, leasing, różnice kursowe' },
+}
+
 function FinancialTaxonomyPicker({ cost_category, subcategory, business_unit, onChange }: {
   cost_category: string
   subcategory: string
   business_unit: string
   onChange: (cat: string, sub: string, bu: string) => void
 }) {
+  const [legendOpen, setLegendOpen] = useState(false)
   const catDef = COST_TAXONOMY[cost_category]
   const selectCls = 'w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500'
 
   return (
     <div className="space-y-1.5 rounded-lg border border-dashed border-violet-200 dark:border-violet-800 p-2 bg-violet-50/40 dark:bg-violet-950/10">
-      <p className="text-[10px] font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wide">📊 Klasyfikacja P&amp;L (CFO)</p>
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wide">📊 Klasyfikacja P&amp;L (CFO)</p>
+        <button
+          type="button"
+          onClick={() => setLegendOpen(o => !o)}
+          className="text-[10px] text-violet-500 dark:text-violet-400 hover:underline flex items-center gap-0.5"
+        >
+          {legendOpen ? '▾' : '▸'} Legenda kategorii
+        </button>
+      </div>
+
+      {/* Legenda */}
+      {legendOpen && (
+        <div className="rounded-lg border border-violet-100 dark:border-violet-900 bg-white dark:bg-gray-900 divide-y divide-gray-100 dark:divide-gray-800 text-[11px]">
+          {Object.entries(COST_TAXONOMY).map(([k, v]) => {
+            const leg = CATEGORY_LEGEND[k]
+            return (
+              <div key={k} className={`px-3 py-2 ${cost_category === k ? 'bg-violet-50 dark:bg-violet-950/20' : ''}`}>
+                <div className="font-semibold text-gray-700 dark:text-gray-300">{v.icon} {v.label}</div>
+                <div className="text-gray-500 dark:text-gray-400 mt-0.5">{leg?.when}</div>
+                <div className="text-gray-400 dark:text-gray-500 italic mt-0.5">Przykłady: {leg?.examples}</div>
+              </div>
+            )
+          })}
+          <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800/40">
+            <div className="font-semibold text-gray-700 dark:text-gray-300">🏢 Jednostki biznesowe</div>
+            <div className="text-gray-500 dark:text-gray-400 mt-0.5">
+              <span className="font-medium">Smart Home Center</span> — projekty smart home dla klientów końcowych
+              &nbsp;·&nbsp;
+              <span className="font-medium">GateLynk</span> — platforma / SaaS / marketing cyfrowy
+              &nbsp;·&nbsp;
+              <span className="font-medium">Wspólne</span> — koszty wspólne obu działalności (biuro, księgowość, itp.)
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-1.5">
         {/* Cost category */}
         <div>
