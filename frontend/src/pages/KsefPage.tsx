@@ -844,6 +844,23 @@ export default function KsefPage() {
           💡 Przelicz sugestie
         </button>
 
+        <button
+          onClick={async () => {
+            if (!confirm('Napraw kierunek (sprzedażowa/zakupowa) wszystkich faktur w bazie na podstawie NIPu sprzedawcy?')) return
+            try {
+              const r = await ksefApi.fixDirections()
+              alert(`Sprawdzono ${r.total} faktur, poprawiono ${r.fixed} (NIP: ${r.our_nip_masked}).`)
+              load()
+            } catch (e: any) {
+              alert('Błąd: ' + e.message)
+            }
+          }}
+          className="px-3 py-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/20 rounded-lg transition-colors"
+          title="Popraw zakupowa/sprzedażowa dla istniejących faktur na podstawie NIPu sprzedawcy"
+        >
+          🔧 Napraw kierunki
+        </button>
+
         <input
           type="text"
           placeholder="Szukaj (nr faktury, NIP, sprzedawca…)"

@@ -415,6 +415,9 @@ export const ksefApi = {
   reSuggest: () =>
     api.post<{ processed: number; suggested: number }>('/ksef/invoices/re-suggest').then(r => r.data),
 
+  fixDirections: () =>
+    api.post<{ total: number; fixed: number; our_nip_masked: string }>('/ksef/invoices/fix-directions').then(r => r.data),
+
   pnl: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string }) =>
     api.get<import('../types').PnLReport>('/ksef/pnl', { params }).then(r => r.data),
 }

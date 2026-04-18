@@ -352,6 +352,39 @@ router.post('/invoices/re-suggest', requireAdmin, async (_req: Request, res: Res
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
+// POST /api/ksef/invoices/fix-directions — napraw kierunek faktur w bazie
+// Subject1 = sprzedażowa (seller_nip === KSEF_NIP lub seller_name zawiera "Smart Home")
+// Subject2 = zakupowa (seller_nip ≠ KSEF_NIP)
+router.post('/invoices/fix-directions', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const ourNip = (process.env.KSEF_NIP || '').replace(/[-\s]/g, '')
+    if (!ourNip) return res.status(400).json({ error: 'Brak KSEF_NIP w konfiguracji' })
+
+    // Pobierz WSZYSTKIE faktury
+    const all = await prisma.ksefInvoice.findMany({
+      select: { id: true, seller_nip: true, seller_name: true, invoice_direction: true },
+    })
+
+    let fixed = 0
+    for (const inv of all) {
+      const sellerNip = (inv.seller_nip ?? '').replace(/[-\s]/g, '')
+      // Poprawny kierunek: jeśli seller_nip === nasz NIP → sprzedażowa
+      const correctDirection = sellerNip === ourNip ? 'outgoing' : 'incoming'
+
+      if (inv.invoice_direction !== correctDirection) {
+        await prisma.ksefInvoice.update({
+          where: { id: inv.id },
+          data: { invoice_direction: correctDirection },
+        })
+        console.log(`[KSeF fix-directions] ${inv.id}: ${inv.invoice_direction} → ${correctDirection} (seller_nip=${sellerNip})`)
+        fixed++
+      }
+    }
+
+    res.json({ total: all.length, fixed, our_nip_masked: `${ourNip.slice(0, 3)}***${ourNip.slice(-3)}` })
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
 // DELETE /api/ksef/invoices/:id
 router.delete('/invoices/:id', requireAdmin, async (req: Request, res: Response) => {
   try {

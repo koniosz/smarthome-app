@@ -264,7 +264,9 @@ export async function terminateSession(): Promise<void> {
 }
 
 /**
- * Pobierz faktury za jeden chunk (max 3 miesiące) dla danego subjectType
+ * Pobierz faktury za jeden chunk (max 3 miesiące) dla danego subjectType.
+ * Każda faktura jest oznaczona polem _subjectType aby mapInvoice mógł
+ * wiarygodnie ustalić kierunek (Subject1=sprzedażowa, Subject2=zakupowa).
  */
 async function fetchInvoicesChunk(
   accessToken: string,
@@ -298,7 +300,9 @@ async function fetchInvoicesChunk(
     }
 
     const invoices: any[] = res.data.invoices ?? []
-    all.push(...invoices)
+    // Oznacz każdą fakturę żeby mapInvoice wiedział z jakiego zapytania pochodzi
+    const tagged = invoices.map(inv => ({ ...inv, _subjectType: subjectType }))
+    all.push(...tagged)
     console.log(`[KSeF] ${subjectType} ${fromStr}–${toStr}: ${invoices.length} faktur (offset ${pageOffset}), hasMore=${res.data.hasMore}`)
 
     if (!res.data.hasMore || invoices.length === 0) break
@@ -350,24 +354,47 @@ async function fetchInvoices(
 }
 
 /**
- * Mapuj InvoiceMetadata z KSeF 2.0 na nasze pola
+ * Mapuj InvoiceMetadata z KSeF 2.0 na nasze pola.
+ *
+ * Kierunek faktury jest ustalany na podstawie _subjectType (priorytet):
+ *   Subject1 = my jako sprzedawca (Podmiot1) → outgoing (sprzedażowa)
+ *   Subject2 = my jako nabywca    (Podmiot2) → incoming (zakupowa)
+ *
+ * Fallback: porównanie seller_nip z naszym KSEF_NIP (mniej niezawodne,
+ * bo KSeF metadata nie zawsze zwraca nip sprzedawcy).
  */
 function mapInvoice(inv: any) {
   const sellerNip = (inv.seller?.nip ?? '').replace(/[-\s]/g, '')
   const ourNip    = KSEF_NIP.replace(/[-\s]/g, '')
-  const isOutgoing = ourNip && sellerNip === ourNip  // MY jesteśmy sprzedawcą
+
+  // Priorytet: _subjectType ustawiony przez fetchInvoicesChunk
+  let invoice_direction: 'outgoing' | 'incoming'
+  if (inv._subjectType === 'Subject1') {
+    invoice_direction = 'outgoing'   // Subject1 = Podmiot1 = MY wystawiamy
+  } else if (inv._subjectType === 'Subject2') {
+    invoice_direction = 'incoming'   // Subject2 = Podmiot2 = ktoś wystawia NAM
+  } else {
+    // Fallback: jeśli nie ma tagu (np. ręcznie wgrywane dane)
+    invoice_direction = (ourNip && sellerNip === ourNip) ? 'outgoing' : 'incoming'
+  }
 
   // KSeF 2.0: nabywca może być w inv.buyer lub inv.subject2
-  const buyerObj  = inv.buyer ?? inv.subject2 ?? {}
+  const buyerObj = inv.buyer ?? inv.subject2 ?? {}
+
+  // Dla sprzedażowych: seller = MY, buyer = klient
+  // Dla zakupowych:    seller = dostawca, buyer = MY (ignorujemy buyer)
+  const effectiveBuyerObj = invoice_direction === 'outgoing' ? buyerObj : {}
+
+  console.log(`[KSeF] mapInvoice ${inv.ksefNumber ?? '?'}: subjectType=${inv._subjectType}, direction=${invoice_direction}, sellerNip=${sellerNip}`)
 
   return {
     ksef_number:       inv.ksefNumber ?? '',
     invoice_number:    inv.invoiceNumber ?? '',
     seller_name:       inv.seller?.name ?? '',
     seller_nip:        sellerNip,
-    buyer_name:        buyerObj.name ?? null,
-    buyer_nip:         (buyerObj.nip ?? '').replace(/[-\s]/g, '') || null,
-    invoice_direction: isOutgoing ? 'outgoing' : 'incoming',
+    buyer_name:        effectiveBuyerObj.name ?? null,
+    buyer_nip:         (effectiveBuyerObj.nip ?? '').replace(/[-\s]/g, '') || null,
+    invoice_direction,
     net_amount:        parseFloat(inv.netAmount   ?? '0') || 0,
     vat_amount:        parseFloat(inv.vatAmount   ?? '0') || 0,
     gross_amount:      parseFloat(inv.grossAmount ?? '0') || 0,
