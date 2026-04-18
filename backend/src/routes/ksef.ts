@@ -96,7 +96,7 @@ function autoClassify(sellerName: string | null, description: string | null): {
     return { cost_category: 'ga', subcategory: 'accounting', business_unit: 'shared' }
   if (/prawnik|kancelari|notariu/.test(text))
     return { cost_category: 'ga', subcategory: 'legal', business_unit: 'shared' }
-  if (/\b(microsoft|adobe|apple|atlassian|slack|zoom)\b|licencja|subskrypcja/.test(text))
+  if (/\b(microsoft|adobe|apple|atlassian|slack|zoom|basecamp|notion|asana|jira|confluence|dropbox|1password|lastpass)\b|licencja|subskrypcja|system urlopow|platformy hr|system hr|ewidencja czasu|kadry i płace/.test(text))
     return { cost_category: 'ga', subcategory: 'software', business_unit: 'shared' }
 
   // Operations
