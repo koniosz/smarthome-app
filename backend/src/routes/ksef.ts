@@ -168,7 +168,7 @@ router.get('/invoices', requireAdmin, async (req: Request, res: Response) => {
         include: {
           project: { select: { id: true, name: true, client_name: true } },
           // Minimalne dane alokacji — żeby frontend wiedział czy faktura jest wewnętrznie przypisana i do jakiej kategorii CFO
-          allocations: { select: { id: true, allocation_type: true, cost_category: true }, take: 5 },
+          allocations: { select: { id: true, allocation_type: true, cost_category: true, subcategory: true }, take: 5 },
         },
       }),
       prisma.ksefInvoice.count({ where }),

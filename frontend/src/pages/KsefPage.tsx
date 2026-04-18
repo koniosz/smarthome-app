@@ -413,8 +413,10 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
 
   const isAssignedToProject = !!invoice.project_id
   const internalAllocs = (invoice.allocations ?? []).filter((a: any) => a.allocation_type === 'internal')
+  const revenueAllocs  = (invoice.allocations ?? []).filter((a: any) => a.allocation_type === 'revenue')
   const isAssignedInternal = internalAllocs.length > 0
-  const isAssigned = isAssignedToProject || isAssignedInternal
+  const isAssignedRevenue  = revenueAllocs.length > 0
+  const isAssigned = isAssignedToProject || isAssignedInternal || isAssignedRevenue
   const isOutgoing = invoice.invoice_direction === 'outgoing'
   const hasSuggestion = !!(invoice.suggested_project_id) && !invoice.project_id && !invoice.suggestion_dismissed
 
@@ -425,6 +427,23 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
     cogs: '🏗️', sales: '📣', ga: '🏢', operations: '⚙️', financial: '💳',
   }
   const internalCat = internalAllocs[0]?.cost_category ?? 'cogs'
+
+  const REVENUE_SUB_LABELS: Record<string, string> = {
+    installation_complete: 'Instalacja kompletna',
+    installation_partial:  'Instalacja częściowa',
+    hardware_sale:         'Sprzedaż sprzętu',
+    service_maintenance:   'Serwis',
+    additional_works:      'Prace dodatkowe',
+    consulting:            'Doradztwo',
+    gatelynk_license:      'GateLynk',
+    other_revenue:         'Przychód',
+  }
+  const REVENUE_SUB_ICONS: Record<string, string> = {
+    installation_complete: '🏠', installation_partial: '🔧', hardware_sale: '📦',
+    service_maintenance: '🛠️', additional_works: '➕', consulting: '💡',
+    gatelynk_license: '🔑', other_revenue: '💰',
+  }
+  const revenueSub = revenueAllocs[0]?.subcategory ?? 'installation_complete'
 
   const [confirmingPayment, setConfirmingPayment] = useState(false)
 
@@ -488,6 +507,15 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
               </span>
               {invoice.notes && (
                 <div className="text-xs text-gray-400 mt-0.5 truncate max-w-[160px]">{invoice.notes}</div>
+              )}
+            </div>
+          ) : isAssignedRevenue ? (
+            <div>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                ✓ {REVENUE_SUB_ICONS[revenueSub]} {REVENUE_SUB_LABELS[revenueSub] ?? 'Przychód'}
+              </span>
+              {revenueAllocs.length > 1 && (
+                <div className="text-xs text-gray-400 mt-0.5">+{revenueAllocs.length - 1} więcej</div>
               )}
             </div>
           ) : isAssignedInternal ? (
