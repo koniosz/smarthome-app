@@ -526,6 +526,10 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       include: { project: { select: { id: true, name: true } } },
     })
 
+    // ── Split allocations: revenue vs cost ───────────────────────────────────
+    const costAllocations    = allocations.filter((a: any) => a.allocation_type !== 'revenue')
+    const revenueAllocations = allocations.filter((a: any) => a.allocation_type === 'revenue')
+
     // ── Group costs ───────────────────────────────────────────────────────────
     type CatTotals = { total: number; subcategories: Record<string, number>; by_bu: Record<string, number> }
     const grouped: Record<string, CatTotals> = {}
@@ -533,7 +537,7 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       grouped[key] = { total: 0, subcategories: {}, by_bu: { shc: 0, gatelynk: 0, shared: 0 } }
     }
 
-    for (const alloc of allocations) {
+    for (const alloc of costAllocations) {
       const cat = (alloc as any).cost_category ?? 'cogs'
       const sub = (alloc as any).subcategory ?? 'hardware'
       const bu  = (alloc as any).business_unit ?? 'shc'
@@ -543,7 +547,9 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       grouped[cat].by_bu[bu] = (grouped[cat].by_bu[bu] ?? 0) + alloc.amount
     }
 
-    const revenue      = payments.reduce((s, p) => s + p.amount, 0)
+    const revenue_payments = payments.reduce((s, p) => s + p.amount, 0)
+    const revenue_ksef     = revenueAllocations.reduce((s: number, a: any) => s + a.amount, 0)
+    const revenue          = revenue_payments + revenue_ksef
     const cogs         = grouped['cogs']?.total ?? 0
     const sales        = grouped['sales']?.total ?? 0
     const ga           = grouped['ga']?.total ?? 0
@@ -554,7 +560,18 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
     const ebitda       = gross_margin - opex
     const ebit         = ebitda - financial
 
-    // Revenue by business unit (from project client payments — approximate via project_type)
+    // Revenue by type (from KSeF allocations)
+    const revenueByType: Record<string, number> = {}
+    for (const a of revenueAllocations) {
+      const sub = (a as any).subcategory ?? 'other_revenue'
+      revenueByType[sub] = (revenueByType[sub] ?? 0) + (a as any).amount
+    }
+    // Also add ClientPayments as generic revenue
+    if (revenue_payments > 0) {
+      revenueByType['client_payments'] = (revenueByType['client_payments'] ?? 0) + revenue_payments
+    }
+
+    // Revenue by project (from client payments)
     const revenueByProject = payments.reduce((acc: Record<string, number>, p) => {
       const key = p.project?.name ?? 'other'
       acc[key] = (acc[key] ?? 0) + p.amount
@@ -565,7 +582,11 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       period:       { from: dateFrom ?? null, to: dateTo ?? null },
       business_unit: business_unit ?? 'all',
       revenue,
+      revenue_payments,
+      revenue_ksef,
+      revenue_by_type: revenueByType,
       revenue_by_project: revenueByProject,
+      revenue_allocations: revenueAllocations,
       cogs:      grouped['cogs'],
       sales:     grouped['sales'],
       ga:        grouped['ga'],

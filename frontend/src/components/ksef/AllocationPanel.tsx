@@ -78,6 +78,17 @@ const COST_TAXONOMY: Record<string, { label: string; icon: string; subcategories
   }},
 }
 
+const REVENUE_TAXONOMY: Record<string, { label: string; icon: string }> = {
+  installation_complete: { label: 'Instalacja kompletna',       icon: '🏠' },
+  installation_partial:  { label: 'Instalacja częściowa',       icon: '🔧' },
+  hardware_sale:         { label: 'Sprzedaż sprzętu',           icon: '📦' },
+  service_maintenance:   { label: 'Serwis / konserwacja',       icon: '🛠️' },
+  additional_works:      { label: 'Prace dodatkowe (aneks)',     icon: '➕' },
+  consulting:            { label: 'Doradztwo / projekt',        icon: '💡' },
+  gatelynk_license:      { label: 'GateLynk — licencja/SaaS',  icon: '🔑' },
+  other_revenue:         { label: 'Pozostałe przychody',        icon: '💰' },
+}
+
 const BUSINESS_UNITS = [
   { value: 'shc',      label: 'Smart Home Center', color: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300' },
   { value: 'gatelynk', label: 'GateLynk',          color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
@@ -222,12 +233,64 @@ function FinancialTaxonomyPicker({ cost_category, subcategory, business_unit, on
   )
 }
 
+function RevenueTaxonomyPicker({ subcategory, business_unit, onChange }: {
+  subcategory: string
+  business_unit: string
+  onChange: (sub: string, bu: string) => void
+}) {
+  const selectCls = 'w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-green-500'
+  return (
+    <div className="space-y-1.5 rounded-lg border border-dashed border-green-200 dark:border-green-800 p-2 bg-green-50/40 dark:bg-green-950/10">
+      <p className="text-[10px] font-semibold text-green-700 dark:text-green-400 uppercase tracking-wide">💚 Klasyfikacja Przychodu (P&amp;L)</p>
+      <div className="grid grid-cols-2 gap-1.5">
+        <div>
+          <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-0.5">Typ przychodu</label>
+          <select value={subcategory} onChange={e => onChange(e.target.value, business_unit)} className={selectCls}>
+            {Object.entries(REVENUE_TAXONOMY).map(([k, v]) => (
+              <option key={k} value={k}>{v.icon} {v.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-0.5">Jednostka</label>
+          <select value={business_unit} onChange={e => onChange(subcategory, e.target.value)} className={selectCls}>
+            {BUSINESS_UNITS.map(b => (
+              <option key={b.value} value={b.value}>{b.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RevenueBadges({ alloc }: { alloc: KsefInvoiceAllocation }) {
+  const sub  = alloc.subcategory   ?? 'installation_complete'
+  const bu   = alloc.business_unit ?? 'shc'
+  const revDef = REVENUE_TAXONOMY[sub]
+  const buDef  = BUSINESS_UNITS.find(b => b.value === bu)
+  return (
+    <span className="flex items-center gap-1 flex-wrap">
+      <span className="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+        {revDef?.icon ?? '💰'} {revDef?.label ?? sub}
+      </span>
+      {buDef && (
+        <span className={`inline-flex items-center px-1 py-0.5 rounded text-[10px] font-medium ${buDef.color}`}>
+          {buDef.label}
+        </span>
+      )}
+    </span>
+  )
+}
+
 interface AllocationPanelProps {
   invoice: KsefInvoice
   isAdmin?: boolean
 }
 
 export default function AllocationPanel({ invoice, isAdmin = false }: AllocationPanelProps) {
+  const isOutgoing = invoice.invoice_direction === 'outgoing'
+
   const [allocations, setAllocations] = useState<KsefInvoiceAllocation[]>([])
   const [projects, setProjects]       = useState<Project[]>([])
   const [loading, setLoading]         = useState(true)
@@ -239,9 +302,9 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
   const [newAmount, setNewAmount]         = useState('')
   const [newNotes, setNewNotes]           = useState('')
   const [newCategory, setNewCategory]     = useState('materials')
-  const [newAllocType, setNewAllocType]   = useState<'project' | 'internal'>('project')
-  const [newCostCat, setNewCostCat]       = useState('cogs')
-  const [newSubcat, setNewSubcat]         = useState('hardware')
+  const [newAllocType, setNewAllocType]   = useState<'project' | 'internal' | 'revenue'>(isOutgoing ? 'revenue' : 'project')
+  const [newCostCat, setNewCostCat]       = useState(isOutgoing ? 'revenue' : 'cogs')
+  const [newSubcat, setNewSubcat]         = useState(isOutgoing ? 'installation_complete' : 'hardware')
   const [newBU, setNewBU]                 = useState('shc')
   const [saving, setSaving]               = useState(false)
 
@@ -260,17 +323,19 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
 
   const handleAdd = async () => {
     if (!newAmount) return
-    if (newAllocType === 'project' && !newProjectId) return
+    if (!isOutgoing && newAllocType === 'project' && !newProjectId) return
     setSaving(true)
     try {
+      const effectiveAllocType = isOutgoing ? 'revenue' : newAllocType
+      const effectiveCostCat   = isOutgoing ? 'revenue' : newCostCat
       const alloc = await ksefApi.addAllocation(
         invoice.id,
-        newAllocType === 'project' ? newProjectId : null,
+        (!isOutgoing && newAllocType === 'project') ? newProjectId : (newProjectId || null),
         parseFloat(newAmount),
         newNotes,
         newCategory,
-        newAllocType,
-        newCostCat,
+        effectiveAllocType,
+        effectiveCostCat,
         newSubcat,
         newBU,
       )
@@ -280,9 +345,9 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
       setNewAmount('')
       setNewNotes('')
       setNewCategory('materials')
-      setNewAllocType('project')
-      setNewCostCat('cogs')
-      setNewSubcat('hardware')
+      setNewAllocType(isOutgoing ? 'revenue' : 'project')
+      setNewCostCat(isOutgoing ? 'revenue' : 'cogs')
+      setNewSubcat(isOutgoing ? 'installation_complete' : 'hardware')
       setNewBU('shc')
     } catch (e: any) {
       alert(e.response?.data?.error ?? e.message)
@@ -369,7 +434,8 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
       {/* Formularz dodawania */}
       {adding ? (
         <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 space-y-2">
-          {/* Wiersz 0: Typ alokacji */}
+          {/* Wiersz 0: Typ alokacji (tylko dla faktur zakupowych) */}
+          {!isOutgoing && (
           <div>
             <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Typ alokacji</label>
             <select
@@ -381,11 +447,14 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
               <option value="internal">🏢 Wewnętrzne potrzeby prowadzenia działalności</option>
             </select>
           </div>
+          )}
 
-          {/* Wiersz 1: Projekt (tylko dla alokacji projektowych) */}
-          {newAllocType === 'project' && (
+          {/* Wiersz 1: Projekt */}
+          {(isOutgoing || newAllocType === 'project') && (
           <div>
-            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Projekt</label>
+            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+              {isOutgoing ? 'Projekt (opcjonalnie — powiąż z projektem)' : 'Projekt'}
+            </label>
             <select
               className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
               value={newProjectId}
@@ -400,7 +469,7 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
           )}
 
           {/* Wiersz 2: Kwota + Kategoria */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className={isOutgoing ? '' : 'grid grid-cols-2 gap-2'}>
             <div>
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Kwota ({invoice.currency})</label>
               <input
@@ -413,10 +482,12 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
                 placeholder={remaining > 0 ? fmt(remaining) : '0.00'}
               />
             </div>
+            {!isOutgoing && (
             <div>
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Kategoria kosztu</label>
               <CategorySelect value={newCategory} onChange={setNewCategory} className="w-full" />
             </div>
+            )}
           </div>
 
           {/* Wiersz 3: Notatka */}
@@ -431,36 +502,54 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
             />
           </div>
 
-          {/* Wiersz 4: CFO financial taxonomy */}
-          <FinancialTaxonomyPicker
-            cost_category={newCostCat}
-            subcategory={newSubcat}
-            business_unit={newBU}
-            onChange={(cat, sub, bu) => { setNewCostCat(cat); setNewSubcat(sub); setNewBU(bu) }}
-          />
+          {/* Wiersz 4: Klasyfikacja P&L */}
+          {isOutgoing ? (
+            <RevenueTaxonomyPicker
+              subcategory={newSubcat}
+              business_unit={newBU}
+              onChange={(sub, bu) => { setNewSubcat(sub); setNewBU(bu) }}
+            />
+          ) : (
+            <FinancialTaxonomyPicker
+              cost_category={newCostCat}
+              subcategory={newSubcat}
+              business_unit={newBU}
+              onChange={(cat, sub, bu) => { setNewCostCat(cat); setNewSubcat(sub); setNewBU(bu) }}
+            />
+          )}
 
           <div className="flex gap-2 justify-end">
             <button
-              onClick={() => { setAdding(false); setNewProjectId(''); setNewAmount(''); setNewNotes(''); setNewCategory('materials'); setNewAllocType('project'); setNewCostCat('cogs'); setNewSubcat('hardware'); setNewBU('shc') }}
+              onClick={() => {
+                setAdding(false)
+                setNewProjectId('')
+                setNewAmount('')
+                setNewNotes('')
+                setNewCategory('materials')
+                setNewAllocType(isOutgoing ? 'revenue' : 'project')
+                setNewCostCat(isOutgoing ? 'revenue' : 'cogs')
+                setNewSubcat(isOutgoing ? 'installation_complete' : 'hardware')
+                setNewBU('shc')
+              }}
               className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg"
             >
               Anuluj
             </button>
             <button
               onClick={handleAdd}
-              disabled={saving || !newAmount || (newAllocType === 'project' && !newProjectId)}
-              className="px-3 py-1 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50"
+              disabled={saving || !newAmount || (!isOutgoing && newAllocType === 'project' && !newProjectId)}
+              className={`px-3 py-1 text-xs font-medium text-white rounded-lg disabled:opacity-50 ${isOutgoing ? 'bg-green-600 hover:bg-green-700' : 'bg-violet-600 hover:bg-violet-700'}`}
             >
-              {saving ? 'Zapisuję…' : 'Dodaj alokację'}
+              {saving ? 'Zapisuję…' : isOutgoing ? 'Dodaj przychód' : 'Dodaj alokację'}
             </button>
           </div>
         </div>
       ) : (
         <button
           onClick={() => { setAdding(true); setNewAmount(remaining > 0 ? remaining.toFixed(2) : '') }}
-          className="w-full py-1.5 text-xs text-violet-600 dark:text-violet-400 border border-dashed border-violet-300 dark:border-violet-800 rounded-lg hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors"
+          className={`w-full py-1.5 text-xs border border-dashed rounded-lg transition-colors ${isOutgoing ? 'text-green-600 dark:text-green-400 border-green-300 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-950/20' : 'text-violet-600 dark:text-violet-400 border-violet-300 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20'}`}
         >
-          + Przypisz kwotę do projektu
+          {isOutgoing ? '+ Klasyfikuj przychód' : '+ Przypisz kwotę do projektu'}
         </button>
       )}
     </div>
@@ -585,7 +674,11 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
       </div>
       {/* CFO taxonomy tags */}
       <div className="ml-4 mt-0.5">
-        <FinancialBadges alloc={alloc} />
+        {alloc.allocation_type === 'revenue' ? (
+          <RevenueBadges alloc={alloc} />
+        ) : (
+          <FinancialBadges alloc={alloc} />
+        )}
       </div>
     </div>
   )

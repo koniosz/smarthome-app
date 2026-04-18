@@ -424,6 +424,9 @@ export interface PnLReport {
   period: { from: string | null; to: string | null }
   business_unit: string
   revenue: number
+  revenue_ksef: number
+  revenue_payments: number
+  revenue_by_type: Record<string, number>
   revenue_by_project: Record<string, number>
   cogs: PnLCategoryData
   sales: PnLCategoryData
