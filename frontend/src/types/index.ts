@@ -423,6 +423,7 @@ export interface PnLCategoryData {
 export interface PnLReport {
   period: { from: string | null; to: string | null }
   business_unit: string
+  revenue_source: 'payments' | 'ksef' | 'both'
   revenue: number
   revenue_ksef: number
   revenue_payments: number

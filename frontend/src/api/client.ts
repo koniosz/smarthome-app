@@ -424,6 +424,6 @@ export const ksefApi = {
   toggleDirection: (id: string) =>
     api.patch<import('../types').KsefInvoice>(`/ksef/invoices/${id}/toggle-direction`).then(r => r.data),
 
-  pnl: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string }) =>
+  pnl: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string; revenue_source?: 'payments' | 'ksef' | 'both' }) =>
     api.get<import('../types').PnLReport>('/ksef/pnl', { params }).then(r => r.data),
 }

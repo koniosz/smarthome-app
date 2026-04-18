@@ -171,23 +171,28 @@ function DrillDown({ allocations, catFilter }: { allocations: KsefInvoiceAllocat
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function FinansePage() {
   const thisYear = new Date().getFullYear()
-  const [dateFrom, setDateFrom] = useState(`${thisYear}-01-01`)
-  const [dateTo,   setDateTo]   = useState(`${thisYear}-12-31`)
-  const [bu,       setBU]       = useState('all')
-  const [loading,  setLoading]  = useState(false)
-  const [report,   setReport]   = useState<PnLReport | null>(null)
-  const [error,    setError]    = useState<string | null>(null)
+  const [dateFrom,  setDateFrom]  = useState(`${thisYear}-01-01`)
+  const [dateTo,    setDateTo]    = useState(`${thisYear}-12-31`)
+  const [bu,        setBU]        = useState('all')
+  const [revSrc,    setRevSrc]    = useState<'payments' | 'ksef' | 'both'>('payments')
+  const [loading,   setLoading]   = useState(false)
+  const [report,    setReport]    = useState<PnLReport | null>(null)
+  const [error,     setError]     = useState<string | null>(null)
   const [expandedCat, setExpandedCat] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const data = await ksefApi.pnl({ dateFrom, dateTo, business_unit: bu === 'all' ? undefined : bu })
+      const data = await ksefApi.pnl({
+        dateFrom, dateTo,
+        business_unit: bu === 'all' ? undefined : bu,
+        revenue_source: revSrc,
+      })
       setReport(data)
     } catch (e: any) {
       setError(e?.response?.data?.error ?? e.message)
     } finally { setLoading(false) }
-  }, [dateFrom, dateTo, bu])
+  }, [dateFrom, dateTo, bu, revSrc])
 
   useEffect(() => { load() }, [load])
 
@@ -204,6 +209,26 @@ export default function FinansePage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Revenue source toggle */}
+          <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden" title="Źródło przychodu w P&L">
+            {([
+              { v: 'payments', label: '💳 Płatności' },
+              { v: 'ksef',     label: '📤 Faktury KSeF' },
+              { v: 'both',     label: '⚠️ Oba' },
+            ] as const).map(s => (
+              <button
+                key={s.v}
+                onClick={() => setRevSrc(s.v)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  revSrc === s.v
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
           {/* Business unit filter */}
           <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
             {(['all', 'shc', 'gatelynk', 'shared'] as const).map(b => (
@@ -250,7 +275,18 @@ export default function FinansePage() {
         <>
           {/* KPI cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <KpiCard label="Przychody" value={report.revenue} sub={`${report.payment_count} płatności`} color="blue" />
+            <KpiCard
+              label="Przychody"
+              value={report.revenue}
+              sub={
+                report.revenue_source === 'ksef'
+                  ? `📤 ${fmt(report.revenue_ksef)} z faktur KSeF`
+                  : report.revenue_source === 'both'
+                  ? `⚠️ płatności + KSeF`
+                  : `💳 ${report.payment_count} wpłat klientów`
+              }
+              color="blue"
+            />
             <KpiCard label="Marża brutto" value={report.gross_margin} sub={pct(report.gross_margin_pct)} color={report.gross_margin >= 0 ? 'green' : 'red'} />
             <KpiCard label="EBITDA" value={report.ebitda} sub={pct(report.ebitda_pct)} color={report.ebitda >= 0 ? 'green' : 'red'} />
             <KpiCard label="EBIT" value={report.ebit} sub={pct(report.ebit_pct)} color={report.ebit >= 0 ? 'green' : 'red'} />

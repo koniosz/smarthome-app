@@ -560,7 +560,9 @@ router.patch('/shared/:id/assign', requireAuth, async (req: Request, res: Respon
 // MUST be before /:id routes
 router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { dateFrom, dateTo, business_unit } = req.query
+    const { dateFrom, dateTo, business_unit, revenue_source } = req.query
+    // revenue_source: 'payments' | 'ksef' | 'both' (default: 'payments' jeśli brak alokacji ksef, else 'ksef')
+    const revSrc = String(revenue_source ?? 'payments') as 'payments' | 'ksef' | 'both'
 
     // ── Costs: all KSeF allocations ──────────────────────────────────────────
     const allocWhere: any = {}
@@ -618,7 +620,16 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
 
     const revenue_payments = payments.reduce((s, p) => s + p.amount, 0)
     const revenue_ksef     = revenueAllocations.reduce((s: number, a: any) => s + a.amount, 0)
-    const revenue          = revenue_payments + revenue_ksef
+
+    // Wybierz źródło przychodu — domyślnie 'payments' (ClientPayments)
+    // 'ksef'     → tylko faktury sprzedażowe sklasyfikowane jako revenue
+    // 'payments' → tylko wpłaty klientów (ClientPayment)
+    // 'both'     → suma obu (uwaga: może podwójnie liczyć!)
+    const revenue = revSrc === 'ksef'
+      ? revenue_ksef
+      : revSrc === 'both'
+        ? revenue_payments + revenue_ksef
+        : revenue_payments
     const cogs         = grouped['cogs']?.total ?? 0
     const sales        = grouped['sales']?.total ?? 0
     const ga           = grouped['ga']?.total ?? 0
@@ -650,6 +661,7 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
     res.json({
       period:       { from: dateFrom ?? null, to: dateTo ?? null },
       business_unit: business_unit ?? 'all',
+      revenue_source: revSrc,
       revenue,
       revenue_payments,
       revenue_ksef,
