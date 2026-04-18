@@ -448,6 +448,9 @@ export interface KsefInvoice {
   invoice_number: string | null
   seller_name: string | null
   seller_nip: string | null
+  buyer_name?: string | null
+  buyer_nip?: string | null
+  invoice_direction?: 'incoming' | 'outgoing'
   net_amount: number
   vat_amount: number
   gross_amount: number
@@ -455,6 +458,9 @@ export interface KsefInvoice {
   invoice_date: string | null
   acquisition_date: string | null
   project_id: string | null
+  suggested_project_id?: string | null
+  suggestion_score?: number | null
+  suggestion_dismissed?: boolean
   notes: string | null
   is_shared: boolean
   created_at: string
@@ -465,6 +471,7 @@ export interface KsefInvoice {
   payment_due_date?: string | null
   bank_tx_id?: string | null
   project?: { id: string; name: string; client_name: string } | null
+  suggested_project?: { id: string; name: string; client_name: string } | null
   allocations?: KsefInvoiceAllocation[]
 }
 

@@ -140,7 +140,7 @@ router.post('/sync', requireAdmin, async (req: Request, res: Response) => {
 // GET /api/ksef/invoices (admin — all invoices)
 router.get('/invoices', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { assigned, payment_status, search, page = '1', limit = '50' } = req.query
+    const { assigned, payment_status, direction, search, page = '1', limit = '50' } = req.query
     const where: any = {}
     // Faktura jest "przypisana" jeśli ma project_id LUB ma jakąkolwiek alokację (w tym wewnętrzne)
     if (assigned === 'true')  where.OR = [{ project_id: { not: null } }, { allocations: { some: {} } }]
@@ -148,6 +148,9 @@ router.get('/invoices', requireAdmin, async (req: Request, res: Response) => {
     // Filtr płatności
     if (payment_status === 'paid')   where.payment_status = 'paid'
     if (payment_status === 'unpaid') where.payment_status = { not: 'paid' }
+    // Filtr kierunku faktury
+    if (direction === 'incoming') where.invoice_direction = 'incoming'
+    if (direction === 'outgoing') where.invoice_direction = 'outgoing'
     if (search) {
       const s = String(search)
       where.OR = [
@@ -245,6 +248,107 @@ router.patch('/invoices/:id/due-date', requireAuth, async (req: Request, res: Re
       include: { project: { select: { id: true, name: true, client_name: true } } },
     })
     res.json(updated)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
+// POST /api/ksef/invoices/:id/confirm-suggestion — zatwierdź sugestię projektu
+router.post('/invoices/:id/confirm-suggestion', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
+    if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
+    if (!(invoice as any).suggested_project_id) { res.status(400).json({ error: 'Brak sugestii do zatwierdzenia' }); return }
+
+    const projectId = (invoice as any).suggested_project_id
+
+    // Przypisz fakturę do projektu
+    const updated = await prisma.ksefInvoice.update({
+      where: { id: req.params.id },
+      data: {
+        project_id:           projectId,
+        suggested_project_id: null,
+        suggestion_dismissed: false,
+      },
+      include: { project: { select: { id: true, name: true, client_name: true } } },
+    })
+
+    // Opcjonalnie: utwórz płatność klienta jeśli req.body.create_payment === true
+    if (req.body.create_payment) {
+      const { v4: uuid } = require('uuid')
+      await prisma.clientPayment.create({
+        data: {
+          id:             uuid(),
+          project_id:     projectId,
+          amount:         invoice.gross_amount,
+          date:           (invoice as any).invoice_date ?? new Date().toISOString().split('T')[0],
+          description:    `Faktura KSeF ${(invoice as any).invoice_number ?? invoice.id}`,
+          invoice_number: (invoice as any).invoice_number ?? '',
+          payment_type:   'standard',
+          created_at:     new Date().toISOString(),
+        },
+      })
+    }
+
+    res.json(updated)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
+// POST /api/ksef/invoices/:id/dismiss-suggestion — odrzuć sugestię projektu
+router.post('/invoices/:id/dismiss-suggestion', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const updated = await prisma.ksefInvoice.update({
+      where: { id: req.params.id },
+      data: { suggested_project_id: null, suggestion_dismissed: true },
+      include: { project: { select: { id: true, name: true, client_name: true } } },
+    })
+    res.json(updated)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
+// POST /api/ksef/invoices/re-suggest — uruchom auto-dopasowanie dla wszystkich nieskomentowanych sprzedażowych
+router.post('/invoices/re-suggest', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const outgoing = await prisma.ksefInvoice.findMany({
+      where: { invoice_direction: 'outgoing', project_id: null, suggestion_dismissed: false },
+      select: { id: true, buyer_name: true, buyer_nip: true },
+    })
+    const { tryAutoSuggestProject: suggest } = await import('../services/ksef') as any
+    // tryAutoSuggestProject is not exported — run inline
+    const projects = await prisma.project.findMany({ select: { id: true, client_name: true, client_contact: true } })
+
+    function normalize(name: string): string {
+      return name.toLowerCase()
+        .replace(/\b(sp|z|o\.o\.|o\.o|s\.a\.|s\.a|spółka|limited|ltd)\b/g, '')
+        .replace(/[^a-z0-9ąćęłńóśźż]/g, ' ').replace(/\s+/g, ' ').trim()
+    }
+    function score(a: string, b: string): number {
+      const na = normalize(a); const nb = normalize(b)
+      if (!na || !nb) return 0
+      if (na === nb) return 1
+      if (na.includes(nb) || nb.includes(na)) return 0.85
+      const wa = new Set(na.split(' ').filter(w => w.length > 2))
+      const wb = nb.split(' ').filter(w => w.length > 2)
+      const common = wb.filter(w => wa.has(w)).length
+      return common / Math.max(wa.size, wb.length)
+    }
+
+    let updated = 0
+    for (const inv of outgoing) {
+      let bestId: string | null = null; let bestScore = 0
+      for (const p of projects) {
+        let s = 0
+        if (inv.buyer_nip && p.client_contact?.includes(inv.buyer_nip)) s = 1.0
+        else if (inv.buyer_name && p.client_name) s = score(inv.buyer_name, p.client_name)
+        if (s > bestScore) { bestScore = s; bestId = p.id }
+      }
+      if (bestId && bestScore >= 0.5) {
+        await prisma.ksefInvoice.update({
+          where: { id: inv.id },
+          data: { suggested_project_id: bestId, suggestion_score: bestScore },
+        })
+        updated++
+      }
+    }
+    res.json({ processed: outgoing.length, suggested: updated })
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 

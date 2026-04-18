@@ -324,7 +324,7 @@ export const ksefApi = {
   sync: (dateFrom?: string) =>
     api.post<import('../types').KsefSyncResult>('/ksef/sync', dateFrom ? { dateFrom } : {}).then(r => r.data),
 
-  invoices: (params?: { assigned?: boolean; payment_status?: string; search?: string; page?: number; limit?: number }) =>
+  invoices: (params?: { assigned?: boolean; payment_status?: string; direction?: string; search?: string; page?: number; limit?: number }) =>
     api.get<{ invoices: import('../types').KsefInvoice[]; total: number; page: number; limit: number }>(
       '/ksef/invoices', { params }
     ).then(r => r.data),
@@ -405,6 +405,15 @@ export const ksefApi = {
 
   dueToday: () =>
     api.get('/ksef/invoices/due-today').then(r => r.data),
+
+  confirmSuggestion: (id: string, create_payment = false) =>
+    api.post<import('../types').KsefInvoice>(`/ksef/invoices/${id}/confirm-suggestion`, { create_payment }).then(r => r.data),
+
+  dismissSuggestion: (id: string) =>
+    api.post<import('../types').KsefInvoice>(`/ksef/invoices/${id}/dismiss-suggestion`).then(r => r.data),
+
+  reSuggest: () =>
+    api.post<{ processed: number; suggested: number }>('/ksef/invoices/re-suggest').then(r => r.data),
 
   pnl: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string }) =>
     api.get<import('../types').PnLReport>('/ksef/pnl', { params }).then(r => r.data),

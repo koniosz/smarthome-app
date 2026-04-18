@@ -353,16 +353,92 @@ async function fetchInvoices(
  * Mapuj InvoiceMetadata z KSeF 2.0 na nasze pola
  */
 function mapInvoice(inv: any) {
+  const sellerNip = (inv.seller?.nip ?? '').replace(/[-\s]/g, '')
+  const ourNip    = KSEF_NIP.replace(/[-\s]/g, '')
+  const isOutgoing = ourNip && sellerNip === ourNip  // MY jesteśmy sprzedawcą
+
+  // KSeF 2.0: nabywca może być w inv.buyer lub inv.subject2
+  const buyerObj  = inv.buyer ?? inv.subject2 ?? {}
+
   return {
-    ksef_number:    inv.ksefNumber ?? '',
-    invoice_number: inv.invoiceNumber ?? '',
-    seller_name:    inv.seller?.name ?? '',
-    seller_nip:     inv.seller?.nip ?? '',
-    net_amount:     parseFloat(inv.netAmount   ?? '0') || 0,
-    vat_amount:     parseFloat(inv.vatAmount   ?? '0') || 0,
-    gross_amount:   parseFloat(inv.grossAmount ?? '0') || 0,
-    currency:       inv.currency ?? 'PLN',
-    invoice_date:   inv.issueDate ?? inv.invoicingDate ?? now().split('T')[0],
+    ksef_number:       inv.ksefNumber ?? '',
+    invoice_number:    inv.invoiceNumber ?? '',
+    seller_name:       inv.seller?.name ?? '',
+    seller_nip:        sellerNip,
+    buyer_name:        buyerObj.name ?? null,
+    buyer_nip:         (buyerObj.nip ?? '').replace(/[-\s]/g, '') || null,
+    invoice_direction: isOutgoing ? 'outgoing' : 'incoming',
+    net_amount:        parseFloat(inv.netAmount   ?? '0') || 0,
+    vat_amount:        parseFloat(inv.vatAmount   ?? '0') || 0,
+    gross_amount:      parseFloat(inv.grossAmount ?? '0') || 0,
+    currency:          inv.currency ?? 'PLN',
+    invoice_date:      inv.issueDate ?? inv.invoicingDate ?? now().split('T')[0],
+  }
+}
+
+/**
+ * Normalizuj nazwę firmy do porównania (usuń spację, przyimki, forma prawna)
+ */
+function normalizeCompanyName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(sp|z|o\.o\.|o\.o|s\.a\.|s\.a|s\.k\.a|sp\. z o\.o\.|spółka|limited|ltd|gmbh|inc|llc)\b/g, '')
+    .replace(/[^a-z0-9ąćęłńóśźż]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Oceń podobieństwo nazw (0-1)
+ */
+function nameMatchScore(a: string, b: string): number {
+  const na = normalizeCompanyName(a)
+  const nb = normalizeCompanyName(b)
+  if (!na || !nb) return 0
+  if (na === nb) return 1.0
+  if (na.includes(nb) || nb.includes(na)) return 0.85
+  const wa = new Set(na.split(' ').filter(w => w.length > 2))
+  const wb = nb.split(' ').filter(w => w.length > 2)
+  if (wa.size === 0 || wb.length === 0) return 0
+  const common = wb.filter(w => wa.has(w)).length
+  return common / Math.max(wa.size, wb.length)
+}
+
+/**
+ * Dla nowej faktury sprzedażowej: spróbuj dopasować projekt po nazwie nabywcy / NIP
+ */
+async function tryAutoSuggestProject(invoiceId: string, buyerName: string | null, buyerNip: string | null): Promise<void> {
+  if (!buyerName && !buyerNip) return
+  const projects = await prisma.project.findMany({
+    select: { id: true, client_name: true, client_contact: true },
+  })
+
+  let bestId: string | null = null
+  let bestScore = 0
+
+  for (const p of projects) {
+    let score = 0
+
+    // NIP match (jeśli klient ma NIP w polu kontaktowym)
+    if (buyerNip && p.client_contact?.includes(buyerNip)) {
+      score = 1.0
+    } else if (buyerName && p.client_name) {
+      score = nameMatchScore(buyerName, p.client_name)
+    }
+
+    if (score > bestScore) {
+      bestScore = score
+      bestId = p.id
+    }
+  }
+
+  const THRESHOLD = 0.5
+  if (bestId && bestScore >= THRESHOLD) {
+    await prisma.ksefInvoice.update({
+      where: { id: invoiceId },
+      data: { suggested_project_id: bestId, suggestion_score: bestScore },
+    })
+    console.log(`[KSeF] Auto-sugestia: faktura ${invoiceId} → projekt ${bestId} (score: ${bestScore.toFixed(2)})`)
   }
 }
 
@@ -400,7 +476,7 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
         const exists = await prisma.ksefInvoice.findUnique({ where: { ksef_number: mapped.ksef_number } })
         if (exists) continue
 
-        await prisma.ksefInvoice.create({
+        const created = await prisma.ksefInvoice.create({
           data: {
             id:               uuidv4(),
             ...mapped,
@@ -409,6 +485,10 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
             created_at:       now(),
           },
         })
+        // Dla faktur sprzedażowych: spróbuj dopasować projekt
+        if (mapped.invoice_direction === 'outgoing') {
+          await tryAutoSuggestProject(created.id, mapped.buyer_name, mapped.buyer_nip).catch(() => {})
+        }
         saved++
       } catch (err: any) {
         errors.push(`Faktura ${inv.ksefNumber ?? '?'}: ${err.message}`)

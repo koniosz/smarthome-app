@@ -415,6 +415,8 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
   const internalAllocs = (invoice.allocations ?? []).filter((a: any) => a.allocation_type === 'internal')
   const isAssignedInternal = internalAllocs.length > 0
   const isAssigned = isAssignedToProject || isAssignedInternal
+  const isOutgoing = invoice.invoice_direction === 'outgoing'
+  const hasSuggestion = !!(invoice.suggested_project_id) && !invoice.project_id && !invoice.suggestion_dismissed
 
   const COST_CAT_LABELS: Record<string, string> = {
     cogs: 'COGS', sales: 'Sprzedaż', ga: 'G&A', operations: 'Operacje', financial: 'Finansowe',
@@ -424,16 +426,34 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
   }
   const internalCat = internalAllocs[0]?.cost_category ?? 'cogs'
 
+  const [confirmingPayment, setConfirmingPayment] = useState(false)
+
   return (
     <>
       <tr className="group border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
         <td className="py-2.5 pr-3">
-          <div className="text-sm font-medium text-gray-800 dark:text-gray-100">
-            {invoice.invoice_number ?? '—'}
+          <div className="flex items-center gap-1.5">
+            <div className="text-sm font-medium text-gray-800 dark:text-gray-100">
+              {invoice.invoice_number ?? '—'}
+            </div>
+            {isOutgoing ? (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                📤 Sprzedażowa
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                📥 Zakupowa
+              </span>
+            )}
           </div>
           <div className="text-xs text-gray-400 font-mono truncate max-w-[180px]" title={invoice.ksef_number ?? ''}>
             KSeF: {invoice.ksef_number ? invoice.ksef_number.slice(0, 20) + '…' : '—'}
           </div>
+          {isOutgoing && invoice.buyer_name && (
+            <div className="text-xs text-blue-500 dark:text-blue-400 mt-0.5 truncate max-w-[180px]">
+              → {invoice.buyer_name}
+            </div>
+          )}
         </td>
         <td className="py-2.5 pr-3">
           <div className="text-sm text-gray-700 dark:text-gray-300">{invoice.seller_name ?? '—'}</div>
@@ -524,6 +544,80 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
           </div>
         </td>
       </tr>
+      {/* Panel sugestii projektu dla faktur sprzedażowych */}
+      {hasSuggestion && (
+        <tr className="border-b border-amber-100 dark:border-amber-900/30 bg-amber-50/60 dark:bg-amber-950/20">
+          <td colSpan={7} className="px-4 py-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-amber-500 text-sm">💡</span>
+                <div className="min-w-0">
+                  <span className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                    Sugerowany projekt:&nbsp;
+                  </span>
+                  <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">
+                    {projects.find(p => p.id === invoice.suggested_project_id)?.name ?? invoice.suggested_project_id}
+                  </span>
+                  <span className="text-[10px] text-gray-400 ml-2">
+                    ({projects.find(p => p.id === invoice.suggested_project_id)?.client_name ?? '—'})
+                  </span>
+                  {invoice.suggestion_score && (
+                    <span className="ml-1.5 text-[10px] text-amber-600 dark:text-amber-400">
+                      pewność: {Math.round(invoice.suggestion_score * 100)}%
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {!confirmingPayment ? (
+                  <>
+                    <button
+                      onClick={() => setConfirmingPayment(true)}
+                      className="px-2.5 py-1 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+                    >
+                      ✓ Przypisz do projektu
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const updated = await ksefApi.dismissSuggestion(invoice.id)
+                        onUpdated(updated)
+                      }}
+                      className="px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    >
+                      ✕ Odrzuć
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 bg-white dark:bg-gray-900 rounded-lg px-3 py-1.5 border border-green-200 dark:border-green-800">
+                    <span className="text-xs text-gray-600 dark:text-gray-400">Czy też utworzyć wpłatę klienta?</span>
+                    <button
+                      onClick={async () => {
+                        const updated = await ksefApi.confirmSuggestion(invoice.id, true)
+                        onUpdated(updated)
+                        setConfirmingPayment(false)
+                      }}
+                      className="px-2 py-0.5 text-xs font-medium bg-green-600 text-white rounded"
+                    >
+                      ✓ Tak, utwórz wpłatę
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const updated = await ksefApi.confirmSuggestion(invoice.id, false)
+                        onUpdated(updated)
+                        setConfirmingPayment(false)
+                      }}
+                      className="px-2 py-0.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
+                    >
+                      Tylko przypisz
+                    </button>
+                    <button onClick={() => setConfirmingPayment(false)} className="text-xs text-gray-400">Anuluj</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
       {showAllocations && (
         <tr className="border-b border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/10">
           <td colSpan={7} className="px-4 py-3">
@@ -546,10 +640,11 @@ export default function KsefPage() {
   const [loading, setLoading]   = useState(true)
   const [syncing, setSyncing]   = useState(false)
   const [syncMsg, setSyncMsg]   = useState<string | null>(null)
-  const [tab, setTab]             = useState<'all' | 'unassigned' | 'assigned'>('all')
+  const [tab, setTab]               = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [paymentTab, setPaymentTab] = useState<'all' | 'paid' | 'unpaid'>('all')
-  const [search, setSearch]       = useState('')
-  const [page, setPage]           = useState(1)
+  const [dirTab, setDirTab]         = useState<'all' | 'incoming' | 'outgoing'>('all')
+  const [search, setSearch]         = useState('')
+  const [page, setPage]             = useState(1)
   const [debugInfo, setDebugInfo] = useState<any>(null)
   const [debugging, setDebugging] = useState(false)
   const [dateFrom, setDateFrom]   = useState('2024-01-01')
@@ -561,8 +656,9 @@ export default function KsefPage() {
     try {
       const assigned       = tab === 'all' ? undefined : tab === 'assigned'
       const payment_status = paymentTab === 'all' ? undefined : paymentTab
+      const direction      = dirTab === 'all' ? undefined : dirTab
       const [res, st, projs] = await Promise.all([
-        ksefApi.invoices({ assigned, payment_status, search: search || undefined, page, limit: LIMIT }),
+        ksefApi.invoices({ assigned, payment_status, direction, search: search || undefined, page, limit: LIMIT }),
         ksefApi.status(),
         projectsApi.list(),
       ])
@@ -573,7 +669,7 @@ export default function KsefPage() {
     } finally {
       setLoading(false)
     }
-  }, [tab, paymentTab, search, page])
+  }, [tab, paymentTab, dirTab, search, page])
 
   useEffect(() => { load() }, [load])
 
@@ -716,6 +812,37 @@ export default function KsefPage() {
             </button>
           ))}
         </div>
+
+        {/* Kierunek */}
+        <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-sm">
+          {([
+            { value: 'all',      label: 'Wszystkie typy' },
+            { value: 'incoming', label: '📥 Zakupowe' },
+            { value: 'outgoing', label: '📤 Sprzedażowe' },
+          ] as const).map(t => (
+            <button
+              key={t.value}
+              onClick={() => { setDirTab(t.value); setPage(1) }}
+              className={`px-3 py-1.5 font-medium transition-colors ${dirTab === t.value
+                ? 'bg-violet-600 text-white'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={async () => {
+            const r = await ksefApi.reSuggest()
+            alert(`Sprawdzono ${r.processed} faktur sprzedażowych, dodano ${r.suggested} sugestii.`)
+            load()
+          }}
+          className="px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
+          title="Uruchom ponownie auto-dopasowanie faktur sprzedażowych do projektów"
+        >
+          💡 Przelicz sugestie
+        </button>
 
         <input
           type="text"

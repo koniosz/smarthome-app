@@ -324,6 +324,9 @@ model KsefInvoice {
   invoice_number   String?            // Numer faktury wystawcy
   seller_name      String?            // Nazwa sprzedawcy
   seller_nip       String?            // NIP sprzedawcy
+  buyer_name       String?            // Nazwa nabywcy (dla faktur sprzedażowych)
+  buyer_nip        String?            // NIP nabywcy
+  invoice_direction String @default("incoming") // 'incoming' (zakupowa) | 'outgoing' (sprzedażowa)
   net_amount       Float    @default(0)
   vat_amount       Float    @default(0)
   gross_amount     Float    @default(0)
@@ -331,6 +334,9 @@ model KsefInvoice {
   invoice_date     String?            // Data wystawienia
   acquisition_date String?            // Data pobrania z KSeF
   project_id       String?            // null = nieprzypisana
+  suggested_project_id String?        // auto-sugestia projektu (do zatwierdzenia)
+  suggestion_score Float?             // pewność sugestii 0-1
+  suggestion_dismissed Boolean @default(false) // admin odrzucił sugestię
   notes            String?            // notatka admina
   is_shared        Boolean  @default(false)
   raw_data         String?            // surowe dane JSON z KSeF (do debugowania)
