@@ -32,7 +32,13 @@ const CATEGORIES_PL: Record<string, string> = {
 
 export const COST_TAXONOMY: Record<string, { label: string; subcategories: Record<string, string> }> = {
   cogs:       { label: 'COGS — Koszt własny sprzedaży', subcategories: {
-    hardware:               'Sprzęt (KNX/HDL/Control4…)',
+    hardware:               'Sprzęt krajowy (KNX/HDL/Control4…)',
+    hardware_eu:            '🇪🇺 Sprzęt z UE (WNT)',
+    hardware_noneu:         '🌏 Sprzęt spoza UE (import)',
+    import_duty:            '🛃 Cło i opłaty celne',
+    import_freight:         '🚢 Fracht / spedycja importowa',
+    import_agency:          '📋 Agencja celna / obsługa importu',
+    import_vat:             '🧾 VAT importowy (nieodliczalny)',
     subcontractor:          'Podwykonawca',
     installation_material:  'Materiały instalacyjne',
     labor:                  'Robocizna własna',
@@ -63,7 +69,7 @@ export const COST_TAXONOMY: Record<string, { label: string; subcategories: Recor
     bank_fee: 'Opłaty bankowe',
     interest: 'Odsetki',
     leasing:  'Leasing',
-    fx:       'Różnice kursowe',
+    fx:       'Różnice kursowe / przewalutowanie',
   }},
 }
 
@@ -79,17 +85,42 @@ function autoClassify(sellerName: string | null, description: string | null): {
 } {
   const text = `${sellerName ?? ''} ${description ?? ''}`.toLowerCase()
 
-  // COGS / Hardware — smart home brands
+  // ── Import: cło i koszty celne (priorytet — przed sprzętem) ──────────────────
+  if (/\bcło\b|opłat.*celn|urząd.*celn|dług.*celn|należność.*celn|cło.*przywoz|cło.*wwoz/.test(text))
+    return { cost_category: 'cogs', subcategory: 'import_duty', business_unit: 'shc' }
+
+  // Agencje celne (polskie i międzynarodowe)
+  if (/agencja.*celn|agent.*celn|odprawa.*celn|obsługa.*celn|\b(dsv|dhl.*global|dhl.*freight|kuehne|nagel|schenker|expeditors|panalpina|geodis|rhenus|hellmann|db.*schenker|senator|raben|trans.*cargo)\b/.test(text))
+    return { cost_category: 'cogs', subcategory: 'import_agency', business_unit: 'shc' }
+
+  // Fracht / spedycja importowa
+  if (/fracht|spedycj|forwarding|freight|transport.*morsk|transport.*lotn|transport.*międzynarodow|shipping|cargo|sea freight|air freight|lcl|fcl|kontener/.test(text))
+    return { cost_category: 'cogs', subcategory: 'import_freight', business_unit: 'shc' }
+
+  // VAT importowy (nieodliczalny lub obsługa)
+  if (/vat.*import|import.*vat|podatek.*import|należny.*import/.test(text))
+    return { cost_category: 'cogs', subcategory: 'import_vat', business_unit: 'shc' }
+
+  // ── COGS / Hardware — sprzęt krajowy (polscy dystrybutorzy i znane marki) ────
   if (/\b(knx|hdl|eelectron|tyba|mdt|control4|hikvision|satel|fibaro|somfy|lutron|ajax|dahua|bosch hager|jung|gira|loxone|teletask|siemens)\b/.test(text))
     return { cost_category: 'cogs', subcategory: 'hardware', business_unit: 'shc' }
 
-  // Sales — advertising platforms
+  // ── COGS / Hardware EU — wewnątrzwspólnotowe nabycie towarów (WNT) ───────────
+  // Faktury w EUR/GBP od dostawców z UE, lub słowa kluczowe WNT
+  if (/wewnątrzwspólnot|wnt|nabycie.*wewnątrz|nabycie.*ue|zakup.*ue|eu.*invoice|invoice.*eu/.test(text))
+    return { cost_category: 'cogs', subcategory: 'hardware_eu', business_unit: 'shc' }
+
+  // ── COGS / Hardware non-EU — import spoza UE ──────────────────────────────────
+  if (/import.*chin|china|chinese|made in china|shenzhen|guangzhou|hongkong|hong kong|taiwan|aliexpress|alibaba|amazon.*us|import.*usa|import.*uk|import.*ukraina/.test(text))
+    return { cost_category: 'cogs', subcategory: 'hardware_noneu', business_unit: 'shc' }
+
+  // ── Sales — advertising platforms ────────────────────────────────────────────
   if (/\b(facebook|meta ads?|instagram ads?|google ads?|linkedin|allegro)\b/.test(text))
     return { cost_category: 'sales', subcategory: 'advertising', business_unit: 'gatelynk' }
   if (/\b(hubspot|pipedrive|salesforce|crm)\b/.test(text))
     return { cost_category: 'sales', subcategory: 'crm_software', business_unit: 'shared' }
 
-  // G&A
+  // ── G&A ───────────────────────────────────────────────────────────────────────
   if (/czynsz|najem lok|wynajem.*biur|wynajem.*magazyn/.test(text))
     return { cost_category: 'ga', subcategory: 'rent', business_unit: 'shared' }
   if (/księgow|rachunkow|biuro rachunkow|doradca podatk|biuro podatkow/.test(text))
@@ -99,7 +130,7 @@ function autoClassify(sellerName: string | null, description: string | null): {
   if (/\b(microsoft|adobe|apple|atlassian|slack|zoom|basecamp|notion|asana|jira|confluence|dropbox|1password|lastpass)\b|licencja|subskrypcja|system urlopow|platformy hr|system hr|ewidencja czasu|kadry i płace/.test(text))
     return { cost_category: 'ga', subcategory: 'software', business_unit: 'shared' }
 
-  // Operations
+  // ── Operations ────────────────────────────────────────────────────────────────
   if (/paliwo|\b(shell|orlen|bp|lotos|circle k|amic)\b|stacja paliw/.test(text))
     return { cost_category: 'operations', subcategory: 'car_fuel', business_unit: 'shared' }
   if (/serwis.*auto|warsztat|naprawa.*pojazd|auto.*serwis|auto.*naprawa/.test(text))
@@ -107,11 +138,13 @@ function autoClassify(sellerName: string | null, description: string | null): {
   if (/ubezpieczen/.test(text))
     return { cost_category: 'operations', subcategory: 'insurance', business_unit: 'shared' }
 
-  // Financial
+  // ── Financial ─────────────────────────────────────────────────────────────────
   if (/opłat.*bank|prowizja.*bank|przelew.*bank|\b(pko|mbank|santander|ing|bnp|alior|millennium)\b/.test(text))
     return { cost_category: 'financial', subcategory: 'bank_fee', business_unit: 'shared' }
   if (/leasing/.test(text))
     return { cost_category: 'financial', subcategory: 'leasing', business_unit: 'shared' }
+  if (/przewalutow|kurs.*walut|różnica.*kursow|fx |foreign exchange/.test(text))
+    return { cost_category: 'financial', subcategory: 'fx', business_unit: 'shared' }
 
   // Default: COGS hardware
   return { cost_category: 'cogs', subcategory: 'hardware', business_unit: 'shc' }

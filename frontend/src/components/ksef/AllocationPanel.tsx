@@ -43,7 +43,13 @@ function CategorySelect({ value, onChange, className = '' }: {
 // ── CFO financial taxonomy ────────────────────────────────────────────────────
 const COST_TAXONOMY: Record<string, { label: string; icon: string; subcategories: Record<string, string> }> = {
   cogs:       { label: 'COGS', icon: '🏗️', subcategories: {
-    hardware:               'Sprzęt (KNX/HDL/Control4…)',
+    hardware:               'Sprzęt krajowy (KNX/HDL/Control4…)',
+    hardware_eu:            '🇪🇺 Sprzęt z UE (WNT)',
+    hardware_noneu:         '🌏 Sprzęt spoza UE (import)',
+    import_duty:            '🛃 Cło i opłaty celne',
+    import_freight:         '🚢 Fracht / spedycja importowa',
+    import_agency:          '📋 Agencja celna / obsługa importu',
+    import_vat:             '🧾 VAT importowy (nieodliczalny)',
     subcontractor:          'Podwykonawca',
     installation_material:  'Materiały instalacyjne',
     labor:                  'Robocizna własna',
@@ -74,7 +80,7 @@ const COST_TAXONOMY: Record<string, { label: string; icon: string; subcategories
     bank_fee: 'Opłaty bankowe',
     interest: 'Odsetki',
     leasing:  'Leasing',
-    fx:       'Różnice kursowe',
+    fx:       'Różnice kursowe / przewalutowanie',
   }},
 }
 
@@ -128,11 +134,11 @@ function FinancialBadges({ alloc }: { alloc: KsefInvoiceAllocation }) {
 }
 
 const CATEGORY_LEGEND: Record<string, { examples: string; when: string }> = {
-  cogs:       { when: 'Koszty bezpośrednio związane z realizacją projektu dla klienta', examples: 'Sprzęt KNX/HDL, materiały instalacyjne, podwykonawcy robót' },
+  cogs:       { when: 'Koszty bezpośrednio związane z realizacją projektu dla klienta (w tym import)', examples: 'Sprzęt KNX/HDL krajowy, sprzęt z UE (WNT), import z Chin, cło, agencja celna, fracht morski' },
   sales:      { when: 'Koszty pozyskiwania klientów i promocji firmy', examples: 'Facebook Ads, Google Ads, prowizja dla pośrednika, CRM (HubSpot)' },
   ga:         { when: 'Koszty utrzymania biura i zarządzania firmą', examples: 'Czynsz biura, księgowość, licencje (Microsoft 365), system urlopowy, usługi prawne' },
   operations: { when: 'Koszty codziennego funkcjonowania operacyjnego', examples: 'Paliwo, serwis samochodów, narzędzia, ubezpieczenia, delegacje' },
-  financial:  { when: 'Koszty wynikające z obsługi finansowej i zadłużenia', examples: 'Opłaty bankowe, odsetki od kredytu, leasing, różnice kursowe' },
+  financial:  { when: 'Koszty wynikające z obsługi finansowej i zadłużenia', examples: 'Opłaty bankowe, odsetki od kredytu, leasing, różnice kursowe przy imporcie' },
 }
 
 function FinancialTaxonomyPicker({ cost_category, subcategory, business_unit, onChange }: {
