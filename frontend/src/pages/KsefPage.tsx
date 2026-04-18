@@ -436,15 +436,25 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
             <div className="text-sm font-medium text-gray-800 dark:text-gray-100">
               {invoice.invoice_number ?? '—'}
             </div>
-            {isOutgoing ? (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                📤 Sprzedażowa
-              </span>
-            ) : (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-                📥 Zakupowa
-              </span>
-            )}
+            <button
+              title="Kliknij aby zmienić kierunek (Zakupowa ↔ Sprzedażowa)"
+              onClick={async (e) => {
+                e.stopPropagation()
+                const updated = await ksefApi.toggleDirection(invoice.id)
+                onUpdated(updated)
+              }}
+              className="group/dir"
+            >
+              {isOutgoing ? (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/60 transition-colors cursor-pointer">
+                  📤 Sprzedażowa <span className="opacity-0 group-hover/dir:opacity-60 text-[9px]">↔</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer">
+                  📥 Zakupowa <span className="opacity-0 group-hover/dir:opacity-60 text-[9px]">↔</span>
+                </span>
+              )}
+            </button>
           </div>
           <div className="text-xs text-gray-400 font-mono truncate max-w-[180px]" title={invoice.ksef_number ?? ''}>
             KSeF: {invoice.ksef_number ? invoice.ksef_number.slice(0, 20) + '…' : '—'}

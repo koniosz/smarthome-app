@@ -385,6 +385,19 @@ router.post('/invoices/fix-directions', requireAdmin, async (_req: Request, res:
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
+// PATCH /api/ksef/invoices/:id/toggle-direction — ręczna zmiana kierunku faktury
+router.patch('/invoices/:id/toggle-direction', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const inv = await prisma.ksefInvoice.findUniqueOrThrow({ where: { id: req.params.id } })
+    const newDir = inv.invoice_direction === 'outgoing' ? 'incoming' : 'outgoing'
+    const updated = await prisma.ksefInvoice.update({
+      where: { id: req.params.id },
+      data: { invoice_direction: newDir },
+    })
+    res.json(updated)
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
 // DELETE /api/ksef/invoices/:id
 router.delete('/invoices/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
