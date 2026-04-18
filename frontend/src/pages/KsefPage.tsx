@@ -546,9 +546,10 @@ export default function KsefPage() {
   const [loading, setLoading]   = useState(true)
   const [syncing, setSyncing]   = useState(false)
   const [syncMsg, setSyncMsg]   = useState<string | null>(null)
-  const [tab, setTab]           = useState<'all' | 'unassigned' | 'assigned'>('all')
-  const [search, setSearch]     = useState('')
-  const [page, setPage]         = useState(1)
+  const [tab, setTab]             = useState<'all' | 'unassigned' | 'assigned'>('all')
+  const [paymentTab, setPaymentTab] = useState<'all' | 'paid' | 'unpaid'>('all')
+  const [search, setSearch]       = useState('')
+  const [page, setPage]           = useState(1)
   const [debugInfo, setDebugInfo] = useState<any>(null)
   const [debugging, setDebugging] = useState(false)
   const [dateFrom, setDateFrom]   = useState('2024-01-01')
@@ -558,9 +559,10 @@ export default function KsefPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const assigned = tab === 'all' ? undefined : tab === 'assigned'
+      const assigned       = tab === 'all' ? undefined : tab === 'assigned'
+      const payment_status = paymentTab === 'all' ? undefined : paymentTab
       const [res, st, projs] = await Promise.all([
-        ksefApi.invoices({ assigned, search: search || undefined, page, limit: LIMIT }),
+        ksefApi.invoices({ assigned, payment_status, search: search || undefined, page, limit: LIMIT }),
         ksefApi.status(),
         projectsApi.list(),
       ])
@@ -571,7 +573,7 @@ export default function KsefPage() {
     } finally {
       setLoading(false)
     }
-  }, [tab, search, page])
+  }, [tab, paymentTab, search, page])
 
   useEffect(() => { load() }, [load])
 
@@ -681,6 +683,7 @@ export default function KsefPage() {
 
       {/* Filtry */}
       <div className="flex flex-wrap items-center gap-3">
+        {/* Przypisanie */}
         <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-sm">
           {(['all', 'unassigned', 'assigned'] as const).map(t => (
             <button
@@ -691,6 +694,25 @@ export default function KsefPage() {
                 : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
             >
               {t === 'all' ? 'Wszystkie' : t === 'unassigned' ? '⏳ Nieprzypisane' : '✓ Przypisane'}
+            </button>
+          ))}
+        </div>
+
+        {/* Płatność */}
+        <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-sm">
+          {([
+            { value: 'all',    label: 'Każda płatność' },
+            { value: 'paid',   label: '✅ Opłacone' },
+            { value: 'unpaid', label: '💳 Nieopłacone' },
+          ] as const).map(t => (
+            <button
+              key={t.value}
+              onClick={() => { setPaymentTab(t.value); setPage(1) }}
+              className={`px-3 py-1.5 font-medium transition-colors ${paymentTab === t.value
+                ? 'bg-violet-600 text-white'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
+            >
+              {t.label}
             </button>
           ))}
         </div>

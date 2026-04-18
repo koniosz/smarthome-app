@@ -324,7 +324,7 @@ export const ksefApi = {
   sync: (dateFrom?: string) =>
     api.post<import('../types').KsefSyncResult>('/ksef/sync', dateFrom ? { dateFrom } : {}).then(r => r.data),
 
-  invoices: (params?: { assigned?: boolean; search?: string; page?: number; limit?: number }) =>
+  invoices: (params?: { assigned?: boolean; payment_status?: string; search?: string; page?: number; limit?: number }) =>
     api.get<{ invoices: import('../types').KsefInvoice[]; total: number; page: number; limit: number }>(
       '/ksef/invoices', { params }
     ).then(r => r.data),

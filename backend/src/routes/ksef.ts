@@ -140,11 +140,14 @@ router.post('/sync', requireAdmin, async (req: Request, res: Response) => {
 // GET /api/ksef/invoices (admin — all invoices)
 router.get('/invoices', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { assigned, search, page = '1', limit = '50' } = req.query
+    const { assigned, payment_status, search, page = '1', limit = '50' } = req.query
     const where: any = {}
     // Faktura jest "przypisana" jeśli ma project_id LUB ma jakąkolwiek alokację (w tym wewnętrzne)
     if (assigned === 'true')  where.OR = [{ project_id: { not: null } }, { allocations: { some: {} } }]
     if (assigned === 'false') where.AND = [{ project_id: null }, { allocations: { none: {} } }]
+    // Filtr płatności
+    if (payment_status === 'paid')   where.payment_status = 'paid'
+    if (payment_status === 'unpaid') where.payment_status = { not: 'paid' }
     if (search) {
       const s = String(search)
       where.OR = [
