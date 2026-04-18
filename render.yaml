@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: smart-home-manager
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: frankfurt
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4001
+      - key: DATABASE_URL
+        sync: false          # wpisz ręcznie w Render Dashboard → Environment
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false          # wpisz ręcznie w Render Dashboard → Environment
+      - key: KSEF_NIP
+        sync: false
+      - key: KSEF_TOKEN
+        sync: false
+      - key: KSEF_ENV
+        value: prod
+    healthCheckPath: /api/health
+    autoDeploy: true
