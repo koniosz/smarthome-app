@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { v4 as uuidv4 } from 'uuid'
 import { requireAdmin, requireAuth } from '../middleware/auth'
-import { syncInvoices, getStatus, debugAuth } from '../services/ksef'
+import { syncInvoices, getStatus, debugAuth, tryAutoClassifyFromHistory } from '../services/ksef'
 import db from '../db'
 
 const prisma = new PrismaClient()
@@ -349,6 +349,42 @@ router.post('/invoices/re-suggest', requireAdmin, async (_req: Request, res: Res
       }
     }
     res.json({ processed: outgoing.length, suggested: updated })
+  } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
+// POST /api/ksef/invoices/learn-classify — auto-klasyfikuj nieprzypisane faktury na podstawie historii
+// Dla każdej faktury bez alokacji (internal/revenue) szuka wzorca od tego samego dostawcy i przypisuje
+router.post('/invoices/learn-classify', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    // Pobierz faktury które NIE mają jeszcze alokacji wewnętrznych ani revenue
+    const unclassified = await prisma.ksefInvoice.findMany({
+      where: {
+        allocations: { none: { allocation_type: { in: ['internal', 'revenue'] } } },
+      },
+      select: { id: true, seller_nip: true, seller_name: true, gross_amount: true, invoice_direction: true },
+    })
+
+    let classified = 0
+    let skipped    = 0
+
+    for (const inv of unclassified) {
+      const learned = await tryAutoClassifyFromHistory(
+        inv.id,
+        inv.seller_nip || null,
+        inv.seller_name || null,
+        inv.gross_amount,
+        inv.invoice_direction ?? 'incoming',
+      )
+      if (learned) classified++
+      else skipped++
+    }
+
+    res.json({
+      total: unclassified.length,
+      classified,
+      skipped,
+      message: `Przetworzono ${unclassified.length} faktur: sklasyfikowano ${classified}, brak wzorca dla ${skipped}.`,
+    })
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 

@@ -415,6 +415,9 @@ export const ksefApi = {
   reSuggest: () =>
     api.post<{ processed: number; suggested: number }>('/ksef/invoices/re-suggest').then(r => r.data),
 
+  learnClassify: () =>
+    api.post<{ total: number; classified: number; skipped: number; message: string }>('/ksef/invoices/learn-classify').then(r => r.data),
+
   fixDirections: () =>
     api.post<{ total: number; fixed: number; our_nip_masked: string }>('/ksef/invoices/fix-directions').then(r => r.data),
 

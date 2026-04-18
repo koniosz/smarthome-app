@@ -470,6 +470,93 @@ async function tryAutoSuggestProject(invoiceId: string, buyerName: string | null
 }
 
 /**
+ * Naucz się kategorii z historii — znajdź najczęstszą alokację od tego samego dostawcy (wg NIP)
+ * i jeśli jest spójna (>= 60% alokacji od tego dostawcy ma tę samą kategorię),
+ * automatycznie utwórz alokację dla nowej faktury.
+ *
+ * @returns true jeśli alokacja została utworzona, false jeśli brak wzorca
+ */
+export async function tryAutoClassifyFromHistory(
+  invoiceId: string,
+  sellerNip: string | null,
+  sellerName: string | null,
+  grossAmount: number,
+  invoiceDirection: string,
+): Promise<boolean> {
+  if (!sellerNip && !sellerName) return false
+
+  // Szukamy alokacji faktur od tego samego sprzedawcy (wg NIP, lub wg nazwy gdy NIP brak)
+  const pastInvoices = await prisma.ksefInvoice.findMany({
+    where: sellerNip
+      ? { seller_nip: sellerNip, id: { not: invoiceId } }
+      : { seller_name: { contains: (sellerName ?? '').slice(0, 30), mode: 'insensitive' }, id: { not: invoiceId } },
+    select: { id: true },
+    take: 50,
+  })
+
+  if (pastInvoices.length === 0) return false
+
+  const pastIds = pastInvoices.map(i => i.id)
+
+  // Pobierz wszystkie alokacje od tych faktur (z pominięciem project-type — te uczą o kategorii CFO)
+  const pastAllocs = await prisma.ksefInvoiceAllocation.findMany({
+    where: {
+      invoice_id: { in: pastIds },
+      // Bierzemy tylko alokacje wewnętrzne (koszt) lub revenue (przychód)
+      allocation_type: { in: ['internal', 'revenue'] },
+    },
+    select: { cost_category: true, subcategory: true, business_unit: true, allocation_type: true, amount: true },
+  })
+
+  if (pastAllocs.length === 0) return false
+
+  // Znajdź najczęstszy wzorzec (cost_category + subcategory + business_unit + allocation_type)
+  const freq: Record<string, { count: number; cost_category: string; subcategory: string; business_unit: string; allocation_type: string }> = {}
+  for (const a of pastAllocs) {
+    const key = `${a.allocation_type}|${a.cost_category ?? 'cogs'}|${a.subcategory ?? 'hardware'}|${a.business_unit ?? 'shc'}`
+    if (!freq[key]) freq[key] = { count: 0, cost_category: a.cost_category ?? 'cogs', subcategory: a.subcategory ?? 'hardware', business_unit: a.business_unit ?? 'shc', allocation_type: a.allocation_type ?? 'internal' }
+    freq[key].count++
+  }
+
+  const best = Object.values(freq).sort((a, b) => b.count - a.count)[0]
+  const confidence = best.count / pastAllocs.length
+
+  // Próg: 60% alokacji musi mieć ten sam wzorzec
+  if (confidence < 0.6) {
+    console.log(`[KSeF learn] ${sellerNip ?? sellerName}: wzorzec zbyt niejednorodny (confidence=${confidence.toFixed(2)}), pomijam`)
+    return false
+  }
+
+  // Upewnij się że ta faktura jeszcze nie ma alokacji tego typu
+  const existingAlloc = await prisma.ksefInvoiceAllocation.findFirst({
+    where: { invoice_id: invoiceId, allocation_type: { in: ['internal', 'revenue'] } },
+  })
+  if (existingAlloc) return false  // już sklasyfikowana
+
+  // Utwórz automatyczną alokację
+  await prisma.ksefInvoiceAllocation.create({
+    data: {
+      id:              uuidv4(),
+      invoice_id:      invoiceId,
+      project_id:      null,
+      amount:          grossAmount,
+      notes:           `Auto-klasyfikacja (wzorzec z ${best.count} wcześniejszych faktur, pewność: ${Math.round(confidence * 100)}%)`,
+      category:        best.cost_category === 'revenue' ? 'other' : 'other',
+      allocation_type: best.allocation_type,
+      cost_category:   best.cost_category,
+      subcategory:     best.subcategory,
+      business_unit:   best.business_unit,
+      is_paid:         false,
+      created_at:      new Date().toISOString(),
+      updated_at:      new Date().toISOString(),
+    },
+  })
+
+  console.log(`[KSeF learn] Auto-klasyfikacja: faktura ${invoiceId} od ${sellerNip ?? sellerName} → ${best.allocation_type}/${best.cost_category}/${best.subcategory}/${best.business_unit} (confidence=${confidence.toFixed(2)})`)
+  return true
+}
+
+/**
  * Główna funkcja synchronizacji — wywołana co 30 min przez cron
  */
 export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: number; saved: number; errors: string[] }> {
@@ -516,6 +603,15 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
         if (mapped.invoice_direction === 'outgoing') {
           await tryAutoSuggestProject(created.id, mapped.buyer_name, mapped.buyer_nip).catch(() => {})
         }
+        // Dla wszystkich faktur: spróbuj auto-klasyfikować na podstawie historii alokacji od tego dostawcy
+        await tryAutoClassifyFromHistory(
+          created.id,
+          mapped.seller_nip || null,
+          mapped.seller_name || null,
+          mapped.gross_amount,
+          mapped.invoice_direction,
+        ).catch(() => {})
+
         saved++
       } catch (err: any) {
         errors.push(`Faktura ${inv.ksefNumber ?? '?'}: ${err.message}`)
