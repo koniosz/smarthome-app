@@ -313,9 +313,15 @@ async function fetchInvoicesChunk(
 }
 
 /**
- * Pobierz faktury za cały okres — dzieli na chunki 89-dniowe
- * Subject1 = Podmiot1 = sprzedażowe
- * Subject2 = Podmiot2 = zakupowe
+ * Pobierz faktury za cały okres.
+ *
+ * Tryb inteligentny:
+ *  - Jeśli zakres <= 89 dni  → 1 request na subject type (2 requestów łącznie)
+ *  - Jeśli zakres > 89 dni   → chunki 89-dniowe z opóźnieniem 3s między nimi
+ *    (żeby nie przekroczyć limitu 20 req/h przy historycznych synchronizacjach)
+ *
+ * Subject1 = Podmiot1 = sprzedażowe (my jako sprzedawca)
+ * Subject2 = Podmiot2 = zakupowe   (my jako nabywca)
  */
 async function fetchInvoices(
   accessToken: string,
@@ -325,15 +331,30 @@ async function fetchInvoices(
 ): Promise<any[]> {
   const all: any[] = []
   const CHUNK_MS     = 89 * 24 * 60 * 60 * 1000
+  const totalMs      = dateTo.getTime() - dateFrom.getTime()
   const subjectTypes = ['Subject1', 'Subject2'] as const
   const seen         = new Set<string>()
 
+  // Jeśli zakres mieści się w jednym chunku (typowa codzienna sync) — bez chunków
+  const isShortRange = totalMs <= CHUNK_MS
+  if (isShortRange) {
+    console.log(`[KSeF] Krótki zakres (${Math.round(totalMs / 86400000)}d) — 1 request na subject type`)
+  }
+
   for (const subjectType of subjectTypes) {
     let chunkStart = new Date(dateFrom)
+    let chunkIndex = 0
+
     while (chunkStart < dateTo) {
-      const chunkEnd  = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
-      const fromStr   = chunkStart.toISOString().split('T')[0]
-      const toStr     = chunkEnd.toISOString().split('T')[0]
+      const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
+      const fromStr  = chunkStart.toISOString().split('T')[0]
+      const toStr    = chunkEnd.toISOString().split('T')[0]
+
+      // Opóźnienie 3s między chunkiami (nie dotyczy pierwszego i krótkich zakresów)
+      if (!isShortRange && chunkIndex > 0) {
+        await new Promise(r => setTimeout(r, 3000))
+      }
+
       try {
         const chunk = await fetchInvoicesChunk(accessToken, chunkStart, chunkEnd, subjectType)
         for (const inv of chunk) {
@@ -344,8 +365,15 @@ async function fetchInvoices(
         const msg = `${subjectType} ${fromStr}–${toStr}: ${axiosError(err)}`
         console.warn('[KSeF] Chunk error:', msg)
         errors.push(msg)
+        // Jeśli 429 — przerwij chunki dla tego subject type (nie ma sensu dalej próbować)
+        if (axiosError(err).includes('429')) {
+          console.warn(`[KSeF] 429 rate limit dla ${subjectType} — przerywam chunki`)
+          break
+        }
       }
+
       chunkStart = new Date(chunkEnd.getTime() + 24 * 60 * 60 * 1000)
+      chunkIndex++
     }
   }
 

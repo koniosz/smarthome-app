@@ -181,20 +181,22 @@ setTimeout(async () => {
 }, 3 * 60 * 1000)
 console.log('[Płatności] Dzienna wysyłka przypomnień włączona')
 
-// ── KSeF — automatyczna synchronizacja co 30 minut ───────────────────────────
+// ── KSeF — automatyczna synchronizacja 3x dziennie (co 8 godzin) ────────────
+// KSeF API limit: 20 requestów/godzinę. Pełna sync robi ~2 req (krótki zakres)
+// lub ~14+ req (historyczna). 3x/dzień = bezpieczny margines.
 if (process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
-  const KSEF_INTERVAL = 30 * 60 * 1000 // 30 minut
-  // Pierwsze uruchomienie po 2 minutach od startu (żeby serwer zdążył się postawić)
+  const KSEF_INTERVAL = 8 * 60 * 60 * 1000 // 8 godzin (3x dziennie)
+  // Pierwsze uruchomienie po 3 minutach od startu
   setTimeout(async () => {
     console.log('[KSeF] Pierwsze uruchomienie synchronizacji...')
     try { await syncInvoices() } catch (e: any) { console.error('[KSeF] Błąd:', e.message) }
-    // Następnie co 30 minut
+    // Następnie co 8 godzin
     setInterval(async () => {
-      console.log('[KSeF] Automatyczna synchronizacja...')
+      console.log('[KSeF] Automatyczna synchronizacja (8h)...')
       try { await syncInvoices() } catch (e: any) { console.error('[KSeF] Błąd:', e.message) }
     }, KSEF_INTERVAL)
-  }, 2 * 60 * 1000)
-  console.log('[KSeF] Automatyczna synchronizacja co 30 minut włączona')
+  }, 3 * 60 * 1000)
+  console.log('[KSeF] Automatyczna synchronizacja 3x dziennie (co 8h) włączona')
 } else {
   console.log('[KSeF] Brak konfiguracji (KSEF_NIP/KSEF_TOKEN) — synchronizacja wyłączona')
 }
