@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ExtraCost, ExtraCostStatus } from '../../types'
 import { EXTRA_COST_STATUS_LABELS, EXTRA_COST_STATUS_COLORS } from '../../types'
-import { extraCostsApi } from '../../api/client'
+import { extraCostsApi, costsApi } from '../../api/client'
+
+const MOVE_TO_COST_CATS = [
+  { value: 'materials',     label: '📦 Materiały' },
+  { value: 'subcontractor', label: '👷 Podwykonawca' },
+  { value: 'other',         label: '📋 Inne' },
+]
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -503,13 +509,15 @@ function SendToClientModal({
 }
 
 // ─── Main ExtraCostsTab ────────────────────────────────────────────────────────
-export default function ExtraCostsTab({ projectId, projectName, clientContact }: { projectId: string; projectName: string; clientContact?: string }) {
+export default function ExtraCostsTab({ projectId, projectName, clientContact, onMovedToRegularCost }: { projectId: string; projectName: string; clientContact?: string; onMovedToRegularCost?: (tab: 'materials' | 'subcontractor' | 'other') => void }) {
   const [items, setItems] = useState<ExtraCost[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<ExtraCostStatus | 'all'>('all')
   const [showAdd, setShowAdd] = useState(false)
   const [editingItem, setEditingItem] = useState<ExtraCost | null>(null)
   const [showSend, setShowSend] = useState(false)
+  const [movingId, setMovingId]         = useState<string | null>(null)
+  const [movingSaving, setMovingSaving] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -567,6 +575,28 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact }:
     setItems(prev => prev.map(i =>
       ids.includes(i.id) ? { ...i, status: 'sent' as ExtraCostStatus, sent_at: sentAt } : i,
     ))
+  }
+
+  const handleMoveToRegular = async (item: ExtraCost, category: string) => {
+    if (!category) { setMovingId(null); return }
+    setMovingSaving(true)
+    try {
+      await costsApi.create(projectId, {
+        category: category as import('../../types').CostCategory,
+        description: item.description + (item.notes ? ` (${item.notes})` : ''),
+        quantity:    item.quantity,
+        unit_price:  item.unit_price,
+        date:        item.date,
+      })
+      await extraCostsApi.delete(item.id)
+      setItems(prev => prev.filter(i => i.id !== item.id))
+      onMovedToRegularCost?.(category as 'materials' | 'subcontractor' | 'other')
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? 'Błąd przenoszenia kosztu')
+    } finally {
+      setMovingId(null)
+      setMovingSaving(false)
+    }
   }
 
   return (
@@ -690,7 +720,29 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact }:
                     </select>
                   </td>
                   <td className="px-2 py-2">
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity items-center">
+                      {/* Move to regular cost category */}
+                      {movingId === item.id ? (
+                        <select
+                          autoFocus
+                          disabled={movingSaving}
+                          defaultValue=""
+                          onChange={e => handleMoveToRegular(item, e.target.value)}
+                          onBlur={() => setMovingId(null)}
+                          className="text-xs px-1 py-0.5 border border-amber-300 dark:border-amber-700 rounded bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none"
+                        >
+                          <option value="" disabled>↗ Przenieś do…</option>
+                          {MOVE_TO_COST_CATS.map(c => (
+                            <option key={c.value} value={c.value}>{c.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => setMovingId(item.id)}
+                          className="text-xs text-gray-400 hover:text-amber-600 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700"
+                          title="Przenieś do Materiały / Podwykonawca / Inne"
+                        >⇆</button>
+                      )}
                       <button
                         onClick={() => setEditingItem(item)}
                         className="text-xs text-gray-400 hover:text-violet-600 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700"

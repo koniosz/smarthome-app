@@ -822,6 +822,7 @@ export default function ProjectDetail() {
             projectId={project.id}
             projectName={project.name}
             clientContact={project.client_contact}
+            onMovedToRegularCost={(category) => { load(); setTab(category) }}
           />
         )}
         {tab === 'documents' && (
@@ -856,6 +857,7 @@ export default function ProjectDetail() {
             projectId={project.id}
             onDeleted={(itemId) => setProject(p => p ? { ...p, cost_items: p.cost_items.filter(i => i.id !== itemId) } : p)}
             onUpdated={(updated) => setProject(p => p ? { ...p, cost_items: p.cost_items.map(i => i.id === updated.id ? updated : i) } : p)}
+            onMovedToExtraCosts={() => setTab('extra_costs')}
           />
         )}
       </div>

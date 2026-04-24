@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { CostItem } from '../../types'
 import { COST_CATEGORY_LABELS } from '../../types'
-import { costsApi, attachmentsApi } from '../../api/client'
+import { costsApi, attachmentsApi, extraCostsApi } from '../../api/client'
 import AddCostModal from './AddCostModal'
 
 function fmt(n: number) {
@@ -13,6 +13,7 @@ interface Props {
   projectId: string
   onDeleted: (id: string) => void
   onUpdated?: (item: CostItem) => void
+  onMovedToExtraCosts?: () => void  // called after successful move to Koszty dodatkowe
 }
 
 const CAT_COLORS: Record<string, string> = {
@@ -28,6 +29,14 @@ const CAT_LABELS: Record<string, string> = {
   other: 'Inne',
   ksef_invoice: '📋 KSeF',
 }
+
+// Available move targets
+const ALL_CATEGORIES = [
+  { value: 'materials',     label: '📦 Materiały' },
+  { value: 'subcontractor', label: '👷 Podwykonawca' },
+  { value: 'other',         label: '📋 Inne' },
+  { value: '_extra_costs',  label: '➕ Koszty dodatkowe' },  // special: moves to extra_costs table
+]
 
 function AttachmentCell({ item, onUpdated }: { item: CostItem; onUpdated?: (i: CostItem) => void }) {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -146,9 +155,11 @@ function AttachmentCell({ item, onUpdated }: { item: CostItem; onUpdated?: (i: C
   )
 }
 
-export default function CostTable({ items, projectId, onDeleted, onUpdated }: Props) {
+export default function CostTable({ items, projectId, onDeleted, onUpdated, onMovedToExtraCosts }: Props) {
   const [localItems, setLocalItems] = useState<CostItem[]>(items)
-  const [editingItem, setEditingItem] = useState<CostItem | null>(null)
+  const [editingItem, setEditingItem]   = useState<CostItem | null>(null)
+  const [movingId, setMovingId]         = useState<string | null>(null)
+  const [movingSaving, setMovingSaving] = useState(false)
 
   // Sync when parent adds new items
   const ids = items.map(i => i.id).join(',')
@@ -167,6 +178,37 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated }: Pr
   const handleUpdated = (updated: CostItem) => {
     setLocalItems(prev => prev.map(i => i.id === updated.id ? updated : i))
     onUpdated?.(updated)
+  }
+
+  const handleMove = async (item: CostItem, newCategory: string) => {
+    if (!newCategory || newCategory === item.category) { setMovingId(null); return }
+    setMovingSaving(true)
+    try {
+      if (newCategory === '_extra_costs') {
+        // Convert CostItem → ExtraCost (different table)
+        await extraCostsApi.create(projectId, {
+          description: item.description,
+          quantity:    item.quantity,
+          unit_price:  item.unit_price,
+          date:        item.date,
+          notes:       item.supplier ? `Dostawca: ${item.supplier}${item.invoice_number ? ` · ${item.invoice_number}` : ''}` : '',
+        })
+        await costsApi.delete(item.id)
+        setLocalItems(prev => prev.filter(i => i.id !== item.id))
+        onDeleted(item.id)
+        onMovedToExtraCosts?.()
+      } else {
+        const updated = await costsApi.update(item.id, { category: newCategory as import('../../types').CostCategory })
+        // Remove from this tab's list — it now belongs to another tab
+        setLocalItems(prev => prev.filter(i => i.id !== item.id))
+        onUpdated?.(updated)
+      }
+    } catch (e: any) {
+      alert(e.response?.data?.error ?? 'Błąd przenoszenia kosztu')
+    } finally {
+      setMovingId(null)
+      setMovingSaving(false)
+    }
   }
 
   if (localItems.length === 0) {
@@ -225,6 +267,37 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated }: Pr
               </td>
               <td className="py-2">
                 <div className="flex items-center gap-1">
+                  {/* Move to category — inline select appears on click */}
+                  {item.category !== 'ksef_invoice' && (
+                    movingId === item.id ? (
+                      <div className="flex items-center gap-1">
+                        <select
+                          autoFocus
+                          disabled={movingSaving}
+                          defaultValue={item.category}
+                          onChange={e => handleMove(item, e.target.value)}
+                          onBlur={() => setMovingId(null)}
+                          className="text-xs px-1.5 py-1 border border-amber-300 dark:border-amber-700 rounded-lg bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        >
+                          {ALL_CATEGORIES.map(c => (
+                            <option key={c.value} value={c.value}>{c.label}</option>
+                          ))}
+                        </select>
+                        {movingSaving && <span className="text-xs text-gray-400">⏳</span>}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setMovingId(item.id)}
+                        className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20 rounded transition-colors"
+                        title="Przenieś do innej kategorii"
+                      >
+                        {/* arrows icon */}
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M8 5a1 1 0 000 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z" />
+                        </svg>
+                      </button>
+                    )
+                  )}
                   {item.category !== 'ksef_invoice' && (
                     <button
                       onClick={() => setEditingItem(item)}

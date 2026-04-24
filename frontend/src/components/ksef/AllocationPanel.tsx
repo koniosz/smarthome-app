@@ -474,8 +474,8 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
           </div>
           )}
 
-          {/* Wiersz 2: Kwota + Kategoria */}
-          <div className={isOutgoing ? '' : 'grid grid-cols-2 gap-2'}>
+          {/* Wiersz 2: Kwota + Typ kosztu w projekcie */}
+          <div className={(!isOutgoing && newAllocType === 'project') ? 'grid grid-cols-2 gap-2' : ''}>
             <div>
               <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Kwota ({invoice.currency})</label>
               <input
@@ -488,9 +488,9 @@ export default function AllocationPanel({ invoice, isAdmin = false }: Allocation
                 placeholder={remaining > 0 ? fmt(remaining) : '0.00'}
               />
             </div>
-            {!isOutgoing && (
+            {!isOutgoing && newAllocType === 'project' && (
             <div>
-              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Kategoria kosztu</label>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Typ kosztu w projekcie</label>
               <CategorySelect value={newCategory} onChange={setNewCategory} className="w-full" />
             </div>
             )}
@@ -580,10 +580,12 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
   const [subcat, setSubcat]         = useState(alloc.subcategory || 'hardware')
   const [bu, setBU]                 = useState(alloc.business_unit || 'shc')
 
+  const isProjectAlloc = alloc.allocation_type === 'project'
+
   if (isEditing) {
     return (
       <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-2 space-y-1.5">
-        <div className="grid grid-cols-2 gap-2">
+        <div className={isProjectAlloc ? 'grid grid-cols-2 gap-2' : ''}>
           <div>
             <label className="block text-xs text-gray-400 mb-0.5">Kwota ({currency})</label>
             <input
@@ -594,10 +596,12 @@ function AllocationRow({ alloc, currency, isEditing, onEdit, onCancel, onSave, o
               onChange={e => setAmount(e.target.value)}
             />
           </div>
+          {isProjectAlloc && (
           <div>
-            <label className="block text-xs text-gray-400 mb-0.5">Kat. projektu</label>
+            <label className="block text-xs text-gray-400 mb-0.5">Typ w projekcie</label>
             <CategorySelect value={category} onChange={setCategory} className="w-full" />
           </div>
+          )}
         </div>
         <div>
           <label className="block text-xs text-gray-400 mb-0.5">Notatka</label>
