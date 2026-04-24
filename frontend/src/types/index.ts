@@ -420,6 +420,23 @@ export interface PnLCategoryData {
   by_bu: Record<string, number>
 }
 
+export interface ManualCost {
+  id:            string
+  date:          string
+  description:   string
+  amount:        number
+  currency:      string
+  cost_category: string
+  subcategory:   string
+  business_unit: string
+  period?:       string | null
+  notes:         string
+  reference:     string
+  source:        'manual' | 'mt940'
+  created_at:    string
+  created_by:    string
+}
+
 export interface PnLReport {
   period: { from: string | null; to: string | null }
   business_unit: string

@@ -394,6 +394,12 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                     >
                       📊 P&amp;L / EBITDA
                     </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/inne-koszty') }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+                    >
+                      📋 Inne koszty (pensje, ZUS, podatki)
+                    </button>
                   </>
                 )}
                 <button

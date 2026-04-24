@@ -24,6 +24,7 @@ import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
 import ksefRouter from './routes/ksef'
+import manualCostsRouter from './routes/manual-costs'
 import bankRouter, { updateKsefPayment, p24WebhookHandler } from './routes/bank'
 import settingsRouter from './routes/settings'
 import projectDocumentsRouter from './routes/project-documents'
@@ -101,6 +102,9 @@ app.use('/api/notifications', notificationsRouter)
 
 // KSeF — Krajowy System e-Faktur (admin only)
 app.use('/api/ksef', ksefRouter)
+
+// Inne koszty — pensje, ZUS, podatki, import MT940
+app.use('/api/manual-costs', manualCostsRouter)
 
 // Bank payment verification
 app.use('/api/bank', bankRouter)

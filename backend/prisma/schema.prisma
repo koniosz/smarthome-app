@@ -435,3 +435,23 @@ model SmtpSettings {
 
   @@map("smtp_settings")
 }
+
+// ─── Manual Costs (pensje, ZUS, podatki, faktury zagraniczne) ─────────────────
+model ManualCost {
+  id            String  @id
+  date          String                      // YYYY-MM-DD
+  description   String
+  amount        Float
+  currency      String  @default("PLN")
+  cost_category String  @default("ga")
+  subcategory   String  @default("salary_gross")
+  business_unit String  @default("shared")
+  period        String?                     // YYYY-MM (dla pensji/ZUS)
+  notes         String  @default("")
+  reference     String  @default("")        // referencja bankowa / numer dok.
+  source        String  @default("manual")  // manual | mt940
+  created_at    String
+  created_by    String  @default("")
+
+  @@map("manual_costs")
+}

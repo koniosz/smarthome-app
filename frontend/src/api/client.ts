@@ -32,6 +32,25 @@ api.interceptors.response.use(
   }
 )
 
+export const manualCostsApi = {
+  list: (params?: { dateFrom?: string; dateTo?: string; cost_category?: string; source?: string }) =>
+    api.get<import('../types').ManualCost[]>('/manual-costs', { params }).then(r => r.data),
+  create: (data: Partial<import('../types').ManualCost>) =>
+    api.post<import('../types').ManualCost>('/manual-costs', data).then(r => r.data),
+  update: (id: string, data: Partial<import('../types').ManualCost>) =>
+    api.put<import('../types').ManualCost>(`/manual-costs/${id}`, data).then(r => r.data),
+  remove: (id: string) =>
+    api.delete(`/manual-costs/${id}`).then(r => r.data),
+  importMt940: (content: string) =>
+    api.post<{ total_parsed: number; outgoing: number; saved: number; message: string; costs: import('../types').ManualCost[] }>(
+      '/manual-costs/import-mt940', { content }
+    ).then(r => r.data),
+  summary: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string }) =>
+    api.get<{ grouped: Record<string, { total: number; subcategories: Record<string, number> }>; total: number; count: number }>(
+      '/manual-costs/summary', { params }
+    ).then(r => r.data),
+}
+
 export const dashboardApi = {
   get: () => api.get<DashboardStats>('/dashboard').then(r => r.data),
 }

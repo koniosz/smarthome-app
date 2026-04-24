@@ -12,6 +12,7 @@ import AiExamplesPage from './pages/AiExamplesPage'
 import KsefPage from './pages/KsefPage'
 import SharedInvoicesPage from './pages/SharedInvoicesPage'
 import FinansePage from './pages/FinansePage'
+import ManualCostsPage from './pages/ManualCostsPage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
@@ -81,6 +82,9 @@ function AppContent() {
             } />
             <Route path="/finanse" element={
               <AdminRoute><FinansePage /></AdminRoute>
+            } />
+            <Route path="/inne-koszty" element={
+              <AdminRoute><ManualCostsPage /></AdminRoute>
             } />
             <Route path="/faktury" element={<SharedInvoicesPage />} />
           </Routes>
