@@ -29,7 +29,7 @@ import bankRouter, { updateKsefPayment, p24WebhookHandler } from './routes/bank'
 import settingsRouter from './routes/settings'
 import projectDocumentsRouter from './routes/project-documents'
 import { syncInvoices } from './services/ksef'
-import { sendDueInvoicesEmail } from './services/mailer'
+import { sendDueInvoicesEmail, sendEmployeeExpiryReminderEmail, type EmployeeExpiryItem } from './services/mailer'
 import { PrismaClient } from '@prisma/client'
 import { requireAuth } from './middleware/auth'
 
@@ -200,6 +200,70 @@ if (process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
 } else {
   console.log('[KSeF] Brak konfiguracji (KSEF_NIP/KSEF_TOKEN) — synchronizacja wyłączona')
 }
+
+// ── Codzienny raport wygasających badań lekarskich i BHP ────────────────────
+const EXPIRY_REMINDER_EMAIL = 'biuro@smarthomecenter.pl'
+const EXPIRY_WARN_DAYS = 30   // ostrzeżenie 30 dni przed terminem
+
+async function sendEmployeeExpiryReminders() {
+  try {
+    const employees = await _prismaIndex.employee.findMany({
+      where: {
+        OR: [
+          { medical_exam_date: { not: null } },
+          { bhp_date:          { not: null } },
+        ],
+      },
+      select: { id: true, name: true, medical_exam_date: true, bhp_date: true },
+    })
+
+    const today   = new Date()
+    today.setHours(0, 0, 0, 0)
+    const warnCutoff = new Date(today)
+    warnCutoff.setDate(warnCutoff.getDate() + EXPIRY_WARN_DAYS)
+
+    const items: EmployeeExpiryItem[] = []
+
+    for (const emp of employees) {
+      for (const [field, type] of [
+        [emp.medical_exam_date, 'medical'],
+        [emp.bhp_date,          'bhp'],
+      ] as [string | null, 'medical' | 'bhp'][]) {
+        if (!field) continue
+        const expiry = new Date(field)
+        expiry.setHours(0, 0, 0, 0)
+        if (expiry <= warnCutoff) {
+          const daysLeft = Math.round((expiry.getTime() - today.getTime()) / 86_400_000)
+          items.push({
+            name:       emp.name,
+            type,
+            expiryDate: expiry.toLocaleDateString('pl-PL'),
+            daysLeft,
+          })
+        }
+      }
+    }
+
+    if (items.length === 0) {
+      console.log('[HR] Brak badań wygasających w ciągu 30 dni.')
+      return
+    }
+
+    // Sort: most urgent first
+    items.sort((a, b) => a.daysLeft - b.daysLeft)
+    await sendEmployeeExpiryReminderEmail(items, EXPIRY_REMINDER_EMAIL)
+    console.log(`[HR] Wysłano przypomnienie o ${items.length} wygasających badaniach → ${EXPIRY_REMINDER_EMAIL}`)
+  } catch (e: any) {
+    console.error('[HR] Błąd wysyłki przypomnień o badaniach:', e.message)
+  }
+}
+
+// Uruchom raz po 5 minutach od startu, potem co 24 godziny (ok. 06:00 każdego dnia)
+setTimeout(async () => {
+  await sendEmployeeExpiryReminders()
+  setInterval(sendEmployeeExpiryReminders, 24 * 60 * 60 * 1000)
+}, 5 * 60 * 1000)
+console.log('[HR] Codzienny raport wygasających badań włączony (biuro@smarthomecenter.pl)')
 
 // Zwiększ timeout dla długich zapytań AI (rzuty, cenniki)
 // Render free ma 30s timeout w proxy — to nie obejdzie limitu Render,

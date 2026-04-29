@@ -331,3 +331,114 @@ export function rejectionFormHtml(projectName: string, total: number, postUrl: s
 </body>
 </html>`
 }
+
+// ─── Przypomnienia o wygasających badaniach lekarskich i BHP ─────────────────
+
+export interface EmployeeExpiryItem {
+  name: string
+  type: 'medical' | 'bhp'
+  expiryDate: string
+  daysLeft: number
+}
+
+export async function sendEmployeeExpiryReminderEmail(
+  items: EmployeeExpiryItem[],
+  toEmail: string,
+): Promise<void> {
+  const { transport, from: cfgFrom, fromName: cfgFromName } = await buildTransport()
+  const dateStr = new Date().toLocaleDateString('pl-PL', { day: '2-digit', month: 'long', year: 'numeric' })
+
+  const typeLabel = (t: 'medical' | 'bhp') =>
+    t === 'medical' ? '🩺 Badania lekarskie' : '🦺 Szkolenie BHP'
+
+  const urgencyColor = (d: number) =>
+    d <= 7 ? '#dc2626' : d <= 14 ? '#d97706' : '#ca8a04'
+
+  const urgencyBg = (d: number) =>
+    d <= 7 ? '#fef2f2' : d <= 14 ? '#fffbeb' : '#fefce8'
+
+  const rows = items.map(it => `
+    <tr style="border-bottom:1px solid #f0f0f0;">
+      <td style="padding:10px 14px;font-size:14px;color:#111827;font-weight:500">${it.name}</td>
+      <td style="padding:10px 14px;font-size:13px;color:#374151">${typeLabel(it.type)}</td>
+      <td style="padding:10px 14px;font-size:13px;color:#374151;text-align:center">${it.expiryDate}</td>
+      <td style="padding:10px 14px;text-align:center">
+        <span style="display:inline-block;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;color:${urgencyColor(it.daysLeft)};background:${urgencyBg(it.daysLeft)}">
+          ${it.daysLeft <= 0 ? '❌ Wygasło!' : `⏳ ${it.daysLeft} dni`}
+        </span>
+      </td>
+    </tr>
+  `).join('')
+
+  const html = `<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Przypomnienie — badania pracownicze</title>
+</head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:'Segoe UI',Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 16px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);max-width:600px;width:100%">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#0f766e,#134e4a);padding:28px 36px">
+            <p style="margin:0;color:#99f6e4;font-size:12px;letter-spacing:.08em;text-transform:uppercase">HR · Bezpieczeństwo pracy</p>
+            <h1 style="margin:6px 0 0;color:#fff;font-size:22px;font-weight:700">⚠️ Wygasające badania pracownicze</h1>
+            <p style="margin:6px 0 0;color:#ccfbf1;font-size:13px">${dateStr}</p>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:28px 36px">
+            <p style="margin:0 0 20px;color:#374151;font-size:14px;line-height:1.6">
+              Poniżsi pracownicy mają badania lekarskie lub szkolenia BHP, których termin ważności upływa w ciągu <strong>30 dni</strong>. Prosimy o niezwłoczne umówienie wizyt / szkoleń.
+            </p>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">
+              <thead>
+                <tr style="background:#f0fdf4">
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;color:#166534;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Pracownik</th>
+                  <th style="padding:10px 14px;text-align:left;font-size:11px;color:#166534;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Rodzaj badania</th>
+                  <th style="padding:10px 14px;text-align:center;font-size:11px;color:#166534;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Data ważności</th>
+                  <th style="padding:10px 14px;text-align:center;font-size:11px;color:#166534;font-weight:700;text-transform:uppercase;letter-spacing:.05em">Pozostało</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+
+            <div style="margin-top:24px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px">
+              <p style="margin:0;font-size:13px;color:#166534;line-height:1.5">
+                💡 <strong>Pamiętaj:</strong> Pracownik bez aktualnych badań nie może wykonywać pracy. Skontaktuj się z lekarzem medycyny pracy lub centrum szkoleniowym BHP jak najszybciej.
+              </p>
+            </div>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f9fafb;padding:16px 36px;border-top:1px solid #e5e7eb">
+            <p style="margin:0;font-size:11px;color:#9ca3af;text-align:center">
+              Wiadomość wygenerowana automatycznie przez ${cfgFromName}. Prosimy nie odpowiadać.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+  const count = items.length
+  const label = count === 1 ? 'pracownik wymaga' : count < 5 ? 'pracowników wymaga' : 'pracowników wymaga'
+  await transport.sendMail({
+    from: `"${cfgFromName}" <${cfgFrom}>`,
+    to: toEmail,
+    subject: `⚠️ [HR] ${count} ${label} odnowienia badań — ${dateStr}`,
+    html,
+  })
+}
