@@ -138,8 +138,10 @@ export interface Employee {
   notes: string
   created_at: string
   updated_at: string
-  medical_exam_date?: string | null
-  bhp_date?: string | null
+  medical_exam_last_date?: string | null  // data ostatnich badań lekarskich
+  medical_exam_date?: string | null       // data następnych badań / ważność
+  bhp_last_date?: string | null           // data ostatniego szkolenia BHP
+  bhp_date?: string | null                // data następnych badań BHP / ważność
 }
 
 export interface EmployeeAsset {

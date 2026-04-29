@@ -89,7 +89,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { name, hourly_rate, employment_type, position, email, phone, address, start_date, end_date, notes, medical_exam_date, bhp_date } = req.body
+    const { name, hourly_rate, employment_type, position, email, phone, address, start_date, end_date, notes, medical_exam_last_date, medical_exam_date, bhp_last_date, bhp_date } = req.body
     if (!name?.trim()) { res.status(400).json({ error: 'Imię i nazwisko jest wymagane' }); return }
     const employee = {
       id: uuidv4(), name: name.trim(),
@@ -98,7 +98,9 @@ router.post('/', async (req: Request, res: Response) => {
       position: position || '', email: email || '', phone: phone || '',
       address: address || '', start_date: start_date || null, end_date: end_date || null,
       notes: notes || '',
+      medical_exam_last_date: medical_exam_last_date || null,
       medical_exam_date: medical_exam_date || null,
+      bhp_last_date: bhp_last_date || null,
       bhp_date: bhp_date || null,
       created_at: now(), updated_at: now(),
     }
@@ -111,7 +113,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     const existing = await db.employees.find(req.params.id)
     if (!existing) { res.status(404).json({ error: 'Nie znaleziono' }); return }
-    const { name, hourly_rate, employment_type, position, email, phone, address, start_date, end_date, notes, medical_exam_date, bhp_date } = req.body
+    const { name, hourly_rate, employment_type, position, email, phone, address, start_date, end_date, notes, medical_exam_last_date, medical_exam_date, bhp_last_date, bhp_date } = req.body
     await db.employees.update(req.params.id, {
       ...(name !== undefined && { name: name.trim() }),
       ...(hourly_rate !== undefined && { hourly_rate: Number(hourly_rate) || 0 }),
@@ -123,7 +125,9 @@ router.put('/:id', async (req: Request, res: Response) => {
       ...(start_date !== undefined && { start_date: start_date || null }),
       ...(end_date !== undefined && { end_date: end_date || null }),
       ...(notes !== undefined && { notes }),
+      ...(medical_exam_last_date !== undefined && { medical_exam_last_date: medical_exam_last_date || null }),
       ...(medical_exam_date !== undefined && { medical_exam_date: medical_exam_date || null }),
+      ...(bhp_last_date !== undefined && { bhp_last_date: bhp_last_date || null }),
       ...(bhp_date !== undefined && { bhp_date: bhp_date || null }),
       updated_at: now(),
     })

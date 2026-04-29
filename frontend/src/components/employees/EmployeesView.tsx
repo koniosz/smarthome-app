@@ -60,7 +60,9 @@ function EmployeeFormModal({ initial, onClose, onSaved }: {
     start_date: initial?.start_date ?? '',
     end_date: initial?.end_date ?? '',
     notes: initial?.notes ?? '',
+    medical_exam_last_date: initial?.medical_exam_last_date ?? '',
     medical_exam_date: initial?.medical_exam_date ?? '',
+    bhp_last_date: initial?.bhp_last_date ?? '',
     bhp_date: initial?.bhp_date ?? '',
   })
   const [saving, setSaving] = useState(false)
@@ -135,12 +137,28 @@ function EmployeeFormModal({ initial, onClose, onSaved }: {
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data zakończenia</label>
               <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.end_date ?? ''} onChange={e => set('end_date', e.target.value)} />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Ważność badań okresowych</label>
-              <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.medical_exam_date ?? ''} onChange={e => set('medical_exam_date', e.target.value)} />
+            {/* Separator */}
+            <div className="col-span-2 pt-1">
+              <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide border-t border-gray-100 dark:border-gray-800 pt-3">🩺 Badania medycyny pracy</div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Ważność szkolenia BHP</label>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data ostatnich badań</label>
+              <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.medical_exam_last_date ?? ''} onChange={e => set('medical_exam_last_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data następnych badań (ważność)</label>
+              <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.medical_exam_date ?? ''} onChange={e => set('medical_exam_date', e.target.value)} />
+            </div>
+            {/* BHP */}
+            <div className="col-span-2 pt-1">
+              <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide border-t border-gray-100 dark:border-gray-800 pt-3">🦺 Szkolenie BHP</div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data ostatniego szkolenia</label>
+              <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.bhp_last_date ?? ''} onChange={e => set('bhp_last_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data następnego szkolenia (ważność)</label>
               <input type="date" className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" value={form.bhp_date ?? ''} onChange={e => set('bhp_date', e.target.value)} />
             </div>
             <div className="col-span-2">
@@ -460,25 +478,63 @@ function EmployeeDetailPanel({ employee, onClose, onUpdated, onDeleted }: {
                   </div>
                 ) : null)}
               </div>
-              {(detail.medical_exam_date || detail.bhp_date) && (
-                <div className="space-y-2">
-                  {([
-                    { field: detail.medical_exam_date, label: '🩺 Badania okresowe' },
-                    { field: detail.bhp_date, label: '🦺 Szkolenie BHP' },
-                  ] as { field: string | null | undefined; label: string }[]).map(({ field, label }) => {
-                    if (!field) return null
-                    const s = expiryStatus(field)
-                    return (
-                      <div key={label} className={`flex items-center justify-between px-4 py-3 rounded-xl border text-sm ${s === 'expired' ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800' : s === 'soon' ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-700'}`}>
-                        <span className="font-medium text-gray-700 dark:text-gray-200">{label}</span>
-                        <span className={`text-xs font-semibold ${s === 'expired' ? 'text-red-600 dark:text-red-400' : s === 'soon' ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}`}>
-                          {fmtDate(field)} {s === 'expired' ? '❌' : s === 'soon' ? '⚠️' : '✅'}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+              {/* Badania medycyny pracy */}
+              {(detail.medical_exam_last_date || detail.medical_exam_date) && (() => {
+                const s = expiryStatus(detail.medical_exam_date)
+                return (
+                  <div className={`rounded-xl border px-4 py-3 space-y-2 ${s === 'expired' ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800' : s === 'soon' ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-700'}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">🩺 Badania medycyny pracy</span>
+                      {s === 'expired' && <span className="text-xs font-bold text-red-600 dark:text-red-400">❌ Wygasłe!</span>}
+                      {s === 'soon'    && <span className="text-xs font-bold text-amber-600 dark:text-amber-400">⚠️ Wygasa wkrótce</span>}
+                      {s === 'ok'      && <span className="text-xs font-bold text-green-600 dark:text-green-400">✅ Ważne</span>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {detail.medical_exam_last_date && (
+                        <div>
+                          <div className="text-xs text-gray-400 mb-0.5">Data ostatnich badań</div>
+                          <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{fmtDate(detail.medical_exam_last_date)}</div>
+                        </div>
+                      )}
+                      {detail.medical_exam_date && (
+                        <div>
+                          <div className="text-xs text-gray-400 mb-0.5">Data następnych badań</div>
+                          <div className={`text-sm font-semibold ${s === 'expired' ? 'text-red-600 dark:text-red-400' : s === 'soon' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-700 dark:text-gray-300'}`}>{fmtDate(detail.medical_exam_date)}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Szkolenie BHP */}
+              {(detail.bhp_last_date || detail.bhp_date) && (() => {
+                const s = expiryStatus(detail.bhp_date)
+                return (
+                  <div className={`rounded-xl border px-4 py-3 space-y-2 ${s === 'expired' ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800' : s === 'soon' ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-100 dark:border-gray-700'}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">🦺 Szkolenie BHP</span>
+                      {s === 'expired' && <span className="text-xs font-bold text-red-600 dark:text-red-400">❌ Wygasłe!</span>}
+                      {s === 'soon'    && <span className="text-xs font-bold text-amber-600 dark:text-amber-400">⚠️ Wygasa wkrótce</span>}
+                      {s === 'ok'      && <span className="text-xs font-bold text-green-600 dark:text-green-400">✅ Ważne</span>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {detail.bhp_last_date && (
+                        <div>
+                          <div className="text-xs text-gray-400 mb-0.5">Data ostatniego szkolenia</div>
+                          <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{fmtDate(detail.bhp_last_date)}</div>
+                        </div>
+                      )}
+                      {detail.bhp_date && (
+                        <div>
+                          <div className="text-xs text-gray-400 mb-0.5">Data następnego szkolenia</div>
+                          <div className={`text-sm font-semibold ${s === 'expired' ? 'text-red-600 dark:text-red-400' : s === 'soon' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-700 dark:text-gray-300'}`}>{fmtDate(detail.bhp_date)}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
               {detail.notes && (
                 <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900 rounded-xl p-4">
                   <div className="text-xs text-amber-600 font-medium mb-1">📝 Notatki</div>
@@ -618,7 +674,7 @@ export default function EmployeesView() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-5">
+    <div className="p-6 max-w-screen-xl mx-auto space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100">Pracownicy</h1>
@@ -633,51 +689,116 @@ export default function EmployeesView() {
         ) : employees.length === 0 ? (
           <div className="text-sm text-gray-400 py-10 text-center">Brak pracowników. Dodaj pierwszego pracownika.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[900px]">
             <thead>
               <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                <th className="text-left px-5 py-3">Imię i nazwisko</th>
-                <th className="text-left px-4 py-3">Stanowisko</th>
-                <th className="text-left px-4 py-3">Forma</th>
-                <th className="text-left px-4 py-3">Kontakt</th>
-                <th className="text-right px-5 py-3">Stawka</th>
+                <th className="text-left px-5 py-3">Pracownik</th>
+                <th className="text-left px-4 py-3">Email</th>
+                <th className="text-left px-4 py-3">Telefon</th>
+                <th className="text-left px-4 py-3">Zatrudniony od</th>
+                <th className="text-left px-4 py-3">🩺 Badania medycyny pracy</th>
+                <th className="text-left px-4 py-3">🦺 Szkolenie BHP</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {employees.map(emp => {
                 const et = EMPLOYMENT_TYPES[emp.employment_type] ?? EMPLOYMENT_TYPES.employment
+                const medStatus  = expiryStatus(emp.medical_exam_date)
+                const bhpStatus  = expiryStatus(emp.bhp_date)
+
+                const statusDot = (s: ReturnType<typeof expiryStatus>) =>
+                  s === 'expired' ? 'text-red-600 dark:text-red-400'
+                  : s === 'soon'  ? 'text-amber-600 dark:text-amber-400'
+                  : s === 'ok'    ? 'text-green-600 dark:text-green-400'
+                  : 'text-gray-400'
+
+                const statusIcon = (s: ReturnType<typeof expiryStatus>) =>
+                  s === 'expired' ? '❌' : s === 'soon' ? '⚠️' : s === 'ok' ? '✅' : ''
+
                 return (
                   <tr key={emp.id} onClick={() => setSelected(emp)} className="border-b border-gray-50 dark:border-gray-800 hover:bg-violet-50/40 dark:hover:bg-violet-950/10 cursor-pointer transition-colors">
-                    <td className="px-5 py-3 font-medium text-gray-800 dark:text-gray-100">
-                      <span className="mr-2">👤</span>{emp.name}
-                      {emp.position && <span className="ml-2 text-xs text-gray-400">{emp.position}</span>}
+                    {/* Pracownik */}
+                    <td className="px-5 py-3">
+                      <div className="font-medium text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+                        <span>👤</span>{emp.name}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {emp.position && <span className="text-xs text-gray-400">{emp.position}</span>}
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${et.bg} ${et.color}`}>{et.label}</span>
+                      </div>
                     </td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-gray-400">{emp.position || '—'}</td>
+
+                    {/* Email */}
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${et.bg} ${et.color}`}>{et.label}</span>
+                      {emp.email
+                        ? <a href={`mailto:${emp.email}`} onClick={e => e.stopPropagation()} className="text-xs text-violet-600 dark:text-violet-400 hover:underline">{emp.email}</a>
+                        : <span className="text-xs text-gray-300 dark:text-gray-600">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                      {emp.phone || emp.email ? (
-                        <div className="text-xs">
-                          {emp.phone && <div>{emp.phone}</div>}
-                          {emp.email && <div className="text-gray-400">{emp.email}</div>}
+
+                    {/* Telefon */}
+                    <td className="px-4 py-3">
+                      {emp.phone
+                        ? <a href={`tel:${emp.phone}`} onClick={e => e.stopPropagation()} className="text-xs text-gray-700 dark:text-gray-300 hover:text-violet-600">{emp.phone}</a>
+                        : <span className="text-xs text-gray-300 dark:text-gray-600">—</span>}
+                    </td>
+
+                    {/* Zatrudniony od */}
+                    <td className="px-4 py-3 text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                      {emp.start_date ? fmtDate(emp.start_date) : <span className="text-gray-300 dark:text-gray-600">—</span>}
+                    </td>
+
+                    {/* Badania medycyny pracy */}
+                    <td className="px-4 py-3">
+                      {(emp.medical_exam_last_date || emp.medical_exam_date) ? (
+                        <div className="space-y-0.5">
+                          {emp.medical_exam_last_date && (
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              <span className="text-gray-400">Ostatnie: </span>
+                              <span className="font-medium">{fmtDate(emp.medical_exam_last_date)}</span>
+                            </div>
+                          )}
+                          {emp.medical_exam_date && (
+                            <div className={`text-xs font-medium ${statusDot(medStatus)}`}>
+                              <span className="text-gray-400 font-normal">Następne: </span>
+                              {fmtDate(emp.medical_exam_date)} {statusIcon(medStatus)}
+                            </div>
+                          )}
                         </div>
-                      ) : '—'}
+                      ) : <span className="text-xs text-gray-300 dark:text-gray-600">—</span>}
                     </td>
-                    <td className="px-5 py-3 text-right">
-                      {emp.hourly_rate > 0 ? (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-violet-50 dark:bg-violet-950/20 text-violet-700 dark:text-violet-400 font-semibold text-xs">{fmt(emp.hourly_rate)} PLN/h</span>
-                      ) : <span className="text-gray-300">—</span>}
+
+                    {/* Szkolenie BHP */}
+                    <td className="px-4 py-3">
+                      {(emp.bhp_last_date || emp.bhp_date) ? (
+                        <div className="space-y-0.5">
+                          {emp.bhp_last_date && (
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              <span className="text-gray-400">Ostatnie: </span>
+                              <span className="font-medium">{fmtDate(emp.bhp_last_date)}</span>
+                            </div>
+                          )}
+                          {emp.bhp_date && (
+                            <div className={`text-xs font-medium ${statusDot(bhpStatus)}`}>
+                              <span className="text-gray-400 font-normal">Następne: </span>
+                              {fmtDate(emp.bhp_date)} {statusIcon(bhpStatus)}
+                            </div>
+                          )}
+                        </div>
+                      ) : <span className="text-xs text-gray-300 dark:text-gray-600">—</span>}
                     </td>
+
+                    {/* Button */}
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => setSelected(emp)} className="text-xs text-gray-400 hover:text-violet-600 px-2 py-1 rounded border border-gray-200 dark:border-gray-700">Otwórz →</button>
+                      <button onClick={() => setSelected(emp)} className="text-xs text-gray-400 hover:text-violet-600 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 whitespace-nowrap">Otwórz →</button>
                     </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

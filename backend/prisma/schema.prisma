@@ -106,8 +106,10 @@ model Employee {
   notes              String  @default("")
   created_at         String
   updated_at         String  @default("")
-  medical_exam_date  String?
-  bhp_date           String?
+  medical_exam_last_date String?   // data ostatnich badań lekarskich (kiedy były)
+  medical_exam_date      String?   // data następnych badań / ważność
+  bhp_last_date          String?   // data ostatniego szkolenia BHP
+  bhp_date               String?   // data następnych badań BHP / ważność
 
   assets      EmployeeAsset[]
   documents   EmployeeDocument[]

@@ -214,7 +214,7 @@ async function sendEmployeeExpiryReminders() {
           { bhp_date:          { not: null } },
         ],
       },
-      select: { id: true, name: true, medical_exam_date: true, bhp_date: true },
+      select: { id: true, name: true, medical_exam_last_date: true, medical_exam_date: true, bhp_last_date: true, bhp_date: true },
     })
 
     const today   = new Date()
