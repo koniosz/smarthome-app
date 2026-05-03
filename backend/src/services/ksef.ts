@@ -646,8 +646,8 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
       }
     }
 
-    // Zaktualizuj czas ostatniej synchronizacji
-    await prisma.ksefSession.updateMany({ data: { last_sync_at: now() } })
+    // Zaktualizuj czas ostatniej synchronizacji i wyczyść ewentualny poprzedni błąd
+    await prisma.ksefSession.updateMany({ data: { last_sync_at: now(), last_sync_error: null } })
 
     console.log(`[KSeF] Zapisano ${saved} nowych faktur. Błędy: ${errors.length}`)
   } catch (err: any) {
@@ -656,6 +656,24 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
       : err.message
     console.error('[KSeF] Błąd synchronizacji:', msg)
     errors.push(msg)
+    // Zapisz błąd do bazy danych — widoczny w UI bez potrzeby przeglądania logów Render
+    try {
+      const sessionCount = await prisma.ksefSession.count()
+      if (sessionCount > 0) {
+        await prisma.ksefSession.updateMany({ data: { last_sync_error: msg } })
+      } else {
+        // Brak sesji — utwórz rekord-placeholder żeby błąd był widoczny
+        await prisma.ksefSession.create({
+          data: {
+            id:            'error-status',
+            session_token: '',
+            expires_at:    new Date(0).toISOString(),
+            last_sync_error: msg,
+            created_at:    now(),
+          },
+        })
+      }
+    } catch { /* ignore — błąd nie musi być zapisany do bazy */ }
   }
 
   return { fetched, saved, errors }
@@ -742,10 +760,11 @@ export async function getStatus(): Promise<{
   has_session: boolean
   session_expires_at: string | null
   last_sync_at: string | null
+  last_sync_error: string | null
   invoice_count: number
   unassigned_count: number
 }> {
-  const session       = await prisma.ksefSession.findFirst()
+  const session       = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
   const invoiceCount  = await prisma.ksefInvoice.count()
   const unassignedCnt = await prisma.ksefInvoice.count({ where: { project_id: null } })
 
@@ -753,9 +772,10 @@ export async function getStatus(): Promise<{
     configured:         !!(KSEF_NIP && KSEF_TOKEN),
     env:                'prod (v2)',
     nip:                KSEF_NIP ? `${KSEF_NIP.slice(0, 3)}***${KSEF_NIP.slice(-3)}` : '',
-    has_session:        !!session,
+    has_session:        !!session && !!session.session_token,
     session_expires_at: session?.expires_at ?? null,
     last_sync_at:       session?.last_sync_at ?? null,
+    last_sync_error:    session?.last_sync_error ?? null,
     invoice_count:      invoiceCount,
     unassigned_count:   unassignedCnt,
   }

@@ -8,10 +8,12 @@ function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-function StatusBar({ status, onSync, syncing, dateFrom, onDateFromChange }: {
+function StatusBar({ status, onSync, onResetSession, syncing, resettingSession, dateFrom, onDateFromChange }: {
   status: KsefStatus | null
   onSync: () => void
+  onResetSession: () => void
   syncing: boolean
+  resettingSession: boolean
   dateFrom: string
   onDateFromChange: (v: string) => void
 }) {
@@ -20,46 +22,81 @@ function StatusBar({ status, onSync, syncing, dateFrom, onDateFromChange }: {
     ? new Date(status.last_sync_at).toLocaleString('pl-PL')
     : 'Nigdy'
 
+  // Wykryj czy sync nie działa od dawna (>8h)
+  const syncStale = status.last_sync_at
+    ? (Date.now() - new Date(status.last_sync_at).getTime()) > 8 * 60 * 60 * 1000
+    : true
+
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex flex-wrap items-center gap-4">
-      <div className="flex items-center gap-2">
-        <span className={`w-2.5 h-2.5 rounded-full ${status.configured ? 'bg-green-500' : 'bg-red-400'}`} />
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          KSeF {status.env?.includes('prod') ? 'Produkcja' : 'Test'} 2.0
-        </span>
-        {status.nip && <span className="text-xs text-gray-400">NIP: {status.nip}</span>}
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2">
+          <span className={`w-2.5 h-2.5 rounded-full ${status.configured ? (status.last_sync_error ? 'bg-red-400' : 'bg-green-500') : 'bg-red-400'}`} />
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            KSeF {status.env?.includes('prod') ? 'Produkcja' : 'Test'} 2.0
+          </span>
+          {status.nip && <span className="text-xs text-gray-400">NIP: {status.nip}</span>}
+        </div>
+
+        <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 ml-auto">
+          <span>📄 {status.invoice_count} faktur</span>
+          <span className="text-orange-500 font-medium">⏳ {status.unassigned_count} nieprzypisanych</span>
+          <span className={syncStale && !status.last_sync_error ? 'text-orange-400' : ''}>
+            Ostatnia sync: {lastSync}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Od:</label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => onDateFromChange(e.target.value)}
+            className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-500"
+          />
+        </div>
+
+        <button
+          onClick={onSync}
+          disabled={syncing || !status.configured}
+          className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
+        >
+          {syncing ? (
+            <><span className="animate-spin inline-block">⟳</span> Synchronizacja...</>
+          ) : (
+            <><span>⟳</span> Synchronizuj</>
+          )}
+        </button>
       </div>
 
-      <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 ml-auto">
-        <span>📄 {status.invoice_count} faktur</span>
-        <span className="text-orange-500 font-medium">⏳ {status.unassigned_count} nieprzypisanych</span>
-        <span>Ostatnia sync: {lastSync}</span>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Od:</label>
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={e => onDateFromChange(e.target.value)}
-          className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-500"
-        />
-      </div>
-
-      <button
-        onClick={onSync}
-        disabled={syncing || !status.configured}
-        className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
-      >
-        {syncing ? (
-          <><span className="animate-spin">⟳</span> Synchronizacja...</>
-        ) : (
-          <><span>⟳</span> Synchronizuj</>
-        )}
-      </button>
+      {/* Błąd synchronizacji — widoczny tylko gdy wystąpił */}
+      {status.last_sync_error && (
+        <div className="flex items-start gap-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
+          <span className="text-red-500 text-base flex-shrink-0 mt-0.5">⚠️</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-red-700 dark:text-red-400 mb-1">
+              Błąd synchronizacji KSeF — faktury nie są pobierane automatycznie
+            </p>
+            <p className="text-xs text-red-600 dark:text-red-500 font-mono break-all leading-relaxed">
+              {status.last_sync_error}
+            </p>
+            <p className="text-xs text-red-500 dark:text-red-400 mt-2">
+              Najczęstsza przyczyna: wygasły token autoryzacji KSeF. Kliknij „Zresetuj sesję" aby odtworzyć połączenie.
+              Jeśli błąd się powtarza, sprawdź zmienne <code className="font-mono">KSEF_TOKEN</code> i <code className="font-mono">KSEF_NIP</code> na Render.
+            </p>
+          </div>
+          <button
+            onClick={onResetSession}
+            disabled={resettingSession || !status.configured}
+            className="flex-shrink-0 px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+          >
+            {resettingSession ? 'Resetowanie…' : '🔄 Zresetuj sesję'}
+          </button>
+        </div>
+      )}
 
       {!status.configured && (
-        <div className="w-full text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">
+        <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">
           Brak konfiguracji. Ustaw zmienne środowiskowe: <code className="font-mono">KSEF_NIP</code>, <code className="font-mono">KSEF_TOKEN</code>
         </div>
       )}
@@ -683,9 +720,10 @@ export default function KsefPage() {
   const [dirTab, setDirTab]         = useState<'all' | 'incoming' | 'outgoing'>('all')
   const [search, setSearch]         = useState('')
   const [page, setPage]             = useState(1)
-  const [debugInfo, setDebugInfo] = useState<any>(null)
-  const [debugging, setDebugging] = useState(false)
-  const [dateFrom, setDateFrom]   = useState('2024-01-01')
+  const [debugInfo, setDebugInfo]           = useState<any>(null)
+  const [debugging, setDebugging]           = useState(false)
+  const [resettingSession, setResettingSession] = useState(false)
+  const [dateFrom, setDateFrom]             = useState('2024-01-01')
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const LIMIT = 50
 
@@ -739,6 +777,25 @@ export default function KsefPage() {
     }
   }
 
+  const handleResetSession = async () => {
+    if (!confirm('Zresetować sesję KSeF? Zostanie wymuszone ponowne uwierzytelnienie z KSEF_TOKEN z Render.')) return
+    setResettingSession(true)
+    setSyncMsg(null)
+    try {
+      const result = await ksefApi.resetSession()
+      if (result.success) {
+        setSyncMsg('✓ Sesja KSeF odtworzona pomyślnie. Kliknij „Synchronizuj" aby pobrać brakujące faktury.')
+      } else {
+        setSyncMsg(`✗ Błąd resetu sesji: ${result.error}`)
+      }
+      await ksefApi.status().then(setStatus).catch(() => {})
+    } catch (err: any) {
+      setSyncMsg(`✗ Błąd resetu sesji: ${err.response?.data?.error ?? err.message}`)
+    } finally {
+      setResettingSession(false)
+    }
+  }
+
   const handleUpdated = (updated: KsefInvoice) => {
     setInvoices(prev => prev.map(i => i.id === updated.id ? updated : i))
     // Odśwież status (zmiana liczby nieprzypisanych)
@@ -775,7 +832,15 @@ export default function KsefPage() {
         />
       )}
 
-      <StatusBar status={status} onSync={handleSync} syncing={syncing} dateFrom={dateFrom} onDateFromChange={setDateFrom} />
+      <StatusBar
+        status={status}
+        onSync={handleSync}
+        onResetSession={handleResetSession}
+        syncing={syncing}
+        resettingSession={resettingSession}
+        dateFrom={dateFrom}
+        onDateFromChange={setDateFrom}
+      />
 
       {syncMsg && (
         <div className={`text-sm px-4 py-2 rounded-lg ${syncMsg.startsWith('✓')

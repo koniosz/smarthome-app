@@ -445,4 +445,7 @@ export const ksefApi = {
 
   pnl: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string; revenue_source?: 'payments' | 'ksef' | 'both' }) =>
     api.get<import('../types').PnLReport>('/ksef/pnl', { params }).then(r => r.data),
+
+  resetSession: () =>
+    api.post<{ success: boolean; message?: string; error?: string }>('/ksef/session/reset').then(r => r.data),
 }

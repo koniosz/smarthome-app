@@ -543,6 +543,7 @@ export interface KsefStatus {
   has_session: boolean
   session_expires_at: string | null
   last_sync_at: string | null
+  last_sync_error: string | null
   invoice_count: number
   unassigned_count: number
 }

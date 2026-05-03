@@ -397,12 +397,13 @@ model BankTransaction {
 }
 
 model KsefSession {
-  id            String  @id
-  session_token String
-  refresh_token String?
-  expires_at    String
-  last_sync_at  String?
-  created_at    String
+  id              String  @id
+  session_token   String
+  refresh_token   String?
+  expires_at      String
+  last_sync_at    String?
+  last_sync_error String?   // ostatni błąd synchronizacji (null = brak błędu)
+  created_at      String
 
   @@map("ksef_sessions")
 }

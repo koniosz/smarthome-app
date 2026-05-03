@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { v4 as uuidv4 } from 'uuid'
 import { requireAdmin, requireAuth } from '../middleware/auth'
-import { syncInvoices, getStatus, debugAuth, tryAutoClassifyFromHistory } from '../services/ksef'
+import { syncInvoices, getStatus, debugAuth, tryAutoClassifyFromHistory, terminateSession } from '../services/ksef'
 import db from '../db'
 
 const prisma = new PrismaClient()
@@ -168,6 +168,21 @@ router.post('/sync', requireAdmin, async (req: Request, res: Response) => {
     const { dateFrom } = req.body
     res.json(await syncInvoices(dateFrom ? new Date(dateFrom) : undefined))
   } catch (err: any) { res.status(500).json({ error: err.message }) }
+})
+
+// POST /api/ksef/session/reset — wyczyść sesję i utwórz nową (przydatne gdy token wygasł)
+router.post('/session/reset', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    // 1. Zamknij starą sesję (ignoruje błąd jeśli token nieważny)
+    await terminateSession()
+    // 2. Od razu zainicjuj nową sesję
+    const { getActiveSession } = await import('../services/ksef')
+    const token = await getActiveSession()
+    res.json({ success: true, message: 'Sesja zresetowana i odtworzona', token_length: token.length })
+  } catch (err: any) {
+    const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message
+    res.status(500).json({ success: false, error: msg })
+  }
 })
 
 // GET /api/ksef/invoices (admin — all invoices)
