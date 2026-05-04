@@ -757,41 +757,61 @@ export async function debugAuth(): Promise<Record<string, any>> {
     if (existingSession?.session_token) {
       const testToken = existingSession.session_token
       const today = new Date()
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
-      const fromStr = yesterday.toISOString().split('T')[0]
+      // Testuj ostatnie 30 dni żeby na pewno znaleźć faktury
+      const from30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+      const fromStr = from30.toISOString().split('T')[0]
       const toStr   = today.toISOString().split('T')[0]
 
-      // Test: Subject1 (sprzedażowe)
+      // Test: Subject2 (zakupowe — bardziej prawdopodobne że są)
       try {
         const invRes = await axios.post(
           `${BASE_URL}/invoices/query/metadata`,
-          { subjectType: 'Subject1', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
+          { subjectType: 'Subject2', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
           {
             headers: { Authorization: `Bearer ${testToken}`, 'Content-Type': 'application/json' },
-            params:  { pageOffset: 0, pageSize: 5, sortOrder: 'Asc' },
+            params:  { pageOffset: 0, pageSize: 10, sortOrder: 'Asc' },
             timeout: 20000,
           },
         )
-        result.invoice_query_test = { status: invRes.status, invoice_count: invRes.data?.invoices?.length ?? 'unknown', has_more: invRes.data?.hasMore, keys: Object.keys(invRes.data ?? {}) }
+        result.invoice_query_test = {
+          subject: 'Subject2 (zakupowe)',
+          status: invRes.status,
+          invoice_count: invRes.data?.invoices?.length ?? 'unknown',
+          has_more: invRes.data?.hasMore,
+          response_keys: Object.keys(invRes.data ?? {}),
+          // Pokaż pierwsze 2 faktury (bez raw_data) żeby zweryfikować format
+          sample_invoices: (invRes.data?.invoices ?? []).slice(0, 2).map((i: any) => ({
+            ksefNumber: i.ksefNumber,
+            invoiceNumber: i.invoiceNumber,
+            issueDate: i.issueDate,
+            seller_name: i.seller?.name,
+            gross: i.grossAmount,
+          })),
+        }
       } catch (err: any) {
         result.invoice_query_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
       }
 
-      // Test alternatywny — lowercase subjectType (na wypadek zmiany API)
-      if (result.invoice_query_error) {
+      // Jeśli się udało — przetestuj też Subject1 (sprzedażowe)
+      if (!result.invoice_query_error) {
         try {
           const invRes2 = await axios.post(
             `${BASE_URL}/invoices/query/metadata`,
-            { subjectType: 'subject1', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
+            { subjectType: 'Subject1', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
             {
               headers: { Authorization: `Bearer ${testToken}`, 'Content-Type': 'application/json' },
-              params:  { pageOffset: 0, pageSize: 5, sortOrder: 'Asc' },
+              params:  { pageOffset: 0, pageSize: 10, sortOrder: 'Asc' },
               timeout: 20000,
             },
           )
-          result.invoice_query_lowercase_test = { status: invRes2.status, invoice_count: invRes2.data?.invoices?.length ?? 'unknown', keys: Object.keys(invRes2.data ?? {}) }
+          result.invoice_query_subject1_test = {
+            subject: 'Subject1 (sprzedażowe)',
+            status: invRes2.status,
+            invoice_count: invRes2.data?.invoices?.length ?? 'unknown',
+            has_more: invRes2.data?.hasMore,
+          }
         } catch (err2: any) {
-          result.invoice_query_lowercase_error = { status: err2?.response?.status, data: err2?.response?.data, message: err2?.message }
+          result.invoice_query_subject1_error = { status: err2?.response?.status, data: err2?.response?.data }
         }
       }
     } else {
