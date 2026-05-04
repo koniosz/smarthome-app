@@ -341,7 +341,11 @@ async function fetchInvoices(
     console.log(`[KSeF] Krótki zakres (${Math.round(totalMs / 86400000)}d) — 1 request na subject type`)
   }
 
+  let rateLimitHit = false  // flaga — przerywamy wszystkie chunki gdy 429
+
   for (const subjectType of subjectTypes) {
+    if (rateLimitHit) break  // 429 na poprzednim subjectType — nie próbuj dalej
+
     let chunkStart = new Date(dateFrom)
     let chunkIndex = 0
 
@@ -362,12 +366,14 @@ async function fetchInvoices(
           if (!seen.has(key)) { seen.add(key); all.push(inv) }
         }
       } catch (err: any) {
-        const msg = `${subjectType} ${fromStr}–${toStr}: ${axiosError(err)}`
+        const errStr = axiosError(err)
+        const msg = `${subjectType} ${fromStr}–${toStr}: Invoice query failed (${subjectType} ${fromStr}–${toStr}): ${errStr}`
         console.warn('[KSeF] Chunk error:', msg)
         errors.push(msg)
-        // Jeśli 429 — przerwij chunki dla tego subject type (nie ma sensu dalej próbować)
-        if (axiosError(err).includes('429')) {
-          console.warn(`[KSeF] 429 rate limit dla ${subjectType} — przerywam chunki`)
+        // Jeśli 429 — przerwij WSZYSTKIE dalsze chunki i subjectTypes
+        if (errStr.includes('429')) {
+          console.warn('[KSeF] 429 rate limit — przerywam całą synchronizację, odczekaj 30 min')
+          rateLimitHit = true
           break
         }
       }
@@ -596,12 +602,27 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
     const accessToken = await getActiveSession()
 
     // Pobierz faktury od ostatniej synchronizacji
-    // Pierwsza synchronizacja sięga do 1 stycznia 2024 (KSeF pilotaż)
     const lastSession = await prisma.ksefSession.findFirst()
-    const dateFrom = forceDateFrom
-      ?? (lastSession?.last_sync_at
-        ? new Date(lastSession.last_sync_at)
-        : new Date('2024-01-01'))
+    let dateFrom: Date
+    if (forceDateFrom) {
+      dateFrom = forceDateFrom
+    } else if (lastSession?.last_sync_at) {
+      dateFrom = new Date(lastSession.last_sync_at)
+    } else {
+      // Brak last_sync_at — sprawdź czy są już faktury w bazie
+      const latestInvoice = await prisma.ksefInvoice.findFirst({ orderBy: { invoice_date: 'desc' } })
+      if (latestInvoice?.invoice_date) {
+        // Zacznij od daty ostatniej faktury minus 7 dni (bezpieczny margines)
+        const d = new Date(latestInvoice.invoice_date)
+        d.setDate(d.getDate() - 7)
+        dateFrom = d
+        console.log(`[KSeF] Brak last_sync_at, ale są faktury — startuję od ${d.toISOString().split('T')[0]} (7 dni przed ostatnią fakturą)`)
+      } else {
+        // Brak faktur → domyślnie ostatnie 30 dni (historyczny sync uruchamia się ręcznie z dateFrom)
+        dateFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+        console.log('[KSeF] Brak last_sync_at i faktur — startuję od 30 dni temu. Historyczny sync: POST /api/ksef/sync z { dateFrom: "2024-01-01" }')
+      }
+    }
     const dateTo = new Date()
 
     console.log(`[KSeF] Synchronizacja od ${dateFrom.toISOString()} do ${dateTo.toISOString()}`)
@@ -681,8 +702,69 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
   return { fetched, saved, errors }
 }
 
+/** Testuje zapytanie o faktury używając podanego tokenu. Wyniki zapisuje do result. */
+async function testInvoiceQuery(token: string, result: Record<string, any>): Promise<void> {
+  const today = new Date()
+  const from30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const fromStr = from30.toISOString().split('T')[0]
+  const toStr   = today.toISOString().split('T')[0]
+
+  try {
+    const invRes = await axios.post(
+      `${BASE_URL}/invoices/query/metadata`,
+      { subjectType: 'Subject2', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
+      {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        params:  { pageOffset: 0, pageSize: 10, sortOrder: 'Asc' },
+        timeout: 20000,
+      },
+    )
+    result.invoice_query_test = {
+      subject: 'Subject2 (zakupowe, ostatnie 30 dni)',
+      status: invRes.status,
+      invoice_count: invRes.data?.invoices?.length ?? 'unknown',
+      has_more: invRes.data?.hasMore,
+      response_keys: Object.keys(invRes.data ?? {}),
+      sample_invoices: (invRes.data?.invoices ?? []).slice(0, 2).map((i: any) => ({
+        ksefNumber: i.ksefNumber,
+        invoiceNumber: i.invoiceNumber,
+        issueDate: i.issueDate,
+        seller_name: i.seller?.name,
+        gross: i.grossAmount,
+      })),
+    }
+  } catch (err: any) {
+    result.invoice_query_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
+  }
+
+  if (!result.invoice_query_error) {
+    try {
+      const invRes2 = await axios.post(
+        `${BASE_URL}/invoices/query/metadata`,
+        { subjectType: 'Subject1', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
+        {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          params:  { pageOffset: 0, pageSize: 10, sortOrder: 'Asc' },
+          timeout: 20000,
+        },
+      )
+      result.invoice_query_subject1_test = {
+        subject: 'Subject1 (sprzedażowe, ostatnie 30 dni)',
+        status: invRes2.status,
+        invoice_count: invRes2.data?.invoices?.length ?? 'unknown',
+        has_more: invRes2.data?.hasMore,
+      }
+    } catch (err2: any) {
+      result.invoice_query_subject1_error = { status: err2?.response?.status, data: err2?.response?.data }
+    }
+  }
+}
+
 /**
- * Diagnostyka autoryzacji — zwraca szczegóły każdego kroku
+ * Diagnostyka autoryzacji — zwraca szczegóły każdego kroku.
+ *
+ * UWAGA: Każde uruchomienie zużywa ~4 zapytania z limitu 20/h KSeF API.
+ * Przy pełnym teście łącznie do ~6 zapytań.
  */
 export async function debugAuth(): Promise<Record<string, any>> {
   const result: Record<string, any> = {
@@ -693,6 +775,7 @@ export async function debugAuth(): Promise<Record<string, any>> {
       token_set:    !!KSEF_TOKEN,
       token_length: KSEF_TOKEN.length,
     },
+    warning: 'Diagnostyka zużywa ~4–6 z 20 zapytań/h limitu KSeF API. Nie uruchamiaj wielokrotnie.',
   }
 
   if (!KSEF_NIP || !KSEF_TOKEN) {
@@ -700,7 +783,27 @@ export async function debugAuth(): Promise<Record<string, any>> {
     return result
   }
 
-  // Klucze publiczne
+  // ── Sprawdź aktualną sesję w bazie — bez zużywania limitu ────────────────────
+  const existingSession = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+  if (existingSession) {
+    const expiresAt = new Date(existingSession.expires_at)
+    const isValid = expiresAt > new Date(Date.now() + 2 * 60 * 1000)
+    result.existing_session = {
+      has_token:      !!existingSession.session_token,
+      expires_at:     existingSession.expires_at,
+      is_valid:       isValid,
+      last_sync_at:   existingSession.last_sync_at,
+      last_sync_error: existingSession.last_sync_error,
+    }
+    // Jeśli sesja jest ważna — przetestuj zapytanie o faktury BEZ nowego auth (0 dodatkowych zapytań na auth)
+    if (isValid && existingSession.session_token) {
+      result.note = 'Sesja jest aktywna — test faktury używa istniejącego tokenu (nie tworzy nowej sesji)'
+      await testInvoiceQuery(existingSession.session_token, result)
+      return result
+    }
+  }
+
+  // ── Klucze publiczne (1 zapytanie) ───────────────────────────────────────────
   try {
     const keysRes = await axios.get(`${BASE_URL}/security/public-key-certificates`, { timeout: 15000 })
     result.public_keys = keysRes.data.map((c: any) => ({
@@ -713,7 +816,7 @@ export async function debugAuth(): Promise<Record<string, any>> {
     return result
   }
 
-  // Challenge
+  // ── Challenge (1 zapytanie) ───────────────────────────────────────────────────
   try {
     const challengeRes = await axios.post(`${BASE_URL}/auth/challenge`, {}, { timeout: 15000 })
     result.challenge_response = { status: challengeRes.status, data: challengeRes.data }
@@ -730,7 +833,7 @@ export async function debugAuth(): Promise<Record<string, any>> {
       const enc = encryptTokenRsa(KSEF_TOKEN, timestampMs, pk)
       result.encrypted_token_length = enc.length
 
-      // Auth init
+      // Auth init (1 zapytanie)
       try {
         const authRes = await axios.post(
           `${BASE_URL}/auth/ksef-token`,
@@ -749,76 +852,13 @@ export async function debugAuth(): Promise<Record<string, any>> {
     result.challenge_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
   }
 
-  // ── Test zapytania o faktury — używa istniejącej sesji z bazy ────────────────
-  // Ten krok sprawdza czy endpoint /invoices/query/metadata działa poprawnie
-  // nawet jeśli autoryzacja powyżej się nie powiodła (może być ważna sesja w bazie)
-  try {
-    const existingSession = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
-    if (existingSession?.session_token) {
-      const testToken = existingSession.session_token
-      const today = new Date()
-      // Testuj ostatnie 30 dni żeby na pewno znaleźć faktury
-      const from30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-      const fromStr = from30.toISOString().split('T')[0]
-      const toStr   = today.toISOString().split('T')[0]
-
-      // Test: Subject2 (zakupowe — bardziej prawdopodobne że są)
-      try {
-        const invRes = await axios.post(
-          `${BASE_URL}/invoices/query/metadata`,
-          { subjectType: 'Subject2', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
-          {
-            headers: { Authorization: `Bearer ${testToken}`, 'Content-Type': 'application/json' },
-            params:  { pageOffset: 0, pageSize: 10, sortOrder: 'Asc' },
-            timeout: 20000,
-          },
-        )
-        result.invoice_query_test = {
-          subject: 'Subject2 (zakupowe)',
-          status: invRes.status,
-          invoice_count: invRes.data?.invoices?.length ?? 'unknown',
-          has_more: invRes.data?.hasMore,
-          response_keys: Object.keys(invRes.data ?? {}),
-          // Pokaż pierwsze 2 faktury (bez raw_data) żeby zweryfikować format
-          sample_invoices: (invRes.data?.invoices ?? []).slice(0, 2).map((i: any) => ({
-            ksefNumber: i.ksefNumber,
-            invoiceNumber: i.invoiceNumber,
-            issueDate: i.issueDate,
-            seller_name: i.seller?.name,
-            gross: i.grossAmount,
-          })),
-        }
-      } catch (err: any) {
-        result.invoice_query_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
-      }
-
-      // Jeśli się udało — przetestuj też Subject1 (sprzedażowe)
-      if (!result.invoice_query_error) {
-        try {
-          const invRes2 = await axios.post(
-            `${BASE_URL}/invoices/query/metadata`,
-            { subjectType: 'Subject1', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
-            {
-              headers: { Authorization: `Bearer ${testToken}`, 'Content-Type': 'application/json' },
-              params:  { pageOffset: 0, pageSize: 10, sortOrder: 'Asc' },
-              timeout: 20000,
-            },
-          )
-          result.invoice_query_subject1_test = {
-            subject: 'Subject1 (sprzedażowe)',
-            status: invRes2.status,
-            invoice_count: invRes2.data?.invoices?.length ?? 'unknown',
-            has_more: invRes2.data?.hasMore,
-          }
-        } catch (err2: any) {
-          result.invoice_query_subject1_error = { status: err2?.response?.status, data: err2?.response?.data }
-        }
-      }
-    } else {
-      result.invoice_query_test = 'Brak aktywnej sesji w bazie — najpierw uruchom synchronizację lub reset sesji'
-    }
-  } catch (err: any) {
-    result.invoice_query_test_error = err.message
+  // ── Test zapytania o faktury używa nowo uzyskanego tokenu z auth_init ─────────
+  // Nie mamy pełnego accessToken (redeem nie był wywoływany) — użyj istniejącego z bazy
+  const freshSession = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+  if (freshSession?.session_token) {
+    await testInvoiceQuery(freshSession.session_token, result)
+  } else {
+    result.invoice_query_test = 'Brak aktywnej sesji w bazie — najpierw uruchom synchronizację lub reset sesji'
   }
 
   return result

@@ -81,8 +81,10 @@ function StatusBar({ status, onSync, onResetSession, syncing, resettingSession, 
               {status.last_sync_error}
             </p>
             <p className="text-xs text-red-500 dark:text-red-400 mt-2">
-              Najczęstsza przyczyna: wygasły token autoryzacji KSeF. Kliknij „Zresetuj sesję" aby odtworzyć połączenie.
-              Jeśli błąd się powtarza, sprawdź zmienne <code className="font-mono">KSEF_TOKEN</code> i <code className="font-mono">KSEF_NIP</code> na Render.
+              {status.last_sync_error?.includes('429')
+                ? <>⏳ Przekroczono limit 20 zapytań/h KSeF API. Synchronizacja wznowi się automatycznie za około 30 minut. Nie klikaj „Synchronizuj" ani „Diagnostyki" — każde kliknięcie zużywa limit.</>
+                : <>Najczęstsza przyczyna: wygasły token autoryzacji KSeF. Kliknij „Zresetuj sesję" aby odtworzyć połączenie. Jeśli błąd się powtarza, sprawdź zmienne <code className="font-mono">KSEF_TOKEN</code> i <code className="font-mono">KSEF_NIP</code> na Render.</>
+              }
             </p>
           </div>
           <button
