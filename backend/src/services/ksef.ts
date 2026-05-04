@@ -646,8 +646,10 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
       }
     }
 
-    // Zaktualizuj czas ostatniej synchronizacji i wyczyść ewentualny poprzedni błąd
-    await prisma.ksefSession.updateMany({ data: { last_sync_at: now(), last_sync_error: null } })
+    // Zaktualizuj czas ostatniej synchronizacji
+    // Jeśli były błędy przy pobieraniu chunków (np. 422 z API) — zapisz je też jako last_sync_error
+    const chunkErrorMsg = errors.length > 0 ? errors.join(' | ') : null
+    await prisma.ksefSession.updateMany({ data: { last_sync_at: now(), last_sync_error: chunkErrorMsg } })
 
     console.log(`[KSeF] Zapisano ${saved} nowych faktur. Błędy: ${errors.length}`)
   } catch (err: any) {
@@ -745,6 +747,58 @@ export async function debugAuth(): Promise<Record<string, any>> {
     }
   } catch (err: any) {
     result.challenge_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
+  }
+
+  // ── Test zapytania o faktury — używa istniejącej sesji z bazy ────────────────
+  // Ten krok sprawdza czy endpoint /invoices/query/metadata działa poprawnie
+  // nawet jeśli autoryzacja powyżej się nie powiodła (może być ważna sesja w bazie)
+  try {
+    const existingSession = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+    if (existingSession?.session_token) {
+      const testToken = existingSession.session_token
+      const today = new Date()
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
+      const fromStr = yesterday.toISOString().split('T')[0]
+      const toStr   = today.toISOString().split('T')[0]
+
+      // Test: Subject1 (sprzedażowe)
+      try {
+        const invRes = await axios.post(
+          `${BASE_URL}/invoices/query/metadata`,
+          { subjectType: 'Subject1', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
+          {
+            headers: { Authorization: `Bearer ${testToken}`, 'Content-Type': 'application/json' },
+            params:  { pageOffset: 0, pageSize: 5, sortOrder: 'Asc' },
+            timeout: 20000,
+          },
+        )
+        result.invoice_query_test = { status: invRes.status, invoice_count: invRes.data?.invoices?.length ?? 'unknown', has_more: invRes.data?.hasMore, keys: Object.keys(invRes.data ?? {}) }
+      } catch (err: any) {
+        result.invoice_query_error = { status: err?.response?.status, data: err?.response?.data, message: err?.message }
+      }
+
+      // Test alternatywny — lowercase subjectType (na wypadek zmiany API)
+      if (result.invoice_query_error) {
+        try {
+          const invRes2 = await axios.post(
+            `${BASE_URL}/invoices/query/metadata`,
+            { subjectType: 'subject1', dateRange: { dateType: 'Issue', from: fromStr, to: toStr } },
+            {
+              headers: { Authorization: `Bearer ${testToken}`, 'Content-Type': 'application/json' },
+              params:  { pageOffset: 0, pageSize: 5, sortOrder: 'Asc' },
+              timeout: 20000,
+            },
+          )
+          result.invoice_query_lowercase_test = { status: invRes2.status, invoice_count: invRes2.data?.invoices?.length ?? 'unknown', keys: Object.keys(invRes2.data ?? {}) }
+        } catch (err2: any) {
+          result.invoice_query_lowercase_error = { status: err2?.response?.status, data: err2?.response?.data, message: err2?.message }
+        }
+      }
+    } else {
+      result.invoice_query_test = 'Brak aktywnej sesji w bazie — najpierw uruchom synchronizację lub reset sesji'
+    }
+  } catch (err: any) {
+    result.invoice_query_test_error = err.message
   }
 
   return result
