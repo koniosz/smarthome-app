@@ -342,21 +342,28 @@ async function fetchInvoices(
   }
 
   let rateLimitHit = false  // flaga — przerywamy wszystkie chunki gdy 429
+  // Limity KSeF API: 16 req/min (burst) i 20 req/h (sustained).
+  // Auth zużywa ~7 szybkich req. Zostaje ~9 req/min na chunki.
+  // 60s / 9 = 6.7s → używamy 7s między chunkiami żeby być bezpiecznym.
+  const CHUNK_DELAY_MS = 7000
 
   for (const subjectType of subjectTypes) {
     if (rateLimitHit) break  // 429 na poprzednim subjectType — nie próbuj dalej
 
     let chunkStart = new Date(dateFrom)
     let chunkIndex = 0
+    let subjectIndex = subjectTypes.indexOf(subjectType)
 
     while (chunkStart < dateTo) {
       const chunkEnd = new Date(Math.min(chunkStart.getTime() + CHUNK_MS, dateTo.getTime()))
       const fromStr  = chunkStart.toISOString().split('T')[0]
       const toStr    = chunkEnd.toISOString().split('T')[0]
 
-      // Opóźnienie 3s między chunkiami (nie dotyczy pierwszego i krótkich zakresów)
-      if (!isShortRange && chunkIndex > 0) {
-        await new Promise(r => setTimeout(r, 3000))
+      // Opóźnienie między chunkiami (długi zakres), w tym między subjectTypami
+      // chunkIndex > 0: między chunkami w obrębie jednego subjectType
+      // subjectIndex > 0 && chunkIndex === 0: pierwszy chunk kolejnego subjectType
+      if (!isShortRange && (chunkIndex > 0 || subjectIndex > 0)) {
+        await new Promise(r => setTimeout(r, CHUNK_DELAY_MS))
       }
 
       try {
