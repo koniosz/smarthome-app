@@ -536,6 +536,35 @@ export const PROJECT_DOC_TYPE_LABELS: Record<ProjectDocType, string> = {
   other:    'Inne',
 }
 
+// ─── Client Surveys ───────────────────────────────────────────────────────────
+
+export interface ClientSurvey {
+  id: string
+  project_id: string
+  token: string
+  client_email: string
+  client_name: string
+  status: 'draft' | 'sent' | 'viewed' | 'submitted'
+  sent_at: string | null
+  viewed_at: string | null
+  submitted_at: string | null
+  responses: Record<string, any> | null
+  notes: string
+  expires_at: string | null
+  created_at: string
+  created_by: string
+  attachments?: ClientSurveyAttachment[]
+}
+
+export interface ClientSurveyAttachment {
+  id: string
+  survey_id: string
+  file_name: string
+  mime_type: string
+  file_size: number
+  uploaded_at: string
+}
+
 export interface KsefStatus {
   configured: boolean
   env: string

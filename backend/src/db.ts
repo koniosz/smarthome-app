@@ -313,6 +313,33 @@ export const db = {
         create: { id: 'default', ...data, updated_at: new Date().toISOString() },
       }),
   },
+
+  client_surveys: {
+    forProject: (projectId: string) =>
+      prisma.clientSurvey.findMany({
+        where: { project_id: projectId },
+        orderBy: { created_at: 'desc' },
+      }),
+    find: (id: string) =>
+      prisma.clientSurvey.findUnique({ where: { id }, include: { attachments: true } }),
+    findByToken: (token: string) =>
+      prisma.clientSurvey.findUnique({ where: { token }, include: { project: { select: { name: true } }, attachments: true } }),
+    insert: (data: any) =>
+      prisma.clientSurvey.create({ data }),
+    update: (id: string, patch: any) =>
+      prisma.clientSurvey.update({ where: { id }, data: patch }),
+    delete: (id: string) =>
+      prisma.clientSurvey.delete({ where: { id } }),
+  },
+
+  client_survey_attachments: {
+    find: (id: string) =>
+      prisma.clientSurveyAttachment.findUnique({ where: { id } }),
+    insert: (data: any) =>
+      prisma.clientSurveyAttachment.create({ data }),
+    delete: (id: string) =>
+      prisma.clientSurveyAttachment.delete({ where: { id } }),
+  },
 }
 
 export default db

@@ -14,6 +14,7 @@ import LaborTable from '../costs/LaborTable'
 import PaymentTable from '../costs/PaymentTable'
 import AIQuoteTab from '../ai-quote/AIQuoteTab'
 import ExtraCostsTab from '../costs/ExtraCostsTab'
+import SurveyPanel from './SurveyPanel'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
@@ -137,7 +138,7 @@ function fmtDec(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'ai_quote' | 'extra_costs' | 'documents' | 'history'
+type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'ai_quote' | 'extra_costs' | 'documents' | 'history' | 'survey'
 
 // ── Project Documents Tab ────────────────────────────────────────────────────
 
@@ -605,6 +606,7 @@ export default function ProjectDetail() {
   const filterCostItems = (cat: string) => project.cost_items.filter(i => i.category === cat)
 
   const tabs = [
+    { key: 'survey' as Tab, label: '📋 Ankieta klienta' },
     { key: 'materials' as Tab, label: `Materiały (${filterCostItems('materials').length})` },
     { key: 'subcontractor' as Tab, label: `Podwykonawcy (${filterCostItems('subcontractor').length})` },
     { key: 'other' as Tab, label: `Inne (${filterCostItems('other').length})` },
@@ -817,6 +819,9 @@ export default function ProjectDetail() {
           </div>
         </div>
 
+        {tab === 'survey' && (
+          <SurveyPanel projectId={project.id} projectName={project.name} />
+        )}
         {tab === 'extra_costs' && (
           <ExtraCostsTab
             projectId={project.id}

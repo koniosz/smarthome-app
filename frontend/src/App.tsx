@@ -14,6 +14,7 @@ import SharedInvoicesPage from './pages/SharedInvoicesPage'
 import FinansePage from './pages/FinansePage'
 import ManualCostsPage from './pages/ManualCostsPage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
+import SurveyPage from './pages/SurveyPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
 import { AuthProvider } from './auth/AuthContext'
@@ -40,6 +41,15 @@ function AppContent() {
 
   if (location.pathname === '/login') {
     return <LoginPage />
+  }
+
+  // Public survey page — no auth required
+  if (location.pathname.startsWith('/survey/')) {
+    return (
+      <Routes>
+        <Route path="/survey/:token" element={<SurveyPage />} />
+      </Routes>
+    )
   }
 
   // Print view — full Route context for useParams, no app shell

@@ -3,7 +3,7 @@ import type {
   Project, ProjectDetail, CostItem, LaborEntry, ClientPayment, Employee, EmployeeDetail,
   EmployeeAsset, EmployeeDocument, DashboardStats,
   AiQuote, ProductCatalogItem, ExtraCost, AccessRequest, AppNotification, CostAuditEntry,
-  BankTransaction, ProjectDocument,
+  BankTransaction, ProjectDocument, ClientSurvey, ClientSurveyAttachment,
 } from '../types'
 
 const BASE = '/api'
@@ -448,4 +448,28 @@ export const ksefApi = {
 
   resetSession: () =>
     api.post<{ success: boolean; message?: string; error?: string }>('/ksef/session/reset').then(r => r.data),
+}
+
+export const surveyApi = {
+  list: (projectId: string) =>
+    api.get<ClientSurvey[]>(`/projects/${projectId}/surveys`).then(r => r.data),
+  create: (projectId: string, data: { client_email: string; client_name: string; notes?: string }) =>
+    api.post<ClientSurvey>(`/projects/${projectId}/surveys`, data).then(r => r.data),
+  get: (projectId: string, id: string) =>
+    api.get<ClientSurvey>(`/projects/${projectId}/surveys/${id}`).then(r => r.data),
+  update: (projectId: string, id: string, data: Partial<ClientSurvey>) =>
+    api.put<ClientSurvey>(`/projects/${projectId}/surveys/${id}`, data).then(r => r.data),
+  delete: (projectId: string, id: string) =>
+    api.delete(`/projects/${projectId}/surveys/${id}`).then(r => r.data),
+  send: (projectId: string, id: string) =>
+    api.post<ClientSurvey>(`/projects/${projectId}/surveys/${id}/send`).then(r => r.data),
+  downloadAttachment: (projectId: string, surveyId: string, attachId: string) =>
+    api.get(`/projects/${projectId}/surveys/${surveyId}/attachments/${attachId}/download`, { responseType: 'blob' }).then(r => r.data),
+  // Public endpoints (no auth)
+  publicGet: (token: string) =>
+    api.get<{ survey: ClientSurvey; project_name: string }>(`/surveys/public/${token}`).then(r => r.data),
+  publicSubmit: (token: string, responses: Record<string, any>) =>
+    api.post(`/surveys/public/${token}/submit`, { responses }).then(r => r.data),
+  publicAddAttachment: (token: string, data: { file_name: string; mime_type: string; file_data: string; file_size: number }) =>
+    api.post<ClientSurveyAttachment>(`/surveys/public/${token}/attachments`, data).then(r => r.data),
 }

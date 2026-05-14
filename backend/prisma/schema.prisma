@@ -36,6 +36,7 @@ model Project {
   ksef_invoices       KsefInvoice[]
   ksef_allocations    KsefInvoiceAllocation[]
   documents           ProjectDocument[]
+  surveys             ClientSurvey[]
 
   @@map("projects")
 }
@@ -423,6 +424,42 @@ model ProjectDocument {
 
   project     Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
   @@map("project_documents")
+}
+
+// ─── Client Surveys ───────────────────────────────────────────────────────────
+model ClientSurvey {
+  id           String   @id
+  project_id   String
+  token        String   @unique
+  client_email String   @default("")
+  client_name  String   @default("")
+  status       String   @default("draft")  // draft | sent | viewed | submitted
+  sent_at      String?
+  viewed_at    String?
+  submitted_at String?
+  responses    Json?
+  notes        String   @default("")
+  expires_at   String?
+  created_at   String
+  created_by   String   @default("")
+
+  project      Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  attachments  ClientSurveyAttachment[]
+
+  @@map("client_surveys")
+}
+
+model ClientSurveyAttachment {
+  id          String @id
+  survey_id   String
+  file_name   String
+  mime_type   String @default("application/octet-stream")
+  file_data   String
+  file_size   Int    @default(0)
+  uploaded_at String
+
+  survey      ClientSurvey @relation(fields: [survey_id], references: [id], onDelete: Cascade)
+  @@map("client_survey_attachments")
 }
 
 // ─── SMTP / Email configuration ───────────────────────────────────────────────

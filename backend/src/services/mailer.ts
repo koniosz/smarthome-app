@@ -442,3 +442,104 @@ export async function sendEmployeeExpiryReminderEmail(
     html,
   })
 }
+
+// ─── Ankieta Smart Home — wysyłka do klienta ──────────────────────────────────
+
+export async function sendSurveyEmail(
+  to: string,
+  clientName: string,
+  projectName: string,
+  surveyUrl: string,
+  fromName: string,
+): Promise<void> {
+  const { transport, from: cfgFrom, fromName: cfgFromName } = await buildTransport()
+  const senderName = fromName || cfgFromName || 'Smart Home Center'
+
+  const html = `<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ankieta Smart Home</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f3ff;font-family:'Segoe UI',Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ff;padding:48px 16px">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 8px 32px rgba(124,58,237,.15);max-width:600px;width:100%">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#7c3aed 0%,#5b21b6 100%);padding:40px 48px 36px">
+            <p style="margin:0 0 8px;color:#ddd6fe;font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:600">Smart Home</p>
+            <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;line-height:1.2">Ankieta Smart Home</h1>
+            <p style="margin:12px 0 0;color:#c4b5fd;font-size:15px">Projekt: <strong style="color:#ede9fe">${projectName}</strong></p>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px 48px">
+
+            <p style="margin:0 0 20px;color:#1f2937;font-size:16px;line-height:1.65">
+              Szanowny/-a <strong>${clientName}</strong>,
+            </p>
+
+            <p style="margin:0 0 20px;color:#374151;font-size:15px;line-height:1.65">
+              Przygotowujemy dla Państwa projekt <strong>inteligentnego domu</strong> i chcemy, aby spełniał on Wasze oczekiwania w 100%. Aby lepiej poznać Wasze potrzeby i preferencje, przygotowaliśmy krótką ankietę.
+            </p>
+
+            <p style="margin:0 0 32px;color:#374151;font-size:15px;line-height:1.65">
+              Wypełnienie ankiety zajmuje około <strong>5–10 minut</strong>. Zebrane informacje pomogą nam zaprojektować system Smart Home idealnie dopasowany do Waszego stylu życia.
+            </p>
+
+            <!-- CTA Button -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 32px">
+              <tr>
+                <td align="center">
+                  <a href="${surveyUrl}"
+                     style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#ffffff;text-decoration:none;padding:18px 48px;border-radius:12px;font-size:17px;font-weight:700;letter-spacing:.01em;box-shadow:0 4px 16px rgba(124,58,237,.4)">
+                    Wypełnij ankietę →
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Info box -->
+            <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:20px 24px;margin-bottom:28px">
+              <p style="margin:0;font-size:13px;color:#5b21b6;line-height:1.6">
+                Jeśli przycisk nie działa, skopiuj i wklej poniższy adres w przeglądarce:<br>
+                <a href="${surveyUrl}" style="color:#7c3aed;word-break:break-all">${surveyUrl}</a>
+              </p>
+            </div>
+
+            <p style="margin:0;color:#6b7280;font-size:14px;line-height:1.6">
+              Jeśli mają Państwo jakiekolwiek pytania, prosimy o kontakt.<br>
+              Dziękujemy za zaufanie i zapraszamy do współpracy!
+            </p>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#faf5ff;padding:24px 48px;border-top:1px solid #ede9fe">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;line-height:1.6">
+              Wiadomość wysłana przez system <strong style="color:#7c3aed">${senderName}</strong>.<br>
+              Prosimy nie odpowiadać na ten e-mail.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+  await transport.sendMail({
+    from: `"${senderName}" <${cfgFrom}>`,
+    to,
+    subject: `Ankieta Smart Home — projekt: ${projectName}`,
+    html,
+  })
+}

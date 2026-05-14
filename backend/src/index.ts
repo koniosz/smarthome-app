@@ -28,6 +28,7 @@ import manualCostsRouter from './routes/manual-costs'
 import bankRouter, { updateKsefPayment, p24WebhookHandler } from './routes/bank'
 import settingsRouter from './routes/settings'
 import projectDocumentsRouter from './routes/project-documents'
+import surveysRouter, { publicGetSurvey, publicSubmitSurvey, publicAddAttachment } from './routes/surveys'
 import { syncInvoices } from './services/ksef'
 import { sendDueInvoicesEmail, sendEmployeeExpiryReminderEmail, type EmployeeExpiryItem } from './services/mailer'
 import { PrismaClient } from '@prisma/client'
@@ -58,6 +59,11 @@ app.use('/api', attachmentsRouter)
 
 // P24 webhook — public (przed requireAuth), weryfikacja przez podpis CRC
 app.post('/api/bank/przelewy24/webhook', p24WebhookHandler)
+
+// Public survey endpoints — no auth required (client-facing links)
+app.get('/api/surveys/public/:token', publicGetSurvey)
+app.post('/api/surveys/public/:token/submit', publicSubmitSurvey)
+app.post('/api/surveys/public/:token/attachments', publicAddAttachment)
 
 // All routes below require authentication
 app.use('/api', requireAuth)
@@ -115,6 +121,9 @@ app.use('/api/settings', settingsRouter)
 
 // Project documents & contract generator
 app.use('/api/projects/:projectId/documents', projectDocumentsRouter)
+
+// Client surveys
+app.use('/api/projects/:projectId/surveys', surveysRouter)
 
 // ── Serve frontend static files (production / network mode) ──────────────────
 const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist')
