@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { surveyApi } from '../../api/client'
+import { surveyApi, aiQuotesApi } from '../../api/client'
 import type { ClientSurvey } from '../../types'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -232,13 +232,19 @@ function SurveyRow({
   onSend,
   onDelete,
   onCopyLink,
+  onPushToAi,
+  pushingAiId,
 }: {
   survey: ClientSurvey
   onSend: (id: string) => void
   onDelete: (id: string) => void
   onCopyLink: (token: string) => void
+  onPushToAi: (id: string) => void
+  pushingAiId: string | null
 }) {
   const [expanded, setExpanded] = useState(false)
+  const isGenerating = pushingAiId === survey.id
+  const hasAttachments = (survey.attachments?.length ?? 0) > 0
 
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900 overflow-hidden">
@@ -284,12 +290,30 @@ function SurveyRow({
               🔗 Kopiuj link
             </button>
             {survey.status === 'submitted' && (
-              <button
-                onClick={() => setExpanded(v => !v)}
-                className="px-3 py-1.5 text-xs font-medium border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
-              >
-                {expanded ? '▲ Ukryj' : '👁️ Podgląd odpowiedzi'}
-              </button>
+              <>
+                <button
+                  onClick={() => setExpanded(v => !v)}
+                  className="px-3 py-1.5 text-xs font-medium border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
+                >
+                  {expanded ? '▲ Ukryj' : '👁️ Podgląd odpowiedzi'}
+                </button>
+                <button
+                  onClick={() => onPushToAi(survey.id)}
+                  disabled={isGenerating}
+                  className="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                  {isGenerating ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Generowanie...
+                    </>
+                  ) : hasAttachments ? (
+                    '🤖 Generuj wycenę AI'
+                  ) : (
+                    '🤖 Wycena AI (bez planów)'
+                  )}
+                </button>
+              </>
             )}
             <button
               onClick={() => onDelete(survey.id)}
@@ -331,12 +355,21 @@ function SurveyRow({
 
 // ── SurveyPanel ────────────────────────────────────────────────────────────────
 
-export default function SurveyPanel({ projectId, projectName }: { projectId: string; projectName: string }) {
+export default function SurveyPanel({
+  projectId,
+  projectName,
+  onNavigateToAiQuote,
+}: {
+  projectId: string
+  projectName: string
+  onNavigateToAiQuote?: () => void
+}) {
   const [surveys, setSurveys] = useState<ClientSurvey[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
+  const [pushingAiId, setPushingAiId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -385,6 +418,18 @@ export default function SurveyPanel({ projectId, projectName }: { projectId: str
 
   const handleCreated = (survey: ClientSurvey) => {
     setSurveys(prev => [survey, ...prev])
+  }
+
+  const handlePushToAi = async (surveyId: string) => {
+    setPushingAiId(surveyId)
+    try {
+      await aiQuotesApi.fromSurvey(projectId, surveyId)
+      onNavigateToAiQuote?.()
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Błąd generowania wyceny AI')
+    } finally {
+      setPushingAiId(null)
+    }
   }
 
   // Stats
@@ -452,6 +497,8 @@ export default function SurveyPanel({ projectId, projectName }: { projectId: str
               onSend={handleSend}
               onDelete={handleDelete}
               onCopyLink={handleCopyLink}
+              onPushToAi={handlePushToAi}
+              pushingAiId={pushingAiId}
             />
           ))}
         </div>

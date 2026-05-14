@@ -193,6 +193,12 @@ function buildMustHaveDescription(items: any[], rooms: string[]): string {
   return header + body
 }
 
+// ─── ContentBlock type (module scope so runAiAnalysis can use it) ─────────────
+type ContentBlock =
+  | { type: 'document'; source: { type: 'base64'; media_type: 'application/pdf'; data: string } }
+  | { type: 'image'; source: { type: 'base64'; media_type: 'image/jpeg' | 'image/png'; data: string } }
+  | { type: 'text'; text: string }
+
 // ─── AI SYSTEM PROMPT ─────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `Jesteś ekspertem od systemów inteligentnego domu (smart home) w Polsce z wieloletnim doświadczeniem w projektowaniu i wycenie instalacji KNX, Control4, Hikvision i Satel. Przeanalizuj dostarczony rzut i przygotuj profesjonalną wycenę ORAZ opis oferty.
@@ -469,6 +475,248 @@ FORMAT ODPOWIEDZI (ścisły JSON, bez żadnego tekstu poza tym blokiem):
 \`\`\`
 `
 
+// ─── Core AI analysis function (shared between /analyze and /from-survey) ─────
+async function runAiAnalysis(params: {
+  projectId: string
+  fileBlocks: ContentBlock[]
+  fileNames: string[]
+  selectedSystems: string[]
+  userNotes: string
+  quoteName?: string
+  quoteNotes?: string
+  jobId: string
+  createdBy: string
+}): Promise<void> {
+  const { projectId, fileBlocks, fileNames, selectedSystems, userNotes, quoteName, quoteNotes, jobId, createdBy } = params
+
+  try {
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    if (!apiKey) {
+      analysisJobs.set(jobId, { status: 'error', error: 'ANTHROPIC_API_KEY nie jest skonfigurowany na serwerze.', createdAt: Date.now() })
+      return
+    }
+
+    const client = new Anthropic({ apiKey })
+
+    const fileLabel = fileNames.length > 1
+      ? `${fileNames.length} pliki (${fileNames.join(', ')})`
+      : (fileNames[0] ?? 'załączniki ankiety')
+
+    // Build dynamic instruction based on selected systems
+    const systemsInstruction = selectedSystems.length < 4
+      ? `WAŻNE: Uwzględnij TYLKO następujące systemy: ${selectedSystems.join(', ')}. Nie dodawaj urządzeń innych systemów.`
+      : ''
+
+    const userNotesInstruction = userNotes
+      ? `WYTYCZNE KLIENTA / PROJEKTANTA (traktuj jako priorytetowe wskazówki): ${userNotes}`
+      : ''
+
+    // Pobierz wzorce few-shot (max 3 ostatnie) i wstrzyknij do promptu
+    const examples = await db.ai_quote_examples.recent(3)
+    let examplesInstruction = ''
+    if (examples.length > 0) {
+      const exampleBlocks = examples.map((ex: any, i: number) => {
+        const items = (ex.final_items as any[]) || []
+        const topItems = items.slice(0, 15)
+        const itemsSummary = topItems
+          .map((it: any) => `  - [${it.room || '?'}] ${it.name} | ${it.qty}x ${it.unit_price} PLN`)
+          .join('\n')
+        const more = items.length > 15 ? `\n  ... i ${items.length - 15} więcej pozycji` : ''
+        return `### Wzorzec ${i + 1}: "${ex.title}" (${ex.project_type}, ~${ex.area_m2 || '?'}m²)
+Łącznie netto: ${ex.final_total_net ? ex.final_total_net.toFixed(0) + ' PLN' : '?'}
+${ex.human_notes ? 'Uwagi autora: ' + ex.human_notes : ''}
+Przykładowe pozycje wyceny:
+${itemsSummary}${more}`
+      }).join('\n\n')
+
+      examplesInstruction = `PRZYKŁADY NASZYCH POPRZEDNICH WYCEN (użyj jako wzorzec do doboru urządzeń i zakresu):
+${exampleBlocks}
+
+Na podstawie powyższych wzorców dobierz podobny zakres i typy urządzeń dla nowego projektu.`
+    }
+
+    const userInstruction = [
+      `Przeanalizuj ${fileNames.length > 1 ? 'te pliki (rzuty i/lub dane): ' + fileLabel : fileNames.length === 1 ? 'ten rzut' : 'poniższe dane klienta'} i zwróć JSON zgodnie z instrukcją systemową.`,
+      'Uwzględnij wszystkie pomieszczenia ze wszystkich plików.',
+      systemsInstruction,
+      userNotesInstruction,
+      examplesInstruction,
+    ].filter(Boolean).join('\n\n')
+
+    const message = await client.messages.stream({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 32000,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...fileBlocks,
+            { type: 'text', text: userInstruction },
+          ] as ContentBlock[],
+        },
+      ],
+    }).finalMessage()
+
+    const usage = {
+      input_tokens:  message.usage?.input_tokens  ?? 0,
+      output_tokens: message.usage?.output_tokens ?? 0,
+    }
+    const cost_usd = (usage.input_tokens * 3 + usage.output_tokens * 15) / 1_000_000
+    console.log(`[AI Quote] Tokeny: input=${usage.input_tokens} output=${usage.output_tokens} koszt=${cost_usd.toFixed(4)} USD`)
+
+    const rawText = message.content[0].type === 'text' ? message.content[0].text : ''
+    console.log('[AI Quote] Model: claude-sonnet-4-5 | stop_reason:', message.stop_reason, '| długość:', rawText.length)
+    console.log('[AI Quote] Podgląd odpowiedzi (500 znaków):\n', rawText.slice(0, 500))
+
+    let jsonString: string | null = null
+
+    // Strategy 1a: complete code block  ```json ... ```
+    const completeBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+    if (completeBlockMatch && completeBlockMatch[1]) {
+      jsonString = completeBlockMatch[1].trim()
+      console.log('[AI Quote] Strategia 1a (complete code block) – długość:', jsonString.length)
+    }
+
+    // Strategy 1b: opening code block without closing (truncated response)
+    if (!jsonString) {
+      const openBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]+)$/)
+      if (openBlockMatch && openBlockMatch[1]) {
+        const candidate = openBlockMatch[1].replace(/\n?```\s*$/, '').trim()
+        if (candidate.startsWith('{')) {
+          jsonString = candidate
+          console.log('[AI Quote] Strategia 1b (truncated code block) – długość:', jsonString.length)
+        }
+      }
+    }
+
+    // Strategy 2: find first { to last } by character search
+    if (!jsonString) {
+      const start = rawText.indexOf('{')
+      const end = rawText.lastIndexOf('}')
+      if (start !== -1 && end !== -1 && end > start) {
+        jsonString = rawText.slice(start, end + 1)
+        console.log('[AI Quote] Strategia 2 (bracket search) – długość:', jsonString.length)
+      }
+    }
+
+    if (!jsonString) {
+      console.error('[AI Quote] Nie znaleziono JSON w odpowiedzi.')
+      analysisJobs.set(jobId, { status: 'error', error: 'AI nie zwróciło poprawnego formatu JSON. Spróbuj ponownie.', createdAt: Date.now() })
+      return
+    }
+
+    let parsed: any
+    try {
+      parsed = JSON.parse(jsonrepair(jsonString))
+      console.log('[AI Quote] JSON sparsowany poprawnie (jsonrepair)')
+    } catch (err: any) {
+      console.error('[AI Quote] Błąd JSON.parse po jsonrepair:', err.message)
+      analysisJobs.set(jobId, { status: 'error', error: `Błąd parsowania odpowiedzi AI: ${err.message}`, createdAt: Date.now() })
+      return
+    }
+
+    const rooms: string[] = Array.isArray(parsed.rooms) ? parsed.rooms : []
+    const rawItems: any[] = Array.isArray(parsed.line_items) ? parsed.line_items : []
+
+    const description = {
+      must_have: '',
+      nice_to_have: parsed.description?.nice_to_have || '',
+      premium: parsed.description?.premium || '',
+    }
+
+    const catalogItems = await db.product_catalog.all()
+
+    const items = rawItems.map((item: any, index: number) => {
+      const itemName = (item.name || '').toLowerCase()
+      const itemSku  = (item.sku  || '').trim().toLowerCase()
+
+      const catalogMatch = catalogItems.find((c: any) => {
+        if (itemSku && c.sku && c.sku.toLowerCase() === itemSku) return true
+        const cName = (c.name || '').toLowerCase()
+        return (
+          c.brand === item.brand &&
+          itemName.length > 6 &&
+          (
+            cName.includes(itemName.slice(0, Math.min(itemName.length, 25))) ||
+            itemName.includes(cName.slice(0, Math.min(cName.length, 25)))
+          )
+        )
+      })
+
+      const qty = Number(item.qty) || 1
+      const unit_price = catalogMatch ? catalogMatch.unit_price : (Number(item.unit_price) || 0)
+      const discount_pct = 0
+      const total = qty * unit_price * (1 - discount_pct / 100)
+
+      return {
+        id: uuidv4(),
+        room: item.room || '',
+        brand: item.brand || 'KNX',
+        category: item.category || '',
+        name: catalogMatch ? catalogMatch.name : (item.name || ''),
+        qty,
+        unit: item.unit || 'szt.',
+        unit_price,
+        discount_pct,
+        total,
+        catalog_item_id: catalogMatch ? catalogMatch.id : null,
+        sort_order: index,
+      }
+    })
+
+    description.must_have = buildMustHaveDescription(items, rooms)
+
+    const totalNet = computeTotal(items)
+    const discountPct = 0
+    const laborPct = 50
+    const { total_after_discount, labor_cost, grand_total } = computeGrandTotal(totalNet, discountPct, laborPct)
+
+    const quote = {
+      id: uuidv4(),
+      project_id: projectId,
+      status: 'draft',
+      floor_plan_filenames: fileNames,
+      floor_plan_originals: fileNames,
+      floor_plan_filename: fileNames[0] ?? null,
+      floor_plan_original: fileNames[0] ?? null,
+      ai_analysis_raw: rawText,
+      rooms_detected: rooms,
+      description,
+      items,
+      total_net: totalNet,
+      discount_pct: discountPct,
+      total_after_discount,
+      labor_cost_pct: laborPct,
+      labor_cost,
+      grand_total,
+      name: quoteName ?? '',
+      notes: quoteNotes ?? '',
+      tokens_input: usage.input_tokens,
+      tokens_output: usage.output_tokens,
+      cost_usd: parseFloat(cost_usd.toFixed(4)),
+      created_at: now(),
+      updated_at: now(),
+      created_by: createdBy,
+    }
+
+    await db.ai_quotes.insert(quote)
+
+    const { ai_analysis_raw: _raw, ...quoteToReturn } = quote
+    analysisJobs.set(jobId, {
+      status: 'done',
+      createdAt: Date.now(),
+      result: {
+        ...quoteToReturn,
+        _usage: { ...usage, cost_usd: parseFloat(cost_usd.toFixed(4)) },
+      },
+    })
+  } catch (err: any) {
+    const errorMessage = err?.error?.message || err?.message || 'Nieznany błąd analizy AI'
+    analysisJobs.set(jobId, { status: 'error', error: `Błąd analizy AI: ${errorMessage}`, createdAt: Date.now() })
+  }
+}
+
 // ─── GET /jobs/:jobId — sprawdź status analizy AI ──────────────────────────
 router.get('/jobs/:jobId', (req: Request, res: Response) => {
   const job = analysisJobs.get(req.params.jobId)
@@ -533,294 +781,57 @@ router.post('/analyze', upload.array('floor_plans', 10), async (req: Request, re
   analysisJobs.set(jobId, { status: 'processing', createdAt: Date.now() })
   res.status(202).json({ jobId })
 
-  // Kontynuuj asynchronicznie (nie blokuj HTTP response)
-  ;(async () => {
-  try {
-    const client = new Anthropic({ apiKey })
+  // Build content blocks for all files
+  const fileBlocks: ContentBlock[] = []
+  for (const file of files) {
+    const ext = path.extname(file.originalname).toLowerCase()
+    const fileBuffer = fs.readFileSync(file.path)
 
-    type ContentBlock =
-      | { type: 'document'; source: { type: 'base64'; media_type: 'application/pdf'; data: string } }
-      | { type: 'image'; source: { type: 'base64'; media_type: 'image/jpeg' | 'image/png'; data: string } }
-      | { type: 'text'; text: string }
-
-    // Build content blocks for all files
-    const fileBlocks: ContentBlock[] = []
-    for (const file of files) {
-      const ext = path.extname(file.originalname).toLowerCase()
-      const fileBuffer = fs.readFileSync(file.path)
-
-      if (['.xlsx', '.xls'].includes(ext)) {
-        // Parse Excel to CSV text
-        const workbook = XLSX.read(fileBuffer, { type: 'buffer' })
-        const csvParts = workbook.SheetNames.map(name => {
-          const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name])
-          return `[Arkusz: ${name}]\n${csv}`
-        })
-        fileBlocks.push({
-          type: 'text',
-          text: `Dane z pliku Excel "${file.originalname}":\n${csvParts.join('\n\n')}`,
-        })
-      } else if (ext === '.pdf') {
-        fileBlocks.push({
-          type: 'document',
-          source: { type: 'base64', media_type: 'application/pdf', data: fileBuffer.toString('base64') },
-        })
-      } else {
-        fileBlocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: ext === '.png' ? 'image/png' : 'image/jpeg',
-            data: fileBuffer.toString('base64'),
-          },
-        })
-      }
-    }
-
-    const fileLabel = files.length > 1
-      ? `${files.length} pliki (${files.map(f => f.originalname).join(', ')})`
-      : files[0].originalname
-
-    // Build dynamic instruction based on selected systems and features
-    const systemsInstruction = selectedSystems.length < 4
-      ? `WAŻNE: Uwzględnij TYLKO następujące systemy: ${selectedSystems.join(', ')}. Nie dodawaj urządzeń innych systemów.`
-      : ''
-    const featuresInstruction = selectedFeatures.length > 0
-      ? `WAŻNE: Uwzględnij TYLKO następujące instalacje/funkcje: ${selectedFeatures.join(', ')}. Nie dodawaj urządzeń ani funkcji spoza tej listy.`
-      : ''
-    const userNotesInstruction = userNotes
-      ? `WYTYCZNE KLIENTA / PROJEKTANTA (traktuj jako priorytetowe wskazówki): ${userNotes}`
-      : ''
-
-    // Pobierz wzorce few-shot (max 3 ostatnie) i wstrzyknij do promptu
-    const examples = await db.ai_quote_examples.recent(3)
-    let examplesInstruction = ''
-    if (examples.length > 0) {
-      const exampleBlocks = examples.map((ex: any, i: number) => {
-        const items = (ex.final_items as any[]) || []
-        const topItems = items.slice(0, 15) // max 15 pozycji z każdego wzorca żeby nie puchnąć prompt
-        const itemsSummary = topItems
-          .map((it: any) => `  - [${it.room || '?'}] ${it.name} | ${it.qty}x ${it.unit_price} PLN`)
-          .join('\n')
-        const more = items.length > 15 ? `\n  ... i ${items.length - 15} więcej pozycji` : ''
-        return `### Wzorzec ${i + 1}: "${ex.title}" (${ex.project_type}, ~${ex.area_m2 || '?'}m²)
-Łącznie netto: ${ex.final_total_net ? ex.final_total_net.toFixed(0) + ' PLN' : '?'}
-${ex.human_notes ? 'Uwagi autora: ' + ex.human_notes : ''}
-Przykładowe pozycje wyceny:
-${itemsSummary}${more}`
-      }).join('\n\n')
-
-      examplesInstruction = `PRZYKŁADY NASZYCH POPRZEDNICH WYCEN (użyj jako wzorzec do doboru urządzeń i zakresu):
-${exampleBlocks}
-
-Na podstawie powyższych wzorców dobierz podobny zakres i typy urządzeń dla nowego projektu.`
-    }
-
-    const userInstruction = [
-      `Przeanalizuj ${files.length > 1 ? 'te pliki (rzuty i/lub dane): ' + fileLabel : 'ten rzut'} i zwróć JSON zgodnie z instrukcją systemową.`,
-      'Uwzględnij wszystkie pomieszczenia ze wszystkich plików.',
-      systemsInstruction,
-      featuresInstruction,
-      userNotesInstruction,
-      examplesInstruction,
-    ].filter(Boolean).join('\n\n')
-
-    // Używamy stream().finalMessage() zamiast create() — wymagane przy max_tokens > ~4096
-    // bo Anthropic SDK rzuca błąd "Streaming is required for long operations"
-    const message = await client.messages.stream({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 32000,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            ...fileBlocks,
-            { type: 'text', text: userInstruction },
-          ] as ContentBlock[],
+    if (['.xlsx', '.xls'].includes(ext)) {
+      const workbook = XLSX.read(fileBuffer, { type: 'buffer' })
+      const csvParts = workbook.SheetNames.map((name: string) => {
+        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name])
+        return `[Arkusz: ${name}]\n${csv}`
+      })
+      fileBlocks.push({
+        type: 'text',
+        text: `Dane z pliku Excel "${file.originalname}":\n${csvParts.join('\n\n')}`,
+      })
+    } else if (ext === '.pdf') {
+      fileBlocks.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: fileBuffer.toString('base64') },
+      })
+    } else {
+      fileBlocks.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: ext === '.png' ? 'image/png' : 'image/jpeg',
+          data: fileBuffer.toString('base64'),
         },
-      ],
-    }).finalMessage()
-
-    // Capture token usage for cost estimation
-    const usage = {
-      input_tokens:  message.usage?.input_tokens  ?? 0,
-      output_tokens: message.usage?.output_tokens ?? 0,
-    }
-    // claude-sonnet-4-5: $3/MTok input, $15/MTok output (2025)
-    const cost_usd = (usage.input_tokens * 3 + usage.output_tokens * 15) / 1_000_000
-    console.log(`[AI Quote] Tokeny: input=${usage.input_tokens} output=${usage.output_tokens} koszt=${cost_usd.toFixed(4)} USD`)
-
-    // Extract JSON — multiple strategies for robustness
-    const rawText = message.content[0].type === 'text' ? message.content[0].text : ''
-    console.log('[AI Quote] Model:', 'claude-sonnet-4-6', '| stop_reason:', message.stop_reason, '| długość:', rawText.length)
-    console.log('[AI Quote] Podgląd odpowiedzi (500 znaków):\n', rawText.slice(0, 500))
-
-    let jsonString: string | null = null
-
-    // Strategy 1a: complete code block  ```json ... ```
-    const completeBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
-    if (completeBlockMatch && completeBlockMatch[1]) {
-      jsonString = completeBlockMatch[1].trim()
-      console.log('[AI Quote] Strategia 1a (complete code block) – długość:', jsonString.length)
-    }
-
-    // Strategy 1b: opening code block without closing (truncated response)
-    if (!jsonString) {
-      const openBlockMatch = rawText.match(/```(?:json)?\s*\n?([\s\S]+)$/)
-      if (openBlockMatch && openBlockMatch[1]) {
-        const candidate = openBlockMatch[1].replace(/\n?```\s*$/, '').trim()
-        if (candidate.startsWith('{')) {
-          jsonString = candidate
-          console.log('[AI Quote] Strategia 1b (truncated code block) – długość:', jsonString.length)
-        }
-      }
-    }
-
-    // Strategy 2: find first { to last } by character search
-    if (!jsonString) {
-      const start = rawText.indexOf('{')
-      const end = rawText.lastIndexOf('}')
-      if (start !== -1 && end !== -1 && end > start) {
-        jsonString = rawText.slice(start, end + 1)
-        console.log('[AI Quote] Strategia 2 (bracket search) – długość:', jsonString.length)
-      }
-    }
-
-    if (!jsonString) {
-      console.error('[AI Quote] Nie znaleziono JSON w odpowiedzi. Pełna odpowiedź:\n', rawText)
-      res.status(422).json({
-        error: 'AI nie zwróciło poprawnego formatu JSON. Spróbuj ponownie z wyraźniejszym rzutem.',
-        raw: rawText.slice(0, 500),
       })
-      return
     }
-
-    let parsed: any
-    try {
-      parsed = JSON.parse(jsonrepair(jsonString))
-      console.log('[AI Quote] JSON sparsowany poprawnie (jsonrepair)')
-    } catch (err: any) {
-      console.error('[AI Quote] Błąd JSON.parse po jsonrepair:', err.message)
-      console.error('[AI Quote] jsonString (pierwsze 800 znaków):\n', jsonString.slice(0, 800))
-      res.status(422).json({
-        error: 'Błąd parsowania odpowiedzi AI. Spróbuj ponownie.',
-        hint: err.message,
-      })
-      return
-    }
-
-    const rooms: string[] = Array.isArray(parsed.rooms) ? parsed.rooms : []
-    const rawItems: any[] = Array.isArray(parsed.line_items) ? parsed.line_items : []
-
-    // must_have zostanie nadpisane po zbudowaniu items — programatycznie z faktycznych pozycji
-    const description = {
-      must_have: '',
-      nice_to_have: parsed.description?.nice_to_have || '',
-      premium: parsed.description?.premium || '',
-    }
-
-    // Enrich items: try to match catalog items
-    const catalogItems = await db.product_catalog.all()
-
-    const items = rawItems.map((item: any, index: number) => {
-      const itemName = (item.name || '').toLowerCase()
-      const itemSku  = (item.sku  || '').trim().toLowerCase()
-
-      const catalogMatch = catalogItems.find((c: any) => {
-        // 1. dopasowanie po SKU (najdokładniejsze)
-        if (itemSku && c.sku && c.sku.toLowerCase() === itemSku) return true
-        // 2. dopasowanie po marce + fragmentcie nazwy
-        const cName = (c.name || '').toLowerCase()
-        return (
-          c.brand === item.brand &&
-          itemName.length > 6 &&
-          (
-            cName.includes(itemName.slice(0, Math.min(itemName.length, 25))) ||
-            itemName.includes(cName.slice(0, Math.min(cName.length, 25)))
-          )
-        )
-      })
-
-      const qty = Number(item.qty) || 1
-      // Jeśli znaleziono produkt w katalogu → użyj ceny KATALOGOWEJ
-      // AI może mieć nieaktualne lub wymyślone ceny
-      const unit_price = catalogMatch
-        ? catalogMatch.unit_price
-        : (Number(item.unit_price) || 0)
-      const discount_pct = 0
-      const total = qty * unit_price * (1 - discount_pct / 100)
-
-      return {
-        id: uuidv4(),
-        room: item.room || '',
-        brand: item.brand || 'KNX',
-        category: item.category || '',
-        name: catalogMatch ? catalogMatch.name : (item.name || ''),
-        qty,
-        unit: item.unit || 'szt.',
-        unit_price,
-        discount_pct,
-        total,
-        catalog_item_id: catalogMatch ? catalogMatch.id : null,
-        sort_order: index,
-      }
-    })
-
-    // ── Generuj must_have z faktycznych pozycji ───────────────────────────
-    description.must_have = buildMustHaveDescription(items, rooms)
-
-    const totalNet = computeTotal(items)
-    const discountPct = 0
-    const laborPct = 50
-    const { total_after_discount, labor_cost, grand_total } = computeGrandTotal(totalNet, discountPct, laborPct)
-
-    const quote = {
-      id: uuidv4(),
-      project_id: projectId,
-      status: 'draft',
-      floor_plan_filenames: files.map(f => f.filename),
-      floor_plan_originals: files.map(f => f.originalname),
-      // backward compat
-      floor_plan_filename: files[0]?.filename ?? null,
-      floor_plan_original: files[0]?.originalname ?? null,
-      ai_analysis_raw: rawText,
-      rooms_detected: rooms,
-      description,
-      items,
-      total_net: totalNet,
-      discount_pct: discountPct,
-      total_after_discount,
-      labor_cost_pct: laborPct,
-      labor_cost,
-      grand_total,
-      notes: '',
-      tokens_input: usage.input_tokens,
-      tokens_output: usage.output_tokens,
-      cost_usd: parseFloat(cost_usd.toFixed(4)),
-      created_at: now(),
-      updated_at: now(),
-      created_by: (req as any).user?.id || '',
-    }
-
-    await db.ai_quotes.insert(quote)
-
-    const { ai_analysis_raw: _raw, ...quoteToReturn } = quote
-    analysisJobs.set(jobId, {
-      status: 'done',
-      createdAt: Date.now(),
-      result: {
-        ...quoteToReturn,
-        _usage: { ...usage, cost_usd: parseFloat(cost_usd.toFixed(4)) },
-      },
-    })
-
-  } catch (err: any) {
-    cleanupFiles()
-    const errorMessage = err?.error?.message || err?.message || 'Nieznany błąd analizy AI'
-    analysisJobs.set(jobId, { status: 'error', error: `Błąd analizy AI: ${errorMessage}`, createdAt: Date.now() })
   }
-  })()
+
+  // Features instruction is /analyze-specific — prepend to userNotes
+  const featuresInstruction = selectedFeatures.length > 0
+    ? `WAŻNE: Uwzględnij TYLKO następujące instalacje/funkcje: ${selectedFeatures.join(', ')}. Nie dodawaj urządzeń ani funkcji spoza tej listy.`
+    : ''
+  const combinedNotes = [featuresInstruction, userNotes].filter(Boolean).join('\n\n')
+
+  // Kontynuuj asynchronicznie (nie blokuj HTTP response)
+  runAiAnalysis({
+    projectId,
+    fileBlocks,
+    fileNames: files.map(f => f.originalname),
+    selectedSystems,
+    userNotes: combinedNotes,
+    jobId,
+    createdBy: (req as any).user?.id || '',
+  }).catch(() => {
+    cleanupFiles()
+  })
 })
 
 // ─── POST /manual ──────────────────────────────────────────────────────────────
@@ -889,6 +900,204 @@ router.post('/manual', async (req: Request, res: Response) => {
   res.status(201).json(quote)
   } catch {
     res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
+// ─── POST /from-survey/:surveyId — generuj wycenę AI z ankiety klienta ────────
+// WAŻNE: musi być zarejestrowane PRZED /:id aby Express nie pomylił "from-survey" z quoteId
+router.post('/from-survey/:surveyId', async (req: Request, res: Response) => {
+  try {
+    const { projectId, surveyId } = req.params
+
+    // 1. Fetch survey from DB (includes attachments)
+    const survey = await db.client_surveys.find(surveyId)
+
+    // 2. Validate
+    if (!survey) {
+      res.status(404).json({ error: 'Ankieta nie znaleziona' })
+      return
+    }
+    if (survey.project_id !== projectId) {
+      res.status(403).json({ error: 'Ankieta nie należy do tego projektu' })
+      return
+    }
+    if (survey.status !== 'submitted') {
+      res.status(400).json({ error: 'Ankieta nie została jeszcze wypełniona przez klienta (status musi być "submitted")' })
+      return
+    }
+
+    // 3. Build ContentBlock[] from survey.attachments
+    const attachments: any[] = (survey as any).attachments ?? []
+    const fileBlocks: ContentBlock[] = []
+    const fileNames: string[] = []
+
+    if (attachments.length > 0) {
+      for (const att of attachments) {
+        const fileName: string = att.file_name ?? 'załącznik'
+        const ext = fileName.toLowerCase()
+        fileNames.push(fileName)
+
+        if (ext.endsWith('.pdf')) {
+          fileBlocks.push({
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: att.file_data },
+          })
+        } else if (ext.endsWith('.png')) {
+          fileBlocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: att.file_data },
+          })
+        } else {
+          fileBlocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: att.file_data },
+          })
+        }
+      }
+    } else {
+      // No attachments — use text block with client description
+      const responses: Record<string, any> = (survey as any).responses ?? {}
+      const descText = responses.dream_description || responses.additional_notes || 'Brak opisu'
+      fileBlocks.push({
+        type: 'text',
+        text: `Brak załączonych rzutów. Klient opisał swoje oczekiwania:\n${descText}`,
+      })
+    }
+
+    // 4. Build userNotes string from survey responses
+    const responses: Record<string, any> = (survey as any).responses ?? {}
+
+    const BUILDING_TYPE_MAP: Record<string, string> = {
+      detached: 'Dom wolnostojący',
+      semi_detached: 'Bliźniak',
+      apartment: 'Mieszkanie',
+      townhouse: 'Szeregowiec',
+      commercial: 'Lokal komercyjny',
+    }
+    const IS_NEW_BUILD_MAP: Record<string, string> = {
+      new: 'Nowy budynek (w budowie)',
+      renovation: 'Remont / modernizacja',
+      existing: 'Istniejący budynek',
+    }
+    const CONTROL_MAP: Record<string, string> = {
+      app: 'Aplikacja mobilna',
+      voice: 'Sterowanie głosowe',
+      panel: 'Panele dotykowe',
+      remote: 'Pilot',
+      all: 'Kombinacja wszystkich',
+    }
+    const AUTOMATION_MAP: Record<string, string> = {
+      basic: 'Podstawowa automatyka (oświetlenie, temp)',
+      comfort: 'Komfort (sceny, harmonogramy)',
+      full: 'Pełna automatyzacja (dom "myśli" za mnie)',
+    }
+    const PRIORITY_MAP: Record<string, string> = {
+      security: 'Bezpieczeństwo i ochrona',
+      comfort: 'Komfort i wygoda',
+      energy: 'Oszczędność energii',
+      prestige: 'Prestiż i design',
+    }
+    const BUDGET_MAP: Record<string, string> = {
+      under_30k: 'do 30 000 PLN',
+      '30k_70k': '30 000–70 000 PLN',
+      '70k_150k': '70 000–150 000 PLN',
+      '150k_300k': '100 000–200 000 PLN',
+      over_300k: 'powyżej 300 000 PLN',
+    }
+    const PHASING_MAP: Record<string, string> = {
+      all_at_once: 'Pełna realizacja od razu',
+      phases: 'Etapami',
+      mvp: 'MVP — tylko kluczowe systemy',
+    }
+    const TIMELINE_MAP: Record<string, string> = {
+      asap: 'Jak najszybciej',
+      '6months': 'W ciągu 6 miesięcy',
+      '1year': 'W ciągu roku',
+      flexible: 'Elastycznie',
+    }
+    const SYSTEM_NAME_MAP: Record<string, string> = {
+      lighting: 'Inteligentne oświetlenie',
+      hvac: 'Ogrzewanie i klimatyzacja',
+      blinds: 'Rolety i żaluzje',
+      alarm: 'Alarm',
+      access: 'Kontrola dostępu',
+      cctv: 'Monitoring CCTV',
+      audio: 'Multiroom Audio',
+      av: 'Home Cinema / AV',
+      garden: 'Ogród i zewnętrze',
+      ev: 'Ładowarka EV',
+      pv: 'Fotowoltaika',
+      voice: 'Sterowanie głosowe',
+      ai_monitoring: 'Monitoring AI (lokalny, prywatny)',
+    }
+
+    const systems: string[] = Array.isArray(responses.systems) ? responses.systems : []
+    const systemsDisplay = systems.map((s: string) => SYSTEM_NAME_MAP[s] ?? s).join(', ') || 'Nie podano'
+
+    const userNotes = [
+      'DANE Z ANKIETY KLIENTA:',
+      responses.building_type ? `- Typ budynku: ${BUILDING_TYPE_MAP[responses.building_type] ?? responses.building_type}` : '',
+      responses.is_new_build !== undefined ? `- Stan: ${IS_NEW_BUILD_MAP[String(responses.is_new_build)] ?? String(responses.is_new_build)}` : '',
+      responses.area_m2 ? `- Powierzchnia: ${responses.area_m2} m²` : '',
+      responses.floors_count ? `- Kondygnacje: ${responses.floors_count}` : '',
+      responses.rooms_count ? `- Pokoje/strefy: ${responses.rooms_count}` : '',
+      responses.location ? `- Lokalizacja: ${responses.location}` : '',
+      responses.completion_date ? `- Planowane ukończenie: ${responses.completion_date}` : '',
+      '',
+      `WYBRANE SYSTEMY: ${systemsDisplay}`,
+      '',
+      'PREFERENCJE KLIENTA:',
+      responses.control_preference ? `- Preferowany sposób sterowania: ${CONTROL_MAP[responses.control_preference] ?? responses.control_preference}` : '',
+      responses.automation_level ? `- Poziom automatyzacji: ${AUTOMATION_MAP[responses.automation_level] ?? responses.automation_level}` : '',
+      responses.priority_system ? `- Priorytet: ${PRIORITY_MAP[responses.priority_system] ?? responses.priority_system}` : '',
+      responses.integration_existing ? `- Istniejące systemy: ${responses.integration_existing}` : '',
+      '',
+      'BUDŻET I HARMONOGRAM:',
+      responses.budget_range ? `- Budżet: ${BUDGET_MAP[responses.budget_range] ?? responses.budget_range}` : '',
+      responses.phasing ? `- Podejście do realizacji: ${PHASING_MAP[responses.phasing] ?? responses.phasing}` : '',
+      responses.timeline_urgency ? `- Pilność: ${TIMELINE_MAP[responses.timeline_urgency] ?? responses.timeline_urgency}` : '',
+      '',
+      responses.dream_description ? `WIZJA KLIENTA (bardzo ważne — uwzględnij przy wycenie):\n"${responses.dream_description}"` : '',
+      responses.previous_experience ? `Doświadczenie klienta: ${responses.previous_experience}` : '',
+      responses.additional_notes ? `Dodatkowe uwagi klienta: ${responses.additional_notes}` : '',
+      survey.client_name ? `Klient: ${survey.client_name}` : '',
+    ].filter(s => s !== '').join('\n')
+
+    // 5. Map survey systems to brand systems for selectedSystems
+    const brandSystemsSet = new Set<string>()
+    for (const s of systems) {
+      if (['lighting', 'hvac', 'blinds', 'audio', 'ev', 'pv', 'garden'].includes(s)) brandSystemsSet.add('KNX')
+      if (['alarm', 'access'].includes(s)) {
+        brandSystemsSet.add('Satel')
+        if (s === 'access') brandSystemsSet.add('Hikvision')
+      }
+      if (['cctv', 'ai_monitoring'].includes(s)) brandSystemsSet.add('Hikvision')
+      if (['av', 'voice'].includes(s)) brandSystemsSet.add('Control4')
+    }
+    const selectedSystems = brandSystemsSet.size > 0
+      ? Array.from(brandSystemsSet)
+      : ['KNX', 'Control4', 'Hikvision', 'Satel']
+
+    // 6. Create jobId, return 202 immediately
+    const jobId = uuidv4()
+    analysisJobs.set(jobId, { status: 'processing', createdAt: Date.now() })
+    res.status(202).json({ jobId })
+
+    // 7. Run AI analysis asynchronously
+    runAiAnalysis({
+      projectId,
+      fileBlocks,
+      fileNames: fileNames.length > 0 ? fileNames : ['ankieta_klienta'],
+      selectedSystems,
+      userNotes,
+      quoteName: `Wycena z ankiety — ${survey.client_name || 'klient'}`,
+      quoteNotes: `Wygenerowana automatycznie z ankiety klienta: ${survey.client_name || ''}`,
+      jobId,
+      createdBy: (req as any).user?.id || '',
+    })
+  } catch (err: any) {
+    const msg = err?.message || 'Błąd serwera'
+    res.status(500).json({ error: msg })
   }
 })
 

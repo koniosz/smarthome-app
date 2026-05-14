@@ -209,6 +209,13 @@ export const aiQuotesApi = {
     )
     return pollJob(`/projects/${projectId}/ai-quotes/jobs/${jobId}`)
   },
+
+  fromSurvey: async (projectId: string, surveyId: string): Promise<AiQuote> => {
+    const { data: { jobId } } = await api.post(
+      `/projects/${projectId}/ai-quotes/from-survey/${surveyId}`
+    )
+    return pollJob(`/projects/${projectId}/ai-quotes/jobs/${jobId}`)
+  },
 }
 
 // Polling helper — odpytuje /jobs/:id co 3s max 5 minut

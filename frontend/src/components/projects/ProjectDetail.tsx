@@ -820,7 +820,11 @@ export default function ProjectDetail() {
         </div>
 
         {tab === 'survey' && (
-          <SurveyPanel projectId={project.id} projectName={project.name} />
+          <SurveyPanel
+            projectId={project.id}
+            projectName={project.name}
+            onNavigateToAiQuote={() => setTab('ai_quote')}
+          />
         )}
         {tab === 'extra_costs' && (
           <ExtraCostsTab
