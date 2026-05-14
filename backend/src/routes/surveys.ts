@@ -162,10 +162,10 @@ export async function publicGetSurvey(req: Request, res: Response): Promise<void
       survey.viewed_at = now()
     }
 
-    // Return safe public data (no internal fields)
-    const { project, attachments, ...surveyData } = survey as any
+    // Return { survey, project_name } — frontend destructures this exact shape
+    const { project, ...surveyData } = survey as any
     res.json({
-      ...surveyData,
+      survey: surveyData,          // includes attachments
       project_name: project?.name || '',
     })
   } catch (e: any) {
