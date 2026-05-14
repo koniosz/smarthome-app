@@ -1028,7 +1028,8 @@ router.post('/from-survey/:surveyId', async (req: Request, res: Response) => {
       ev: 'Ładowarka EV',
       pv: 'Fotowoltaika',
       voice: 'Sterowanie głosowe',
-      ai_monitoring: 'Monitoring AI (lokalny, prywatny)',
+      spa: 'Strefa SPA (basen, jacuzzi, sauna)',
+      ai_monitoring: 'AI Concierge (lokalny, prywatny)',
     }
 
     const systems: string[] = Array.isArray(responses.systems) ? responses.systems : []
@@ -1066,7 +1067,7 @@ router.post('/from-survey/:surveyId', async (req: Request, res: Response) => {
     // 5. Map survey systems to brand systems for selectedSystems
     const brandSystemsSet = new Set<string>()
     for (const s of systems) {
-      if (['lighting', 'hvac', 'blinds', 'audio', 'ev', 'pv', 'garden'].includes(s)) brandSystemsSet.add('KNX')
+      if (['lighting', 'hvac', 'blinds', 'audio', 'ev', 'pv', 'garden', 'spa'].includes(s)) brandSystemsSet.add('KNX')
       if (['alarm', 'access'].includes(s)) {
         brandSystemsSet.add('Satel')
         if (s === 'access') brandSystemsSet.add('Hikvision')

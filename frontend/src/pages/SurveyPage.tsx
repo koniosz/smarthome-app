@@ -46,7 +46,8 @@ const SYSTEMS = [
   { key: 'ev', icon: '⚡', title: 'Ładowarka EV', desc: 'Inteligentna stacja ładowania samochodu elektrycznego' },
   { key: 'pv', icon: '☀️', title: 'Fotowoltaika / energia', desc: 'Integracja z PV, magazyn energii, zarządzanie mocą' },
   { key: 'voice', icon: '🎙️', title: 'Sterowanie głosowe', desc: 'Kompatybilność z Alexa, Google Assistant, Apple HomeKit' },
-  { key: 'ai_monitoring', icon: '🤖', title: 'Monitoring AI', desc: 'Pełny monitoring z wielu kamer: rozpoznawanie obiektów, osób i sytuacji, wnioskowanie i bieżące douczanie lokalnego AI, które zna każdy obszar domu. Dane przechowywane wyłącznie lokalnie — dostęp tylko dla Ciebie.' },
+  { key: 'spa', icon: '🏊', title: 'Strefa SPA', desc: 'Automatyczne sterowanie basenem, jacuzzi i sauną — temperatura, filtracja, oświetlenie, harmonogramy, integracja z systemem Smart Home' },
+  { key: 'ai_monitoring', icon: '🤖', title: 'AI Concierge', desc: 'Pełny monitoring z wielu kamer: rozpoznawanie obiektów, osób i sytuacji, wnioskowanie i bieżące douczanie lokalnego AI, które zna cały obszar otoczenia domu. Dane przechowywane wyłącznie lokalnie — dostęp tylko dla Ciebie.' },
 ]
 
 const BUDGET_OPTIONS = [

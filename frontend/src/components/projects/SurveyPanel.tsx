@@ -42,6 +42,8 @@ const SYSTEM_LABELS: Record<string, string> = {
   ev: '⚡ Ładowarka EV',
   pv: '☀️ Fotowoltaika / energia',
   voice: '🎙️ Sterowanie głosowe',
+  spa: '🏊 Strefa SPA',
+  ai_monitoring: '🤖 AI Concierge',
 }
 
 interface ResponseGroup {
