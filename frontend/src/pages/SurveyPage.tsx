@@ -589,7 +589,7 @@ function Step5({
 
 // ── Main SurveyPage ────────────────────────────────────────────────────────────
 
-type PageState = 'loading' | 'not_found' | 'already_submitted' | 'form' | 'submitted'
+type PageState = 'loading' | 'not_found' | 'error' | 'already_submitted' | 'form' | 'submitted'
 
 const STEP_LABELS = [
   'Twój dom',
@@ -623,7 +623,10 @@ export default function SurveyPage() {
           setPageState('form')
         }
       })
-      .catch(() => setPageState('not_found'))
+      .catch((err: any) => {
+        const status = err?.response?.status
+        setPageState(status === 404 ? 'not_found' : 'error')
+      })
   }, [token])
 
   const updateResponses = (patch: Partial<SurveyResponses>) => {
@@ -672,6 +675,25 @@ export default function SurveyPage() {
           <div className="text-6xl mb-4">🔍</div>
           <h1 className="text-2xl font-bold text-gray-800 mb-2">Ankieta nie znaleziona</h1>
           <p className="text-gray-500">Link do ankiety jest nieprawidłowy lub wygasł. Skontaktuj się z firmą, która przesłała Ci tę ankietę.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Server error ─────────────────────────────────────────────────────────────
+  if (pageState === 'error') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-violet-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+          <div className="text-6xl mb-4">⚠️</div>
+          <h1 className="text-2xl font-bold text-gray-800 mb-2">Błąd połączenia</h1>
+          <p className="text-gray-500 mb-4">Nie udało się załadować ankiety. Odśwież stronę lub spróbuj ponownie za chwilę.</p>
+          <button
+            onClick={() => { setPageState('loading'); window.location.reload() }}
+            className="bg-violet-600 text-white px-6 py-2 rounded-xl font-semibold hover:bg-violet-700 transition-colors"
+          >
+            Odśwież stronę
+          </button>
         </div>
       </div>
     )

@@ -492,14 +492,20 @@ export async function sendSurveyEmail(
               Wypełnienie ankiety zajmuje około <strong>5–10 minut</strong>. Zebrane informacje pomogą nam zaprojektować system Smart Home idealnie dopasowany do Waszego stylu życia.
             </p>
 
-            <!-- CTA Button -->
+            <!-- CTA Button — solid color for max email client compat (no gradient/shadow) -->
             <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 32px">
               <tr>
                 <td align="center">
-                  <a href="${surveyUrl}"
-                     style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#ffffff;text-decoration:none;padding:18px 48px;border-radius:12px;font-size:17px;font-weight:700;letter-spacing:.01em;box-shadow:0 4px 16px rgba(124,58,237,.4)">
-                    Wypełnij ankietę →
-                  </a>
+                  <table cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td align="center" bgcolor="#7c3aed" style="border-radius:12px;background:#7c3aed">
+                        <a href="${surveyUrl}"
+                           style="display:inline-block;background:#7c3aed;color:#ffffff;text-decoration:none;padding:18px 48px;border-radius:12px;font-size:17px;font-weight:700;letter-spacing:.01em;font-family:'Segoe UI',Arial,sans-serif">
+                          &#9654;&nbsp; Wypełnij ankietę
+                        </a>
+                      </td>
+                    </tr>
+                  </table>
                 </td>
               </tr>
             </table>
