@@ -18,7 +18,6 @@ interface SurveyResponses {
   systems?: string[]
   // Step 3
   control_preference?: string
-  brand_preference?: string[]
   automation_level?: string
   priority_system?: string
   integration_existing?: string
@@ -47,9 +46,8 @@ const SYSTEMS = [
   { key: 'ev', icon: '⚡', title: 'Ładowarka EV', desc: 'Inteligentna stacja ładowania samochodu elektrycznego' },
   { key: 'pv', icon: '☀️', title: 'Fotowoltaika / energia', desc: 'Integracja z PV, magazyn energii, zarządzanie mocą' },
   { key: 'voice', icon: '🎙️', title: 'Sterowanie głosowe', desc: 'Kompatybilność z Alexa, Google Assistant, Apple HomeKit' },
+  { key: 'ai_monitoring', icon: '🤖', title: 'Monitoring AI', desc: 'Pełny monitoring z wielu kamer: rozpoznawanie obiektów, osób i sytuacji, wnioskowanie i bieżące douczanie lokalnego AI, które zna każdy obszar domu. Dane przechowywane wyłącznie lokalnie — dostęp tylko dla Ciebie.' },
 ]
-
-const BRANDS = ['KNX', 'HDL', 'Control4', 'Loxone', 'Fibaro', 'Ajax', 'Satel', 'Hikvision', 'Dahua', 'Sonos', 'Nie mam preferencji']
 
 const BUDGET_OPTIONS = [
   { value: 'do_20k', label: 'do 20 000 PLN', icon: '🌱' },
@@ -217,27 +215,42 @@ function Step2({ data, onChange }: { data: SurveyResponses; onChange: (d: Partia
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {SYSTEMS.map(s => {
           const active = selected.includes(s.key)
+          const isAI = s.key === 'ai_monitoring'
           return (
             <button
               key={s.key}
               type="button"
               onClick={() => toggle(s.key)}
-              className={`text-left p-4 rounded-xl border-2 transition-all ${
+              className={`text-left p-4 rounded-xl border-2 transition-all ${isAI ? 'sm:col-span-2' : ''} ${
                 active
-                  ? 'border-violet-500 bg-violet-50'
-                  : 'border-gray-200 bg-white hover:border-violet-300 hover:bg-violet-50/30'
+                  ? isAI
+                    ? 'border-indigo-500 bg-indigo-50'
+                    : 'border-violet-500 bg-violet-50'
+                  : isAI
+                    ? 'border-indigo-200 bg-gradient-to-r from-indigo-50/60 to-violet-50/60 hover:border-indigo-400'
+                    : 'border-gray-200 bg-white hover:border-violet-300 hover:bg-violet-50/30'
               }`}
             >
               <div className="flex items-start gap-3">
                 <span className="text-2xl">{s.icon}</span>
                 <div className="flex-1 min-w-0">
-                  <div className={`text-sm font-semibold mb-0.5 ${active ? 'text-violet-700' : 'text-gray-800'}`}>
-                    {s.title}
+                  <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                    <span className={`text-sm font-semibold ${active ? (isAI ? 'text-indigo-700' : 'text-violet-700') : 'text-gray-800'}`}>
+                      {s.title}
+                    </span>
+                    {isAI && (
+                      <>
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">AI</span>
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">🔒 100% lokalnie</span>
+                      </>
+                    )}
                   </div>
                   <div className="text-xs text-gray-500 leading-snug">{s.desc}</div>
                 </div>
                 <div className={`w-5 h-5 rounded flex items-center justify-center border-2 shrink-0 mt-0.5 transition-colors ${
-                  active ? 'bg-violet-600 border-violet-600 text-white' : 'border-gray-300'
+                  active
+                    ? isAI ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-violet-600 border-violet-600 text-white'
+                    : 'border-gray-300'
                 }`}>
                   {active && <svg viewBox="0 0 12 9" className="w-3 h-3 fill-none stroke-current stroke-2"><polyline points="1,4 4.5,7.5 11,1" /></svg>}
                 </div>
@@ -260,16 +273,6 @@ function Step2({ data, onChange }: { data: SurveyResponses; onChange: (d: Partia
 // ── Step 3 ─────────────────────────────────────────────────────────────────────
 
 function Step3({ data, onChange }: { data: SurveyResponses; onChange: (d: Partial<SurveyResponses>) => void }) {
-  const selectedBrands = data.brand_preference ?? []
-
-  const toggleBrand = (brand: string) => {
-    if (selectedBrands.includes(brand)) {
-      onChange({ brand_preference: selectedBrands.filter(b => b !== brand) })
-    } else {
-      onChange({ brand_preference: [...selectedBrands, brand] })
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div>
@@ -288,29 +291,6 @@ function Step3({ data, onChange }: { data: SurveyResponses; onChange: (d: Partia
           ].map(opt => (
             <RadioCard key={opt} label={opt} value={opt} selected={data.control_preference === opt} onChange={v => onChange({ control_preference: v })} />
           ))}
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Preferowane marki / systemy (możesz wybrać kilka)</label>
-        <div className="flex flex-wrap gap-2">
-          {BRANDS.map(brand => {
-            const active = selectedBrands.includes(brand)
-            return (
-              <button
-                key={brand}
-                type="button"
-                onClick={() => toggleBrand(brand)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium border-2 transition-all ${
-                  active
-                    ? 'bg-violet-600 border-violet-600 text-white'
-                    : 'bg-white border-gray-200 text-gray-600 hover:border-violet-300'
-                }`}
-              >
-                {brand}
-              </button>
-            )
-          })}
         </div>
       </div>
 
