@@ -19,7 +19,7 @@ import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import aiQuotesRouter from './routes/ai-quotes'
 import productCatalogRouter from './routes/product-catalog'
-import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, submitRejectExtraCost, approveSmsByJwt } from './routes/extra-costs'
+import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, submitRejectExtraCost, approveSmsByJwt, listAllExtraCosts } from './routes/extra-costs'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -99,6 +99,7 @@ app.use('/api/ai-quote-examples', aiQuoteExamplesRouter)
 
 // Extra Costs (koszty dodatkowe)
 app.use('/api/projects/:projectId/extra-costs', extraCostsRouter)
+app.get('/api/extra-costs', listAllExtraCosts)
 app.put('/api/extra-costs/:id', updateExtraCost)
 app.delete('/api/extra-costs/:id', deleteExtraCost)
 

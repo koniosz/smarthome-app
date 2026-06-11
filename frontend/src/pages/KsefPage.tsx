@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, X, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug } from 'lucide-react'
 import { ksefApi, bankApi, projectsApi } from '../api/client'
 import type { KsefInvoice, KsefStatus, Project } from '../types'
 import AllocationPanel from '../components/ksef/AllocationPanel'
@@ -8,177 +9,229 @@ function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-function StatusBar({ status, onSync, onResetSession, syncing, resettingSession, dateFrom, onDateFromChange }: {
-  status: KsefStatus | null
-  onSync: () => void
-  onResetSession: () => void
-  syncing: boolean
-  resettingSession: boolean
-  dateFrom: string
-  onDateFromChange: (v: string) => void
-}) {
-  if (!status) return null
-  const lastSync = status.last_sync_at
-    ? new Date(status.last_sync_at).toLocaleString('pl-PL')
-    : 'Nigdy'
-
-  // Wykryj czy sync nie działa od dawna (>8h)
-  const syncStale = status.last_sync_at
-    ? (Date.now() - new Date(status.last_sync_at).getTime()) > 8 * 60 * 60 * 1000
-    : true
-
-  return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <span className={`w-2.5 h-2.5 rounded-full ${status.configured ? (status.last_sync_error ? 'bg-red-400' : 'bg-green-500') : 'bg-red-400'}`} />
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            KSeF {status.env?.includes('prod') ? 'Produkcja' : 'Test'} 2.0
-          </span>
-          {status.nip && <span className="text-xs text-gray-400">NIP: {status.nip}</span>}
-        </div>
-
-        <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 ml-auto">
-          <span>📄 {status.invoice_count} faktur</span>
-          <span className="text-orange-500 font-medium">⏳ {status.unassigned_count} nieprzypisanych</span>
-          <span className={syncStale && !status.last_sync_error ? 'text-orange-400' : ''}>
-            Ostatnia sync: {lastSync}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Od:</label>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={e => onDateFromChange(e.target.value)}
-            className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-violet-500"
-          />
-        </div>
-
-        <button
-          onClick={onSync}
-          disabled={syncing || !status.configured}
-          className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
-        >
-          {syncing ? (
-            <><span className="animate-spin inline-block">⟳</span> Synchronizacja...</>
-          ) : (
-            <><span>⟳</span> Synchronizuj</>
-          )}
-        </button>
-      </div>
-
-      {/* Błąd synchronizacji — widoczny tylko gdy wystąpił */}
-      {status.last_sync_error && (
-        <div className="flex items-start gap-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3">
-          <span className="text-red-500 text-base flex-shrink-0 mt-0.5">⚠️</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-red-700 dark:text-red-400 mb-1">
-              Błąd synchronizacji KSeF — faktury nie są pobierane automatycznie
-            </p>
-            <p className="text-xs text-red-600 dark:text-red-500 font-mono break-all leading-relaxed">
-              {status.last_sync_error}
-            </p>
-            <p className="text-xs text-red-500 dark:text-red-400 mt-2">
-              {status.last_sync_error?.includes('429')
-                ? <>⏳ Przekroczono limit 20 zapytań/h KSeF API. Synchronizacja wznowi się automatycznie za około 30 minut. Nie klikaj „Synchronizuj" ani „Diagnostyki" — każde kliknięcie zużywa limit.</>
-                : <>Najczęstsza przyczyna: wygasły token autoryzacji KSeF. Kliknij „Zresetuj sesję" aby odtworzyć połączenie. Jeśli błąd się powtarza, sprawdź zmienne <code className="font-mono">KSEF_TOKEN</code> i <code className="font-mono">KSEF_NIP</code> na Render.</>
-              }
-            </p>
-          </div>
-          <button
-            onClick={onResetSession}
-            disabled={resettingSession || !status.configured}
-            className="flex-shrink-0 px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
-          >
-            {resettingSession ? 'Resetowanie…' : '🔄 Zresetuj sesję'}
-          </button>
-        </div>
-      )}
-
-      {!status.configured && (
-        <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 px-3 py-2 rounded-lg">
-          Brak konfiguracji. Ustaw zmienne środowiskowe: <code className="font-mono">KSEF_NIP</code>, <code className="font-mono">KSEF_TOKEN</code>
-        </div>
-      )}
-    </div>
-  )
+function fmtDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—'
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return dateStr
+  return d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
-function AssignModal({ invoice, projects, onClose, onAssigned }: {
+// ─── Inline project assign dropdown ────────────────────────────────────────────
+
+function AssignDropdown({ invoice, projects, onAssigned }: {
   invoice: KsefInvoice
   projects: Project[]
-  onClose: () => void
   onAssigned: (updated: KsefInvoice) => void
 }) {
-  const [projectId, setProjectId] = useState(invoice.project_id ?? '')
-  const [notes, setNotes]         = useState(invoice.notes ?? '')
-  const [saving, setSaving]       = useState(false)
+  const [open, setOpen]     = useState(false)
+  const [saving, setSaving] = useState(false)
+  const ref                 = useRef<HTMLDivElement>(null)
 
-  const handleSave = async () => {
+  useEffect(() => {
+    if (!open) return
+    const handle = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [open])
+
+  const handleAssign = async (projectId: string) => {
     setSaving(true)
     try {
-      const updated = await ksefApi.assign(invoice.id, projectId || null, notes)
+      const updated = await ksefApi.assign(invoice.id, projectId || null, invoice.notes ?? '')
       onAssigned(updated)
-      onClose()
+      setOpen(false)
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-        <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100 mb-1">Przypisz fakturę do projektu</h2>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-          {invoice.invoice_number ?? invoice.ksef_number} · {invoice.seller_name} · {fmt(invoice.gross_amount)} PLN
-        </p>
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        disabled={saving}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '7px 12px',
+          fontSize: 13,
+          fontWeight: 500,
+          borderRadius: 8,
+          border: open ? '1px solid #93c5fd' : '1px solid #e2e8f0',
+          background: open ? '#eff6ff' : '#ffffff',
+          color: '#1d4ed8',
+          cursor: 'pointer',
+          transition: 'all 0.15s',
+          whiteSpace: 'nowrap',
+        }}
+        onMouseEnter={e => {
+          if (!open) {
+            (e.currentTarget as HTMLButtonElement).style.background = '#eff6ff'
+            ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#93c5fd'
+          }
+        }}
+        onMouseLeave={e => {
+          if (!open) {
+            (e.currentTarget as HTMLButtonElement).style.background = '#ffffff'
+            ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'
+          }
+        }}
+      >
+        <Folder size={13} strokeWidth={2} />
+        {saving ? 'Zapisywanie…' : 'Przypisz do projektu'}
+        <ChevronDown size={12} strokeWidth={2.5} style={{ marginLeft: 2 }} />
+      </button>
 
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Projekt</label>
-            <select
-              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
-              value={projectId}
-              onChange={e => setProjectId(e.target.value)}
-            >
-              <option value="">— Nieprzypisana —</option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name} ({p.client_name})</option>
-              ))}
-            </select>
+      {open && (
+        <div style={{
+          position: 'absolute',
+          right: 0,
+          top: 'calc(100% + 6px)',
+          width: 280,
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.14)',
+          zIndex: 50,
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            padding: '8px 12px 4px',
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: '0.05em',
+            color: '#94a3b8',
+            textTransform: 'uppercase',
+          }}>
+            Przypisz jako koszt do
           </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Notatka (opcjonalnie)</label>
-            <textarea
-              rows={2}
-              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              placeholder="np. materiały do salonu, robocizna - etap 2"
-            />
+          <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+            {projects.length === 0 ? (
+              <div style={{ padding: '12px 16px', fontSize: 13, color: '#94a3b8' }}>Brak projektów</div>
+            ) : (
+              projects.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => handleAssign(p.id)}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '10px 16px',
+                    fontSize: 13,
+                    color: '#0f172a',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={{ fontWeight: 500 }}>{p.name}</span>
+                  <span style={{ fontSize: 12, color: '#94a3b8', marginTop: 1 }}>{p.client_name}</span>
+                </button>
+              ))
+            )}
           </div>
         </div>
-
-        <div className="flex justify-end gap-2 mt-4">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
-          >Anuluj</button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50"
-          >
-            {saving ? 'Zapisywanie...' : 'Zapisz'}
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
+
+// ─── KPI card ──────────────────────────────────────────────────────────────────
+
+function KpiCard({ label, value, valueColor, sub }: {
+  label: string
+  value: React.ReactNode
+  valueColor?: string
+  sub: string
+}) {
+  return (
+    <div style={{
+      background: '#ffffff',
+      border: '1px solid #e2e8f0',
+      borderRadius: 12,
+      padding: '20px 24px',
+    }}>
+      <div style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>{label}</div>
+      <div style={{
+        fontSize: 28,
+        fontWeight: 700,
+        letterSpacing: '-0.02em',
+        color: valueColor ?? '#0f172a',
+        fontVariantNumeric: 'tabular-nums',
+        lineHeight: 1.1,
+        marginBottom: 6,
+      }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 12, color: '#94a3b8' }}>{sub}</div>
+    </div>
+  )
+}
+
+// ─── Sync error banner ─────────────────────────────────────────────────────────
+
+function SyncErrorBanner({ status, onResetSession, resettingSession }: {
+  status: KsefStatus
+  onResetSession: () => void
+  resettingSession: boolean
+}) {
+  if (!status.last_sync_error) return null
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 12,
+      background: '#fef2f2',
+      border: '1px solid #fecaca',
+      borderRadius: 12,
+      padding: '14px 18px',
+    }}>
+      <AlertTriangle size={16} color="#dc2626" style={{ flexShrink: 0, marginTop: 2 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 13, fontWeight: 600, color: '#b91c1c', margin: '0 0 4px' }}>
+          Błąd synchronizacji KSeF — faktury nie są pobierane automatycznie
+        </p>
+        <p style={{ fontSize: 12, color: '#dc2626', fontFamily: 'monospace', wordBreak: 'break-all', margin: '0 0 6px' }}>
+          {status.last_sync_error}
+        </p>
+        <p style={{ fontSize: 12, color: '#b91c1c', margin: 0 }}>
+          {status.last_sync_error?.includes('429')
+            ? 'Przekroczono limit 20 zapytań/h KSeF API. Synchronizacja wznowi się automatycznie za około 30 minut.'
+            : 'Najczęstsza przyczyna: wygasły token autoryzacji KSeF. Kliknij „Zresetuj sesję" aby odtworzyć połączenie.'
+          }
+        </p>
+      </div>
+      <button
+        onClick={onResetSession}
+        disabled={resettingSession || !status.configured}
+        style={{
+          flexShrink: 0,
+          padding: '6px 14px',
+          fontSize: 12,
+          fontWeight: 500,
+          background: '#dc2626',
+          color: '#ffffff',
+          border: 'none',
+          borderRadius: 8,
+          cursor: 'pointer',
+          opacity: resettingSession || !status.configured ? 0.5 : 1,
+        }}
+      >
+        {resettingSession ? 'Resetowanie…' : 'Zresetuj sesję'}
+      </button>
+    </div>
+  )
+}
+
+// ─── XML invoice preview modal ─────────────────────────────────────────────────
 
 interface InvoiceLineItem {
   nr: string
@@ -192,12 +245,9 @@ interface InvoiceLineItem {
 
 function parseInvoiceXml(xml: string): { fields: Record<string, string>; items: InvoiceLineItem[] } {
   const doc = new DOMParser().parseFromString(xml, 'application/xml')
-
-  // getElementsByTagNameNS('*', tag) dopasowuje lokalną nazwę tagu niezależnie od namespace
   const el = (tag: string, parent: Element | Document = doc): string => {
     const hits = parent.getElementsByTagNameNS('*', tag)
     if (hits.length > 0) return hits[0].textContent?.trim() ?? ''
-    // fallback bez namespace (np. brak xmlns w dokumencie)
     const hits2 = parent.getElementsByTagName(tag)
     return hits2.length > 0 ? hits2[0].textContent?.trim() ?? '' : ''
   }
@@ -205,10 +255,8 @@ function parseInvoiceXml(xml: string): { fields: Record<string, string>; items: 
     for (const tag of tags) { const v = el(tag, parent); if (v) return v }
     return ''
   }
-
-  // Pozycje faktury
-  const rowsNS  = doc.getElementsByTagNameNS('*', 'FaWiersz')
-  const rows    = rowsNS.length > 0 ? rowsNS : doc.getElementsByTagName('FaWiersz')
+  const rowsNS = doc.getElementsByTagNameNS('*', 'FaWiersz')
+  const rows   = rowsNS.length > 0 ? rowsNS : doc.getElementsByTagName('FaWiersz')
   const items: InvoiceLineItem[] = Array.from(rows).map(row => ({
     nr:        elFirst(['NrWierszaFa', 'NrWiersza'], row),
     name:      el('P_7',  row),
@@ -229,7 +277,6 @@ function parseInvoiceXml(xml: string): { fields: Record<string, string>; items: 
     'Wartość brutto':   el('P_17'),
     'Waluta':           el('KodWaluty') || 'PLN',
   }
-
   return { fields, items }
 }
 
@@ -262,73 +309,72 @@ function InvoicePreviewModal({ invoice, onClose }: {
   const { fields, items } = xml ? parseInvoiceXml(xml) : { fields: {}, items: [] }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: '#ffffff', borderRadius: 16, boxShadow: '0 24px 64px rgba(15,23,42,0.25)', width: '100%', maxWidth: 640, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: '1px solid #f1f5f9' }}>
           <div>
-            <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">Podgląd faktury</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{invoice.invoice_number ?? invoice.ksef_number}</p>
+            <h2 style={{ fontSize: 15, fontWeight: 600, color: '#0f172a', margin: 0 }}>Podgląd faktury</h2>
+            <p style={{ fontSize: 12, color: '#94a3b8', margin: '2px 0 0' }}>{invoice.invoice_number ?? invoice.ksef_number}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {xml && (
               <button
                 onClick={handleDownload}
-                className="px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
+                style={{ padding: '6px 14px', fontSize: 12, fontWeight: 500, color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: 8, background: 'transparent', cursor: 'pointer' }}
               >
-                ⬇ Pobierz XML
+                Pobierz XML
               </button>
             )}
-            <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
+            <button
+              onClick={onClose}
+              style={{ padding: 6, border: 'none', background: 'transparent', cursor: 'pointer', color: '#94a3b8', borderRadius: 6 }}
+            >
+              <X size={16} />
             </button>
           </div>
         </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {loading && <div className="text-center py-12 text-gray-400 text-sm">Pobieranie z KSeF…</div>}
-          {error   && <div className="text-sm text-red-500 bg-red-50 dark:bg-red-950/20 px-4 py-3 rounded-lg">{error}</div>}
-
+        <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+          {loading && <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8', fontSize: 14 }}>Pobieranie z KSeF…</div>}
+          {error   && <div style={{ fontSize: 13, color: '#b91c1c', background: '#fef2f2', padding: '12px 16px', borderRadius: 8 }}>{error}</div>}
           {xml && (
-            <div className="space-y-4">
-              {/* Kluczowe pola */}
-              <div className="grid grid-cols-2 gap-3">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 {Object.entries(fields).filter(([, v]) => v).map(([k, v]) => (
-                  <div key={k} className="bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded-lg">
-                    <div className="text-xs text-gray-400 mb-0.5">{k}</div>
-                    <div className="text-sm font-medium text-gray-800 dark:text-gray-100">{v}</div>
+                  <div key={k} style={{ background: '#f8fafc', padding: '8px 12px', borderRadius: 8 }}>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>{k}</div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: '#0f172a' }}>{v}</div>
                   </div>
                 ))}
               </div>
-
-              {/* Pozycje faktury */}
               {items.length > 0 && (
                 <div>
-                  <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Pozycje faktury ({items.length})</h3>
-                  <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-700">
-                    <table className="w-full text-xs text-gray-800 dark:text-gray-100">
+                  <h3 style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                    Pozycje faktury ({items.length})
+                  </h3>
+                  <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid #f1f5f9' }}>
+                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                       <thead>
-                        <tr className="bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
-                          <th className="text-left px-3 py-2 font-semibold">Nazwa towaru/usługi</th>
-                          <th className="text-right px-3 py-2 font-semibold">Ilość</th>
-                          <th className="text-left px-3 py-2 font-semibold">J.m.</th>
-                          <th className="text-right px-3 py-2 font-semibold">Cena netto</th>
-                          <th className="text-right px-3 py-2 font-semibold">Wartość netto</th>
-                          <th className="text-right px-3 py-2 font-semibold">VAT %</th>
+                        <tr style={{ background: '#f8fafc' }}>
+                          {['Nazwa', 'Ilość', 'J.m.', 'Cena netto', 'Wartość netto', 'VAT %'].map(h => (
+                            <th key={h} style={{ padding: '8px 10px', textAlign: h === 'Nazwa' || h === 'J.m.' ? 'left' : 'right', fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>{h}</th>
+                          ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                      <tbody>
                         {items.map((item, i) => (
-                          <tr key={i} className="bg-white dark:bg-gray-800">
-                            <td className="px-3 py-2 font-medium max-w-[200px]">{item.name}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{item.qty}</td>
-                            <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{item.unit}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{item.unitPrice}</td>
-                            <td className="px-3 py-2 text-right tabular-nums font-semibold">{item.netValue}</td>
-                            <td className="px-3 py-2 text-right text-gray-500 dark:text-gray-400">{item.vatRate}%</td>
+                          <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '8px 10px', color: '#0f172a', fontWeight: 500 }}>{item.name}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{item.qty}</td>
+                            <td style={{ padding: '8px 10px', color: '#64748b' }}>{item.unit}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{item.unitPrice}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{item.netValue}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{item.vatRate}%</td>
                           </tr>
                         ))}
                       </tbody>
@@ -336,11 +382,9 @@ function InvoicePreviewModal({ invoice, onClose }: {
                   </div>
                 </div>
               )}
-
-              {/* Dane z naszej bazy */}
-              <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Dane z bazy</h3>
-                <div className="grid grid-cols-2 gap-3">
+              <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 16 }}>
+                <h3 style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Dane z bazy</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   {[
                     ['Sprzedawca', invoice.seller_name],
                     ['NIP sprzedawcy', invoice.seller_nip],
@@ -350,18 +394,16 @@ function InvoicePreviewModal({ invoice, onClose }: {
                     ['Data wystawienia', invoice.invoice_date],
                     ['Numer KSeF', invoice.ksef_number],
                   ].filter(([, v]) => v).map(([k, v]) => (
-                    <div key={k as string} className="bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded-lg">
-                      <div className="text-xs text-gray-400 mb-0.5">{k}</div>
-                      <div className="text-sm text-gray-700 dark:text-gray-300 break-all">{v}</div>
+                    <div key={k as string} style={{ background: '#f8fafc', padding: '8px 12px', borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>{k}</div>
+                      <div style={{ fontSize: 13, color: '#475569', wordBreak: 'break-all' }}>{v}</div>
                     </div>
                   ))}
                 </div>
               </div>
-
-              {/* Raw XML (zwijany) */}
-              <details className="border border-gray-100 dark:border-gray-800 rounded-lg">
-                <summary className="px-4 py-2 text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">Surowy XML</summary>
-                <pre className="px-4 py-3 text-xs font-mono text-gray-600 dark:text-gray-400 overflow-x-auto max-h-64 overflow-y-auto bg-gray-50 dark:bg-gray-800 rounded-b-lg whitespace-pre-wrap break-all">
+              <details style={{ border: '1px solid #f1f5f9', borderRadius: 8 }}>
+                <summary style={{ padding: '8px 16px', fontSize: 12, color: '#94a3b8', cursor: 'pointer', userSelect: 'none' }}>Surowy XML</summary>
+                <pre style={{ padding: '12px 16px', fontSize: 11, fontFamily: 'monospace', color: '#475569', overflowX: 'auto', maxHeight: 240, overflowY: 'auto', background: '#f8fafc', borderRadius: '0 0 8px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>
                   {xml}
                 </pre>
               </details>
@@ -372,6 +414,8 @@ function InvoicePreviewModal({ invoice, onClose }: {
     </div>
   )
 }
+
+// ─── Payment badge (unchanged logic) ──────────────────────────────────────────
 
 function PaymentBadge({ invoice, onUpdated }: { invoice: KsefInvoice; onUpdated: (inv: KsefInvoice) => void }) {
   const [changing, setChanging] = useState(false)
@@ -390,52 +434,43 @@ function PaymentBadge({ invoice, onUpdated }: { invoice: KsefInvoice; onUpdated:
 
   const { payment_status: status, payment_source: source } = invoice
 
-  let badgeClass = 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+  let badgeBg = '#f1f5f9'; let badgeColor = '#64748b'
   let label = 'Nieznana'
 
   if (status === 'paid') {
-    badgeClass = 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-    label = 'Oplacona'
+    badgeBg = '#f0fdf4'; badgeColor = '#15803d'; label = 'Opłacona'
   } else if (status === 'unpaid') {
-    badgeClass = 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-    label = 'Nieoplacona'
+    badgeBg = '#fef2f2'; badgeColor = '#b91c1c'; label = 'Nieopłacona'
   } else if (status === 'partial') {
-    badgeClass = 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400'
-    label = 'Czesciowa'
+    badgeBg = '#fffbeb'; badgeColor = '#b45309'; label = 'Częściowa'
   }
 
-  const sourceLabel = source === 'mt940' ? 'MT940' : source === 'przelewy24' ? 'P24' : source === 'manual' ? 'reczna' : null
+  const sourceLabel = source === 'mt940' ? 'MT940' : source === 'przelewy24' ? 'P24' : source === 'manual' ? 'ręczna' : null
 
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium cursor-default ${badgeClass}`}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: badgeBg, color: badgeColor, width: 'fit-content' }}>
         {label}
       </span>
-      {sourceLabel && (
-        <span className="text-xs text-gray-400 dark:text-gray-500">{sourceLabel}</span>
-      )}
+      {sourceLabel && <span style={{ fontSize: 11, color: '#94a3b8' }}>{sourceLabel}</span>}
       {!changing && (
-        <div className="flex gap-1 mt-0.5">
+        <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
           {status !== 'paid' && (
-            <button
-              onClick={() => handleChange('paid')}
-              className="text-xs text-green-600 dark:text-green-400 hover:underline"
-            >Oplacona</button>
+            <button onClick={() => handleChange('paid')} style={{ fontSize: 11, color: '#15803d', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Opłacona</button>
           )}
           {status !== 'unpaid' && (
-            <button
-              onClick={() => handleChange('unpaid')}
-              className="text-xs text-red-500 dark:text-red-400 hover:underline"
-            >Nieoplacona</button>
+            <button onClick={() => handleChange('unpaid')} style={{ fontSize: 11, color: '#b91c1c', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Nieopłacona</button>
           )}
         </div>
       )}
-      {changing && <span className="text-xs text-gray-400">Zapisywanie…</span>}
+      {changing && <span style={{ fontSize: 11, color: '#94a3b8' }}>Zapisywanie…</span>}
     </div>
   )
 }
 
-function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
+// ─── "Do przypisania" table row ────────────────────────────────────────────────
+
+function UnassignedRow({ invoice, projects, onUpdated, onRemoved }: {
   invoice: KsefInvoice
   projects: Project[]
   onUpdated: (inv: KsefInvoice) => void
@@ -443,12 +478,290 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
 }) {
   const [showAllocations, setShowAllocations] = useState(false)
   const [previewing, setPreviewing]           = useState(false)
+  const [confirmingPayment, setConfirmingPayment] = useState(false)
+
+  const hasSuggestion = !!(invoice.suggested_project_id) && !invoice.project_id && !invoice.suggestion_dismissed
 
   const handleRemove = async () => {
     if (!confirm('Usunąć tę fakturę z bazy? (Nie usuwa jej z KSeF)')) return
     await ksefApi.remove(invoice.id)
     onRemoved(invoice.id)
   }
+
+  return (
+    <>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '2fr 1.3fr 0.9fr 1fr 1fr 1.7fr',
+        alignItems: 'center',
+        padding: '16px 24px',
+        borderBottom: '1px solid #f1f5f9',
+        transition: 'background 0.1s',
+        gap: 8,
+      }}
+        onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = '#f8fafc'}
+        onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
+      >
+        {/* Sprzedawca */}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {invoice.seller_name ?? '—'}
+          </div>
+          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+            {invoice.seller_nip ?? ''}
+          </div>
+        </div>
+
+        {/* Nr faktury */}
+        <div style={{ fontSize: 14, fontWeight: 500, color: '#0f172a', fontVariantNumeric: 'tabular-nums', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {invoice.invoice_number ?? invoice.ksef_number ?? '—'}
+        </div>
+
+        {/* Wystawiono */}
+        <div style={{ fontSize: 14, color: '#64748b', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+          {fmtDate(invoice.invoice_date)}
+        </div>
+
+        {/* Netto */}
+        <div style={{ textAlign: 'right', fontSize: 14, color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>
+          {fmt(invoice.net_amount)}
+        </div>
+
+        {/* Brutto */}
+        <div style={{ textAlign: 'right', fontSize: 14, fontWeight: 600, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+          {fmt(invoice.gross_amount)}
+        </div>
+
+        {/* Przypisanie */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+          <button
+            onClick={async () => {
+              const updated = await ksefApi.share(invoice.id, !invoice.is_shared)
+              onUpdated(updated)
+            }}
+            title={invoice.is_shared ? 'Cofnij udostępnienie' : 'Udostępnij'}
+            style={{ padding: 5, border: 'none', background: 'none', cursor: 'pointer', color: invoice.is_shared ? '#16a34a' : '#cbd5e1', borderRadius: 6 }}
+          >
+            <Share2 size={13} />
+          </button>
+          <button
+            onClick={() => setPreviewing(true)}
+            title="Podgląd faktury"
+            style={{ padding: 5, border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8', borderRadius: 6 }}
+          >
+            <Eye size={13} />
+          </button>
+          <button
+            onClick={() => setShowAllocations(v => !v)}
+            title="Alokacje"
+            style={{
+              padding: '4px 8px',
+              fontSize: 11,
+              fontWeight: 500,
+              border: `1px solid ${showAllocations ? '#7c3aed' : '#e2e8f0'}`,
+              borderRadius: 6,
+              background: showAllocations ? '#7c3aed' : 'transparent',
+              color: showAllocations ? '#ffffff' : '#7c3aed',
+              cursor: 'pointer',
+            }}
+          >
+            Alokacje
+          </button>
+          <AssignDropdown invoice={invoice} projects={projects} onAssigned={onUpdated} />
+          <button
+            onClick={handleRemove}
+            title="Usuń z bazy"
+            style={{ padding: 5, border: 'none', background: 'none', cursor: 'pointer', color: '#cbd5e1', borderRadius: 6 }}
+            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = '#dc2626'}
+            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = '#cbd5e1'}
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* Suggestion banner */}
+      {hasSuggestion && (
+        <div style={{ background: '#fffbeb', borderBottom: '1px solid #fef3c7', padding: '10px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, color: '#b45309' }}>Sugerowany projekt:</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>
+                {projects.find(p => p.id === invoice.suggested_project_id)?.name ?? invoice.suggested_project_id}
+              </span>
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                ({projects.find(p => p.id === invoice.suggested_project_id)?.client_name ?? '—'})
+              </span>
+              {invoice.suggestion_score && (
+                <span style={{ fontSize: 11, color: '#b45309' }}>pewność: {Math.round(invoice.suggestion_score * 100)}%</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {!confirmingPayment ? (
+                <>
+                  <button
+                    onClick={() => setConfirmingPayment(true)}
+                    style={{ padding: '5px 12px', fontSize: 12, fontWeight: 500, background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: 8, cursor: 'pointer' }}
+                  >
+                    Przypisz do projektu
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const updated = await ksefApi.dismissSuggestion(invoice.id)
+                      onUpdated(updated)
+                    }}
+                    style={{ padding: '5px 12px', fontSize: 12, color: '#64748b', background: 'none', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer' }}
+                  >
+                    Odrzuć
+                  </button>
+                </>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#ffffff', border: '1px solid #bbf7d0', borderRadius: 8, padding: '6px 12px' }}>
+                  <span style={{ fontSize: 12, color: '#475569' }}>Czy też utworzyć wpłatę klienta?</span>
+                  <button onClick={async () => { const u = await ksefApi.confirmSuggestion(invoice.id, true); onUpdated(u); setConfirmingPayment(false) }}
+                    style={{ padding: '3px 10px', fontSize: 11, fontWeight: 500, background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+                    Tak, utwórz wpłatę
+                  </button>
+                  <button onClick={async () => { const u = await ksefApi.confirmSuggestion(invoice.id, false); onUpdated(u); setConfirmingPayment(false) }}
+                    style={{ padding: '3px 10px', fontSize: 11, color: '#475569', background: 'none', border: '1px solid #e2e8f0', borderRadius: 6, cursor: 'pointer' }}>
+                    Tylko przypisz
+                  </button>
+                  <button onClick={() => setConfirmingPayment(false)} style={{ fontSize: 11, color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer' }}>Anuluj</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Allocation panel */}
+      {showAllocations && (
+        <div style={{ background: '#f5f3ff', borderBottom: '1px solid #ddd6fe', padding: '12px 24px' }}>
+          <AllocationPanel invoice={invoice} isAdmin={true} />
+        </div>
+      )}
+
+      {previewing && (
+        <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />
+      )}
+    </>
+  )
+}
+
+// ─── "Ostatnio przypisane" row ─────────────────────────────────────────────────
+
+function AssignedRow({ invoice, projects, onUpdated }: {
+  invoice: KsefInvoice
+  projects: Project[]
+  onUpdated: (inv: KsefInvoice) => void
+}) {
+  const [unassigning, setUnassigning] = useState(false)
+
+  const project = projects.find(p => p.id === invoice.project_id)
+
+  const handleUnassign = async () => {
+    setUnassigning(true)
+    try {
+      const updated = await ksefApi.assign(invoice.id, null, invoice.notes ?? '')
+      onUpdated(updated)
+    } finally {
+      setUnassigning(false)
+    }
+  }
+
+  const assignedAt = invoice.invoice_date ?? invoice.created_at
+
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '2fr 1.3fr 0.9fr 1fr 1fr 1.7fr',
+      alignItems: 'center',
+      padding: '14px 24px',
+      borderBottom: '1px solid #f1f5f9',
+      gap: 8,
+    }}
+      onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = '#f8fafc'}
+      onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
+    >
+      {/* Sprzedawca */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {invoice.seller_name ?? '—'}
+        </div>
+        <div style={{ fontSize: 12, color: '#cbd5e1', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+          {invoice.invoice_number ?? invoice.ksef_number ?? '—'}
+        </div>
+      </div>
+
+      {/* Przypisano dnia */}
+      <div style={{ fontSize: 13, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
+        przypisano {fmtDate(assignedAt)}
+      </div>
+
+      {/* (pusta kolumna daty wystawienia) */}
+      <div />
+
+      {/* Netto */}
+      <div style={{ textAlign: 'right', fontSize: 14, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
+        {fmt(invoice.net_amount)}
+      </div>
+
+      {/* Brutto */}
+      <div style={{ textAlign: 'right', fontSize: 14, fontWeight: 600, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>
+        {fmt(invoice.gross_amount)}
+      </div>
+
+      {/* Projekt + cofnij */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+        {project && (
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '4px 12px',
+            borderRadius: 999,
+            fontSize: 13,
+            fontWeight: 600,
+            background: '#eff6ff',
+            color: '#1d4ed8',
+          }}>
+            <Folder size={11} />
+            {project.name}
+          </span>
+        )}
+        <button
+          onClick={handleUnassign}
+          disabled={unassigning}
+          style={{
+            padding: '5px 12px',
+            fontSize: 12,
+            fontWeight: 500,
+            border: '1px solid #e2e8f0',
+            borderRadius: 8,
+            background: 'transparent',
+            color: '#64748b',
+            cursor: 'pointer',
+            opacity: unassigning ? 0.5 : 1,
+          }}
+        >
+          {unassigning ? '…' : 'Cofnij'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Full invoice row for "Wszystkie faktury" advanced view ────────────────────
+
+function FullInvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
+  invoice: KsefInvoice
+  projects: Project[]
+  onUpdated: (inv: KsefInvoice) => void
+  onRemoved: (id: string) => void
+}) {
+  const [showAllocations, setShowAllocations] = useState(false)
+  const [previewing, setPreviewing]           = useState(false)
+  const [confirmingPayment, setConfirmingPayment] = useState(false)
 
   const isAssignedToProject = !!invoice.project_id
   const internalAllocs = (invoice.allocations ?? []).filter((a: any) => a.allocation_type === 'internal')
@@ -459,235 +772,166 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
   const isOutgoing = invoice.invoice_direction === 'outgoing'
   const hasSuggestion = !!(invoice.suggested_project_id) && !invoice.project_id && !invoice.suggestion_dismissed
 
-  const COST_CAT_LABELS: Record<string, string> = {
-    cogs: 'COGS', sales: 'Sprzedaż', ga: 'G&A', operations: 'Operacje', financial: 'Finansowe',
-  }
-  const COST_CAT_ICONS: Record<string, string> = {
-    cogs: '🏗️', sales: '📣', ga: '🏢', operations: '⚙️', financial: '💳',
-  }
+  const COST_CAT_LABELS: Record<string, string> = { cogs: 'COGS', sales: 'Sprzedaż', ga: 'G&A', operations: 'Operacje', financial: 'Finansowe' }
+  const COST_CAT_ICONS: Record<string, string>  = { cogs: '🏗️', sales: '📣', ga: '🏢', operations: '⚙️', financial: '💳' }
   const internalCat = internalAllocs[0]?.cost_category ?? 'cogs'
 
   const REVENUE_SUB_LABELS: Record<string, string> = {
-    installation_complete: 'Instalacja kompletna',
-    installation_partial:  'Instalacja częściowa',
-    hardware_sale:         'Sprzedaż sprzętu',
-    service_maintenance:   'Serwis',
-    additional_works:      'Prace dodatkowe',
-    consulting:            'Doradztwo',
-    gatelynk_license:      'GateLynk',
-    other_revenue:         'Przychód',
+    installation_complete: 'Instalacja kompletna', installation_partial: 'Instalacja częściowa',
+    hardware_sale: 'Sprzedaż sprzętu', service_maintenance: 'Serwis', additional_works: 'Prace dodatkowe',
+    consulting: 'Doradztwo', gatelynk_license: 'GateLynk', other_revenue: 'Przychód',
   }
   const REVENUE_SUB_ICONS: Record<string, string> = {
     installation_complete: '🏠', installation_partial: '🔧', hardware_sale: '📦',
-    service_maintenance: '🛠️', additional_works: '➕', consulting: '💡',
-    gatelynk_license: '🔑', other_revenue: '💰',
+    service_maintenance: '🛠️', additional_works: '➕', consulting: '💡', gatelynk_license: '🔑', other_revenue: '💰',
   }
   const revenueSub = revenueAllocs[0]?.subcategory ?? 'installation_complete'
 
-  const [confirmingPayment, setConfirmingPayment] = useState(false)
+  const handleRemove = async () => {
+    if (!confirm('Usunąć tę fakturę z bazy? (Nie usuwa jej z KSeF)')) return
+    await ksefApi.remove(invoice.id)
+    onRemoved(invoice.id)
+  }
 
   return (
     <>
-      <tr className="group border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
-        <td className="py-2.5 pr-3">
-          <div className="flex items-center gap-1.5">
-            <div className="text-sm font-medium text-gray-800 dark:text-gray-100">
-              {invoice.invoice_number ?? '—'}
-            </div>
+      <tr className="group border-b border-gray-50 hover:bg-gray-50 transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}>
+        <td style={{ padding: '10px 12px 10px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: '#0f172a' }}>{invoice.invoice_number ?? '—'}</div>
             <button
-              title="Kliknij aby zmienić kierunek (Zakupowa ↔ Sprzedażowa)"
-              onClick={async (e) => {
-                e.stopPropagation()
-                const updated = await ksefApi.toggleDirection(invoice.id)
-                onUpdated(updated)
-              }}
-              className="group/dir"
+              title="Kliknij aby zmienić kierunek"
+              onClick={async e => { e.stopPropagation(); const u = await ksefApi.toggleDirection(invoice.id); onUpdated(u) }}
+              style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0 }}
             >
-              {isOutgoing ? (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/60 transition-colors cursor-pointer">
-                  📤 Sprzedażowa <span className="opacity-0 group-hover/dir:opacity-60 text-[9px]">↔</span>
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer">
-                  📥 Zakupowa <span className="opacity-0 group-hover/dir:opacity-60 text-[9px]">↔</span>
-                </span>
-              )}
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 6px', borderRadius: 4, fontSize: 10, fontWeight: 500,
+                background: isOutgoing ? '#dbeafe' : '#f1f5f9', color: isOutgoing ? '#1d4ed8' : '#64748b',
+              }}>
+                {isOutgoing ? '📤 Sprzedażowa' : '📥 Zakupowa'}
+              </span>
             </button>
           </div>
-          <div className="text-xs text-gray-400 font-mono truncate max-w-[180px]" title={invoice.ksef_number ?? ''}>
+          <div style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', marginTop: 2 }}>
             KSeF: {invoice.ksef_number ? invoice.ksef_number.slice(0, 20) + '…' : '—'}
           </div>
           {isOutgoing && invoice.buyer_name && (
-            <div className="text-xs text-blue-500 dark:text-blue-400 mt-0.5 truncate max-w-[180px]">
-              → {invoice.buyer_name}
-            </div>
+            <div style={{ fontSize: 11, color: '#2563eb', marginTop: 2 }}>→ {invoice.buyer_name}</div>
           )}
         </td>
-        <td className="py-2.5 pr-3">
-          <div className="text-sm text-gray-700 dark:text-gray-300">{invoice.seller_name ?? '—'}</div>
-          <div className="text-xs text-gray-400">{invoice.seller_nip ?? ''}</div>
+        <td style={{ padding: '10px 12px' }}>
+          <div style={{ fontSize: 13, color: '#475569' }}>{invoice.seller_name ?? '—'}</div>
+          <div style={{ fontSize: 11, color: '#94a3b8' }}>{invoice.seller_nip ?? ''}</div>
         </td>
-        <td className="py-2.5 pr-3 text-right">
-          <div className="text-sm font-semibold text-gray-800 dark:text-gray-100 tabular-nums">
+        <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
             {fmt(invoice.gross_amount)} {invoice.currency}
           </div>
-          <div className="text-xs text-gray-400 tabular-nums">
+          <div style={{ fontSize: 11, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
             Netto: {fmt(invoice.net_amount)} / VAT: {fmt(invoice.vat_amount)}
           </div>
         </td>
-        <td className="py-2.5 pr-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
+        <td style={{ padding: '10px 12px', fontSize: 13, color: '#64748b', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
           {invoice.invoice_date ?? '—'}
         </td>
-        <td className="py-2.5 pr-3">
+        <td style={{ padding: '10px 12px' }}>
           {isAssignedToProject ? (
             <div>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                ✓ {invoice.project?.name ?? 'Projekt'}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 500, background: '#f0fdf4', color: '#15803d' }}>
+                <Check size={10} /> {invoice.project?.name ?? 'Projekt'}
               </span>
-              {invoice.notes && (
-                <div className="text-xs text-gray-400 mt-0.5 truncate max-w-[160px]">{invoice.notes}</div>
-              )}
+              {invoice.notes && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{invoice.notes}</div>}
             </div>
           ) : isAssignedRevenue ? (
-            <div>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                ✓ {REVENUE_SUB_ICONS[revenueSub]} {REVENUE_SUB_LABELS[revenueSub] ?? 'Przychód'}
-              </span>
-              {revenueAllocs.length > 1 && (
-                <div className="text-xs text-gray-400 mt-0.5">+{revenueAllocs.length - 1} więcej</div>
-              )}
-            </div>
+            <span style={{ display: 'inline-flex', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 500, background: '#f0fdf4', color: '#15803d' }}>
+              <Check size={10} /> {REVENUE_SUB_ICONS[revenueSub]} {REVENUE_SUB_LABELS[revenueSub] ?? 'Przychód'}
+            </span>
           ) : isAssignedInternal ? (
-            <div>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                ✓ {COST_CAT_ICONS[internalCat]} {COST_CAT_LABELS[internalCat] ?? 'Wewnętrzne'}
-              </span>
-              {internalAllocs.length > 1 && (
-                <div className="text-xs text-gray-400 mt-0.5">+{internalAllocs.length - 1} więcej kategorii</div>
-              )}
-            </div>
+            <span style={{ display: 'inline-flex', gap: 4, padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 500, background: '#f0fdf4', color: '#15803d' }}>
+              <Check size={10} /> {COST_CAT_ICONS[internalCat]} {COST_CAT_LABELS[internalCat] ?? 'Wewnętrzne'}
+            </span>
           ) : (
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400">
+            <span style={{ display: 'inline-flex', padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 500, background: '#fffbeb', color: '#b45309' }}>
               Nieprzypisana
             </span>
           )}
         </td>
-        <td className="py-2.5 pr-3">
+        <td style={{ padding: '10px 12px' }}>
           <PaymentBadge invoice={invoice} onUpdated={onUpdated} />
         </td>
-        <td className="py-2.5">
-          <div className="flex items-center gap-1">
+        <td style={{ padding: '10px 24px 10px 12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <button
-              onClick={async () => {
-                const updated = await ksefApi.share(invoice.id, !invoice.is_shared)
-                onUpdated(updated)
-              }}
-              className={`p-1 rounded transition-colors ${invoice.is_shared
-                ? 'text-green-500 dark:text-green-400 hover:text-green-700'
-                : 'text-gray-300 dark:text-gray-600 hover:text-green-500'}`}
-              title={invoice.is_shared ? 'Cofnij udostępnienie' : 'Udostępnij użytkownikom'}
+              onClick={async () => { const u = await ksefApi.share(invoice.id, !invoice.is_shared); onUpdated(u) }}
+              style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: invoice.is_shared ? '#16a34a' : '#cbd5e1' }}
+              title={invoice.is_shared ? 'Cofnij udostępnienie' : 'Udostępnij'}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-              </svg>
+              <Share2 size={13} />
             </button>
             <button
               onClick={() => setPreviewing(true)}
-              className="p-1 text-gray-400 hover:text-violet-600 dark:hover:text-violet-400 rounded transition-colors"
+              style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
               title="Podgląd faktury"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
+              <Eye size={13} />
             </button>
             <button
               onClick={() => setShowAllocations(v => !v)}
-              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${showAllocations
-                ? 'bg-violet-600 text-white'
-                : 'text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20'}`}
+              style={{
+                padding: '3px 8px', fontSize: 11, fontWeight: 500, borderRadius: 6, cursor: 'pointer',
+                border: `1px solid ${showAllocations ? '#7c3aed' : '#e2e8f0'}`,
+                background: showAllocations ? '#7c3aed' : 'transparent',
+                color: showAllocations ? '#ffffff' : '#7c3aed',
+              }}
             >
-              {showAllocations ? '▲ Alokacje' : '▼ Alokacje'}
+              Alokacje
             </button>
+            <AssignDropdown invoice={invoice} projects={projects} onAssigned={onUpdated} />
             <button
               onClick={handleRemove}
-              className="p-1 text-gray-300 hover:text-red-500 dark:text-gray-600 dark:hover:text-red-400 rounded transition-colors"
+              style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#cbd5e1' }}
               title="Usuń z bazy"
+              onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = '#dc2626'}
+              onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = '#cbd5e1'}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-              </svg>
+              <Trash2 size={13} />
             </button>
           </div>
         </td>
       </tr>
-      {/* Panel sugestii projektu dla faktur sprzedażowych */}
       {hasSuggestion && (
-        <tr className="border-b border-amber-100 dark:border-amber-900/30 bg-amber-50/60 dark:bg-amber-950/20">
-          <td colSpan={7} className="px-4 py-2">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-amber-500 text-sm">💡</span>
-                <div className="min-w-0">
-                  <span className="text-xs font-medium text-amber-800 dark:text-amber-300">
-                    Sugerowany projekt:&nbsp;
-                  </span>
-                  <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">
-                    {projects.find(p => p.id === invoice.suggested_project_id)?.name ?? invoice.suggested_project_id}
-                  </span>
-                  <span className="text-[10px] text-gray-400 ml-2">
-                    ({projects.find(p => p.id === invoice.suggested_project_id)?.client_name ?? '—'})
-                  </span>
-                  {invoice.suggestion_score && (
-                    <span className="ml-1.5 text-[10px] text-amber-600 dark:text-amber-400">
-                      pewność: {Math.round(invoice.suggestion_score * 100)}%
-                    </span>
-                  )}
-                </div>
+        <tr style={{ background: '#fffbeb', borderBottom: '1px solid #fef3c7' }}>
+          <td colSpan={7} style={{ padding: '8px 24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 13, color: '#b45309' }}>Sugerowany projekt:</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>
+                  {projects.find(p => p.id === invoice.suggested_project_id)?.name ?? invoice.suggested_project_id}
+                </span>
+                {invoice.suggestion_score && (
+                  <span style={{ fontSize: 11, color: '#b45309' }}>pewność: {Math.round(invoice.suggestion_score * 100)}%</span>
+                )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {!confirmingPayment ? (
                   <>
-                    <button
-                      onClick={() => setConfirmingPayment(true)}
-                      className="px-2.5 py-1 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
-                    >
-                      ✓ Przypisz do projektu
+                    <button onClick={() => setConfirmingPayment(true)} style={{ padding: '5px 12px', fontSize: 12, fontWeight: 500, background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
+                      Przypisz do projektu
                     </button>
-                    <button
-                      onClick={async () => {
-                        const updated = await ksefApi.dismissSuggestion(invoice.id)
-                        onUpdated(updated)
-                      }}
-                      className="px-2.5 py-1 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    >
-                      ✕ Odrzuć
+                    <button onClick={async () => { const u = await ksefApi.dismissSuggestion(invoice.id); onUpdated(u) }} style={{ padding: '5px 12px', fontSize: 12, color: '#64748b', background: 'none', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer' }}>
+                      Odrzuć
                     </button>
                   </>
                 ) : (
-                  <div className="flex items-center gap-2 bg-white dark:bg-gray-900 rounded-lg px-3 py-1.5 border border-green-200 dark:border-green-800">
-                    <span className="text-xs text-gray-600 dark:text-gray-400">Czy też utworzyć wpłatę klienta?</span>
-                    <button
-                      onClick={async () => {
-                        const updated = await ksefApi.confirmSuggestion(invoice.id, true)
-                        onUpdated(updated)
-                        setConfirmingPayment(false)
-                      }}
-                      className="px-2 py-0.5 text-xs font-medium bg-green-600 text-white rounded"
-                    >
-                      ✓ Tak, utwórz wpłatę
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#ffffff', border: '1px solid #bbf7d0', borderRadius: 8, padding: '6px 12px' }}>
+                    <span style={{ fontSize: 12, color: '#475569' }}>Czy też utworzyć wpłatę klienta?</span>
+                    <button onClick={async () => { const u = await ksefApi.confirmSuggestion(invoice.id, true); onUpdated(u); setConfirmingPayment(false) }} style={{ padding: '3px 10px', fontSize: 11, fontWeight: 500, background: '#16a34a', color: '#ffffff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+                      Tak, utwórz wpłatę
                     </button>
-                    <button
-                      onClick={async () => {
-                        const updated = await ksefApi.confirmSuggestion(invoice.id, false)
-                        onUpdated(updated)
-                        setConfirmingPayment(false)
-                      }}
-                      className="px-2 py-0.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
-                    >
+                    <button onClick={async () => { const u = await ksefApi.confirmSuggestion(invoice.id, false); onUpdated(u); setConfirmingPayment(false) }} style={{ padding: '3px 10px', fontSize: 11, color: '#475569', background: 'none', border: '1px solid #e2e8f0', borderRadius: 6, cursor: 'pointer' }}>
                       Tylko przypisz
                     </button>
-                    <button onClick={() => setConfirmingPayment(false)} className="text-xs text-gray-400">Anuluj</button>
+                    <button onClick={() => setConfirmingPayment(false)} style={{ fontSize: 11, color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer' }}>Anuluj</button>
                   </div>
                 )}
               </div>
@@ -696,18 +940,18 @@ function InvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
         </tr>
       )}
       {showAllocations && (
-        <tr className="border-b border-violet-100 dark:border-violet-900/30 bg-violet-50/30 dark:bg-violet-950/10">
-          <td colSpan={7} className="px-4 py-3">
+        <tr style={{ background: '#f5f3ff', borderBottom: '1px solid #ddd6fe' }}>
+          <td colSpan={7} style={{ padding: '12px 24px' }}>
             <AllocationPanel invoice={invoice} isAdmin={true} />
           </td>
         </tr>
       )}
-      {previewing && (
-        <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />
-      )}
+      {previewing && <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />}
     </>
   )
 }
+
+// ─── Main page ─────────────────────────────────────────────────────────────────
 
 export default function KsefPage() {
   const [status, setStatus]     = useState<KsefStatus | null>(null)
@@ -717,16 +961,20 @@ export default function KsefPage() {
   const [loading, setLoading]   = useState(true)
   const [syncing, setSyncing]   = useState(false)
   const [syncMsg, setSyncMsg]   = useState<string | null>(null)
-  const [tab, setTab]               = useState<'all' | 'unassigned' | 'assigned'>('all')
+
+  // View mode: 'faktury' = new Faktury design, 'all' = full admin table
+  const [viewMode, setViewMode]   = useState<'faktury' | 'all'>('faktury')
+  const [tab, setTab]             = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [paymentTab, setPaymentTab] = useState<'all' | 'paid' | 'unpaid'>('all')
-  const [dirTab, setDirTab]         = useState<'all' | 'incoming' | 'outgoing'>('all')
-  const [search, setSearch]         = useState('')
-  const [page, setPage]             = useState(1)
-  const [debugInfo, setDebugInfo]           = useState<any>(null)
-  const [debugging, setDebugging]           = useState(false)
+  const [dirTab, setDirTab]       = useState<'all' | 'incoming' | 'outgoing'>('all')
+  const [search, setSearch]       = useState('')
+  const [page, setPage]           = useState(1)
+  const [debugInfo, setDebugInfo] = useState<any>(null)
+  const [debugging, setDebugging] = useState(false)
   const [resettingSession, setResettingSession] = useState(false)
-  const [dateFrom, setDateFrom]             = useState('2024-01-01')
+  const [dateFrom, setDateFrom]   = useState('2024-01-01')
   const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [showAdminTools, setShowAdminTools]     = useState(false)
   const LIMIT = 50
 
   const load = useCallback(async () => {
@@ -757,10 +1005,10 @@ export default function KsefPage() {
     try {
       const result = await ksefApi.sync(dateFrom || undefined)
       const errTxt = result.errors.length ? `\nBłędy: ${result.errors.join(' | ')}` : ''
-      setSyncMsg(`✓ Pobrano ${result.fetched}, zapisano ${result.saved} nowych faktur${errTxt}`)
+      setSyncMsg(`Pobrano ${result.fetched}, zapisano ${result.saved} nowych faktur${errTxt}`)
       await load()
     } catch (err: any) {
-      setSyncMsg(`✗ Błąd: ${err.response?.data?.error ?? err.message}`)
+      setSyncMsg(`Błąd: ${err.response?.data?.error ?? err.message}`)
     } finally {
       setSyncing(false)
     }
@@ -786,13 +1034,13 @@ export default function KsefPage() {
     try {
       const result = await ksefApi.resetSession()
       if (result.success) {
-        setSyncMsg('✓ Sesja KSeF odtworzona pomyślnie. Kliknij „Synchronizuj" aby pobrać brakujące faktury.')
+        setSyncMsg('Sesja KSeF odtworzona pomyślnie. Kliknij „Synchronizuj" aby pobrać brakujące faktury.')
       } else {
-        setSyncMsg(`✗ Błąd resetu sesji: ${result.error}`)
+        setSyncMsg(`Błąd resetu sesji: ${result.error}`)
       }
       await ksefApi.status().then(setStatus).catch(() => {})
     } catch (err: any) {
-      setSyncMsg(`✗ Błąd resetu sesji: ${err.response?.data?.error ?? err.message}`)
+      setSyncMsg(`Błąd resetu sesji: ${err.response?.data?.error ?? err.message}`)
     } finally {
       setResettingSession(false)
     }
@@ -800,7 +1048,6 @@ export default function KsefPage() {
 
   const handleUpdated = (updated: KsefInvoice) => {
     setInvoices(prev => prev.map(i => i.id === updated.id ? updated : i))
-    // Odśwież status (zmiana liczby nieprzypisanych)
     ksefApi.status().then(setStatus).catch(() => {})
   }
 
@@ -812,218 +1059,231 @@ export default function KsefPage() {
 
   const totalPages = Math.ceil(total / LIMIT)
 
-  return (
-    <div className="p-6 space-y-4 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100">KSeF — Faktury zakupowe</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Faktury pobrane z Krajowego Systemu e-Faktur</p>
-        </div>
-        <button
-          onClick={() => setShowPaymentModal(true)}
-          className="px-4 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors flex items-center gap-2"
-        >
-          Weryfikacja platnosci
-        </button>
-      </div>
+  // Derived data for Faktury view
+  const unassigned = invoices.filter(inv => !inv.project_id && (inv.allocations ?? []).length === 0)
+  const assigned   = invoices.filter(inv => inv.project_id || (inv.allocations ?? []).length > 0)
 
-      {showPaymentModal && (
-        <PaymentVerificationModal
-          onClose={() => setShowPaymentModal(false)}
-          onPaymentsUpdated={load}
-        />
-      )}
+  const unassignedNet   = unassigned.reduce((s, i) => s + (i.net_amount ?? 0), 0)
+  const unassignedGross = unassigned.reduce((s, i) => s + (i.gross_amount ?? 0), 0)
+  const assignedGross   = assigned.reduce((s, i) => s + (i.gross_amount ?? 0), 0)
 
-      <StatusBar
-        status={status}
-        onSync={handleSync}
-        onResetSession={handleResetSession}
-        syncing={syncing}
-        resettingSession={resettingSession}
-        dateFrom={dateFrom}
-        onDateFromChange={setDateFrom}
-      />
+  const lastSync = status?.last_sync_at
+    ? new Date(status.last_sync_at).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null
 
-      {syncMsg && (
-        <div className={`text-sm px-4 py-2 rounded-lg ${syncMsg.startsWith('✓')
-          ? 'bg-green-50 dark:bg-green-950/20 text-green-700 dark:text-green-400'
-          : 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400'}`}>
-          {syncMsg}
-        </div>
-      )}
+  // ── Faktury view ──────────────────────────────────────────────────────────────
 
-      {/* Debug panel */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <button
-          onClick={handleDebug}
-          disabled={debugging}
-          className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
-        >
-          {debugging ? 'Diagnostyka…' : '🔍 Diagnostyka autoryzacji'}
-        </button>
-        <button
-          onClick={async () => {
-            if (!confirm('Usunąć wszystkie faktury z bazy i zresetować synchronizację?')) return
-            const r = await ksefApi.removeAll()
-            setSyncMsg(`✓ Usunięto ${r.deleted} faktur. Kliknij Synchronizuj aby pobrać ponownie.`)
-            await load()
-          }}
-          className="px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors"
-        >
-          🗑 Resetuj bazę faktur
-        </button>
-        {debugInfo && (
-          <button onClick={() => setDebugInfo(null)} className="text-xs text-gray-400 hover:text-gray-600">Zamknij</button>
-        )}
-      </div>
-      {debugInfo && (
-        <div className="bg-gray-900 text-green-400 text-xs font-mono p-4 rounded-xl overflow-x-auto max-h-64 overflow-y-auto">
-          <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
-        </div>
-      )}
+  if (viewMode === 'faktury') {
+    return (
+      <div style={{ padding: '36px 32px 64px', background: '#f8fafc', minHeight: '100vh', fontFamily: "'IBM Plex Sans', system-ui, sans-serif" }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
 
-      {/* Filtry */}
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Przypisanie */}
-        <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-sm">
-          {(['all', 'unassigned', 'assigned'] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => { setTab(t); setPage(1) }}
-              className={`px-3 py-1.5 font-medium transition-colors ${tab === t
-                ? 'bg-violet-600 text-white'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-            >
-              {t === 'all' ? 'Wszystkie' : t === 'unassigned' ? '⏳ Nieprzypisane' : '✓ Przypisane'}
-            </button>
-          ))}
-        </div>
-
-        {/* Płatność */}
-        <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-sm">
-          {([
-            { value: 'all',    label: 'Każda płatność' },
-            { value: 'paid',   label: '✅ Opłacone' },
-            { value: 'unpaid', label: '💳 Nieopłacone' },
-          ] as const).map(t => (
-            <button
-              key={t.value}
-              onClick={() => { setPaymentTab(t.value); setPage(1) }}
-              className={`px-3 py-1.5 font-medium transition-colors ${paymentTab === t.value
-                ? 'bg-violet-600 text-white'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Kierunek */}
-        <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden text-sm">
-          {([
-            { value: 'all',      label: 'Wszystkie typy' },
-            { value: 'incoming', label: '📥 Zakupowe' },
-            { value: 'outgoing', label: '📤 Sprzedażowe' },
-          ] as const).map(t => (
-            <button
-              key={t.value}
-              onClick={() => { setDirTab(t.value); setPage(1) }}
-              className={`px-3 py-1.5 font-medium transition-colors ${dirTab === t.value
-                ? 'bg-violet-600 text-white'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={async () => {
-            const r = await ksefApi.reSuggest()
-            alert(`Sprawdzono ${r.processed} faktur sprzedażowych, dodano ${r.suggested} sugestii.`)
-            load()
-          }}
-          className="px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
-          title="Uruchom ponownie auto-dopasowanie faktur sprzedażowych do projektów"
-        >
-          💡 Przelicz sugestie
-        </button>
-
-        <button
-          onClick={async () => {
-            try {
-              const r = await ksefApi.learnClassify()
-              alert(r.message)
-              load()
-            } catch (e: any) {
-              alert('Błąd: ' + e.message)
-            }
-          }}
-          className="px-3 py-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-lg transition-colors"
-          title="Automatycznie klasyfikuj nieprzypisane faktury na podstawie historycznych wzorców (np. Play → G&A)"
-        >
-          🧠 Naucz się wzorców
-        </button>
-
-        <button
-          onClick={async () => {
-            if (!confirm('Napraw kierunek (sprzedażowa/zakupowa) wszystkich faktur w bazie na podstawie NIPu sprzedawcy?')) return
-            try {
-              const r = await ksefApi.fixDirections()
-              alert(`Sprawdzono ${r.total} faktur, poprawiono ${r.fixed} (NIP: ${r.our_nip_masked}).`)
-              load()
-            } catch (e: any) {
-              alert('Błąd: ' + e.message)
-            }
-          }}
-          className="px-3 py-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/20 rounded-lg transition-colors"
-          title="Popraw zakupowa/sprzedażowa dla istniejących faktur na podstawie NIPu sprzedawcy"
-        >
-          🔧 Napraw kierunki
-        </button>
-
-        <input
-          type="text"
-          placeholder="Szukaj (nr faktury, NIP, sprzedawca…)"
-          className="flex-1 min-w-[200px] px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPage(1) }}
-        />
-
-        <span className="text-xs text-gray-400">{total} faktur</span>
-      </div>
-
-      {/* Tabela */}
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-        {loading ? (
-          <div className="py-16 text-center text-gray-400 text-sm">Ładowanie…</div>
-        ) : invoices.length === 0 ? (
-          <div className="py-16 text-center text-gray-400">
-            <div className="text-4xl mb-3">📋</div>
-            <div className="text-sm font-medium">Brak faktur</div>
-            <div className="text-xs mt-1">
-              {status?.configured
-                ? 'Kliknij "Synchronizuj teraz" aby pobrać faktury z KSeF'
-                : 'Skonfiguruj zmienne środowiskowe KSEF_NIP i KSEF_TOKEN'}
+          {/* Page header */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
+            <div>
+              <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.01em', color: '#0f172a', margin: 0 }}>
+                Faktury kosztowe
+              </h1>
+              <p style={{ fontSize: 14, color: '#64748b', margin: '6px 0 0' }}>
+                Pobrane z KSeF · wystawione na Smart Home Center · przypisz każdą fakturę do projektu jako koszt
+              </p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              <button
+                onClick={() => setViewMode('all')}
+                title="Widok administratora"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '10px 14px', fontSize: 13, fontWeight: 500,
+                  borderRadius: 8, border: '1px solid #e2e8f0', background: '#ffffff',
+                  color: '#64748b', cursor: 'pointer',
+                }}
+              >
+                <Settings size={14} />
+                Admin
+              </button>
+              <button
+                onClick={() => setShowPaymentModal(true)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '10px 14px', fontSize: 13, fontWeight: 500,
+                  borderRadius: 8, border: '1px solid #e2e8f0', background: '#ffffff',
+                  color: '#475569', cursor: 'pointer',
+                }}
+              >
+                Weryfikacja płatności
+              </button>
+              <button
+                onClick={handleSync}
+                disabled={syncing || !status?.configured}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  padding: '10px 18px', fontSize: 14, fontWeight: 500,
+                  borderRadius: 8, border: '1px solid #e2e8f0', background: '#ffffff',
+                  color: syncing ? '#94a3b8' : '#2563eb',
+                  cursor: syncing || !status?.configured ? 'not-allowed' : 'pointer',
+                  opacity: !status?.configured ? 0.5 : 1,
+                  boxShadow: 'none',
+                }}
+              >
+                <RefreshCw size={15} strokeWidth={2} style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
+                {syncing ? 'Synchronizacja…' : 'Synchronizuj z KSeF'}
+              </button>
             </div>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
-                  <th className="text-left px-4 py-3 pr-3">Nr faktury / KSeF</th>
-                  <th className="text-left py-3 pr-3">Sprzedawca</th>
-                  <th className="text-right py-3 pr-3">Kwota</th>
-                  <th className="text-left py-3 pr-3">Data</th>
-                  <th className="text-left py-3 pr-3">Projekt</th>
-                  <th className="text-left py-3 pr-3">Platnosc</th>
-                  <th className="py-3">Akcje</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map(inv => (
-                  <InvoiceRow
+
+          {/* Sync error banner */}
+          {status?.last_sync_error && (
+            <div style={{ marginBottom: 20 }}>
+              <SyncErrorBanner status={status} onResetSession={handleResetSession} resettingSession={resettingSession} />
+            </div>
+          )}
+
+          {/* Not configured warning */}
+          {status && !status.configured && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '12px 18px', marginBottom: 20 }}>
+              <AlertTriangle size={14} color="#dc2626" />
+              <span style={{ fontSize: 13, color: '#b91c1c' }}>
+                Brak konfiguracji. Ustaw zmienne środowiskowe: <code style={{ fontFamily: 'monospace' }}>KSEF_NIP</code>, <code style={{ fontFamily: 'monospace' }}>KSEF_TOKEN</code>
+              </span>
+            </div>
+          )}
+
+          {/* Sync result message */}
+          {syncMsg && (
+            <div style={{
+              fontSize: 13, padding: '10px 16px', borderRadius: 10, marginBottom: 20,
+              background: syncMsg.startsWith('Błąd') ? '#fef2f2' : '#f0fdf4',
+              color: syncMsg.startsWith('Błąd') ? '#b91c1c' : '#15803d',
+              border: `1px solid ${syncMsg.startsWith('Błąd') ? '#fecaca' : '#bbf7d0'}`,
+            }}>
+              {syncMsg}
+            </div>
+          )}
+
+          {/* KPI cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, marginBottom: 28 }}>
+            <KpiCard
+              label="Do przypisania"
+              value={loading ? '…' : status?.unassigned_count ?? unassigned.length}
+              valueColor="#1d4ed8"
+              sub={loading ? '—' : `łącznie ${fmt(unassignedGross)} PLN brutto`}
+            />
+            <KpiCard
+              label="Ostatnia synchronizacja"
+              value={
+                <span style={{ fontSize: lastSync ? 18 : 22 }}>
+                  {loading ? '…' : lastSync ?? 'Brak danych'}
+                </span>
+              }
+              sub="KSeF API · automatycznie co 6 godzin"
+            />
+            <KpiCard
+              label="Przypisane w tym miesiącu"
+              value={loading ? '…' : assigned.length}
+              valueColor="#16a34a"
+              sub={loading ? '—' : `łącznie ${fmt(assignedGross)} PLN brutto`}
+            />
+          </div>
+
+          {/* Search */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ position: 'relative', width: 320 }}>
+              <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+              <input
+                type="text"
+                placeholder="Szukaj sprzedawcy lub nr faktury…"
+                value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1) }}
+                style={{
+                  width: '100%',
+                  paddingLeft: 36,
+                  paddingRight: 14,
+                  paddingTop: 10,
+                  paddingBottom: 10,
+                  fontSize: 14,
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 8,
+                  background: '#ffffff',
+                  color: '#0f172a',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+                onFocus={e => {
+                  e.currentTarget.style.borderColor = '#2563eb'
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.12)'
+                }}
+                onBlur={e => {
+                  e.currentTarget.style.borderColor = '#e2e8f0'
+                  e.currentTarget.style.boxShadow = 'none'
+                }}
+              />
+            </div>
+          </div>
+
+          {/* "Do przypisania" table */}
+          <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, marginBottom: 20, overflow: 'hidden' }}>
+            {/* Card header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: '1px solid #f1f5f9' }}>
+              <span style={{ fontSize: 16, fontWeight: 600, color: '#0f172a' }}>Do przypisania</span>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center',
+                padding: '2px 10px', borderRadius: 999,
+                fontSize: 13, fontWeight: 600,
+                background: '#eff6ff', color: '#1d4ed8',
+              }}>
+                {loading ? '…' : status?.unassigned_count ?? unassigned.length}
+              </span>
+              <span style={{ fontSize: 13, color: '#94a3b8', marginLeft: 4 }}>
+                faktura przypisana do projektu znika z tej listy
+              </span>
+            </div>
+
+            {/* Column headers */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '2fr 1.3fr 0.9fr 1fr 1fr 1.7fr',
+              padding: '10px 24px',
+              gap: 8,
+              borderBottom: '1px solid #f1f5f9',
+              background: '#f8fafc',
+            }}>
+              {[
+                { label: 'Sprzedawca', align: 'left' },
+                { label: 'Nr faktury', align: 'left' },
+                { label: 'Wystawiono', align: 'left' },
+                { label: 'Netto (PLN)', align: 'right' },
+                { label: 'Brutto (PLN)', align: 'right' },
+                { label: 'Przypisanie', align: 'right' },
+              ].map(col => (
+                <div key={col.label} style={{
+                  fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+                  letterSpacing: '0.05em', color: '#94a3b8',
+                  textAlign: col.align as 'left' | 'right',
+                }}>
+                  {col.label}
+                </div>
+              ))}
+            </div>
+
+            {loading ? (
+              <div style={{ padding: '48px 0', textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>Ładowanie…</div>
+            ) : unassigned.length === 0 ? (
+              <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 48, height: 48, borderRadius: '50%', background: '#f0fdf4', marginBottom: 12 }}>
+                  <Check size={22} color="#16a34a" strokeWidth={2.5} />
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#0f172a', marginBottom: 4 }}>Wszystkie faktury przypisane</div>
+                <div style={{ fontSize: 13, color: '#64748b' }}>
+                  {invoices.length === 0
+                    ? 'Kliknij „Synchronizuj z KSeF" aby pobrać faktury'
+                    : 'Każda faktura ma przypisany projekt — świetna robota!'}
+                </div>
+              </div>
+            ) : (
+              <div>
+                {unassigned.map(inv => (
+                  <UnassignedRow
                     key={inv.id}
                     invoice={inv}
                     projects={projects}
@@ -1031,27 +1291,421 @@ export default function KsefPage() {
                     onRemoved={handleRemoved}
                   />
                 ))}
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
+
+          {/* "Ostatnio przypisane" card */}
+          {assigned.length > 0 && (
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontSize: 16, fontWeight: 600, color: '#0f172a' }}>Ostatnio przypisane</span>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center',
+                  padding: '2px 10px', borderRadius: 999,
+                  fontSize: 13, fontWeight: 600,
+                  background: '#f0fdf4', color: '#15803d',
+                }}>
+                  {assigned.length}
+                </span>
+              </div>
+
+              {/* Column headers */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '2fr 1.3fr 0.9fr 1fr 1fr 1.7fr',
+                padding: '10px 24px',
+                gap: 8,
+                borderBottom: '1px solid #f1f5f9',
+                background: '#f8fafc',
+              }}>
+                {[
+                  { label: 'Sprzedawca / nr', align: 'left' },
+                  { label: 'Przypisano', align: 'left' },
+                  { label: '', align: 'left' },
+                  { label: 'Netto (PLN)', align: 'right' },
+                  { label: 'Brutto (PLN)', align: 'right' },
+                  { label: 'Projekt', align: 'right' },
+                ].map((col, i) => (
+                  <div key={i} style={{
+                    fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+                    letterSpacing: '0.05em', color: '#94a3b8',
+                    textAlign: col.align as 'left' | 'right',
+                  }}>
+                    {col.label}
+                  </div>
+                ))}
+              </div>
+
+              {assigned.slice(0, 20).map(inv => (
+                <AssignedRow key={inv.id} invoice={inv} projects={projects} onUpdated={handleUpdated} />
+              ))}
+              {assigned.length > 20 && (
+                <div style={{ padding: '12px 24px', fontSize: 13, color: '#94a3b8', textAlign: 'center', borderTop: '1px solid #f1f5f9' }}>
+                  + {assigned.length - 20} więcej przypisanych faktur · przejdź do widoku Admin aby zobaczyć wszystkie
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 24 }}>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 14px', fontSize: 13, border: '1px solid #e2e8f0', borderRadius: 8, background: '#ffffff', color: '#475569', cursor: page === 1 ? 'not-allowed' : 'pointer', opacity: page === 1 ? 0.4 : 1 }}
+              >
+                <ChevronLeft size={14} /> Poprzednia
+              </button>
+              <span style={{ fontSize: 13, color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>Strona {page} z {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 14px', fontSize: 13, border: '1px solid #e2e8f0', borderRadius: 8, background: '#ffffff', color: '#475569', cursor: page === totalPages ? 'not-allowed' : 'pointer', opacity: page === totalPages ? 0.4 : 1 }}
+              >
+                Następna <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+
+          {/* CSS keyframes for spin */}
+          <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        </div>
+
+        {showPaymentModal && (
+          <PaymentVerificationModal
+            onClose={() => setShowPaymentModal(false)}
+            onPaymentsUpdated={load}
+          />
         )}
       </div>
+    )
+  }
 
-      {/* Paginacja */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <button
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-800"
-          >← Poprzednia</button>
-          <span className="text-sm text-gray-500">Strona {page} z {totalPages}</span>
-          <button
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
-            className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-800"
-          >Następna →</button>
+  // ── Admin / all-invoices view ─────────────────────────────────────────────────
+
+  return (
+    <div style={{ padding: '36px 32px 64px', background: '#f8fafc', minHeight: '100vh', fontFamily: "'IBM Plex Sans', system-ui, sans-serif" }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.01em', color: '#0f172a', margin: 0 }}>
+              KSeF — Faktury
+            </h1>
+            <p style={{ fontSize: 13, color: '#94a3b8', margin: '4px 0 0' }}>
+              {status ? `${status.env?.includes('prod') ? 'Produkcja' : 'Test'} · NIP: ${status.nip ?? '—'} · ${total} faktur` : 'Ładowanie…'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              onClick={() => setViewMode('faktury')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: 13, fontWeight: 500, borderRadius: 8, border: '1px solid #e2e8f0', background: '#eff6ff', color: '#1d4ed8', cursor: 'pointer' }}
+            >
+              Widok Faktury
+            </button>
+            <button
+              onClick={() => setShowPaymentModal(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: 13, fontWeight: 500, borderRadius: 8, border: '1px solid #e2e8f0', background: '#ffffff', color: '#475569', cursor: 'pointer' }}
+            >
+              Weryfikacja płatności
+            </button>
+          </div>
         </div>
+
+        {/* Status / sync bar */}
+        {status && (
+          <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '14px 20px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                  width: 9, height: 9, borderRadius: '50%',
+                  background: status.configured ? (status.last_sync_error ? '#f87171' : '#22c55e') : '#f87171',
+                  flexShrink: 0,
+                  display: 'inline-block',
+                }} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: '#475569' }}>
+                  KSeF {status.env?.includes('prod') ? 'Produkcja' : 'Test'} 2.0
+                </span>
+                {status.nip && <span style={{ fontSize: 12, color: '#94a3b8' }}>NIP: {status.nip}</span>}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12, color: '#64748b', marginLeft: 'auto' }}>
+                <span>{status.invoice_count} faktur</span>
+                <span style={{ color: '#f59e0b', fontWeight: 500 }}>{status.unassigned_count} nieprzypisanych</span>
+                <span>Sync: {status.last_sync_at ? new Date(status.last_sync_at).toLocaleString('pl-PL') : 'Nigdy'}</span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ fontSize: 12, color: '#94a3b8', whiteSpace: 'nowrap' }}>Od:</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => setDateFrom(e.target.value)}
+                  style={{ padding: '5px 10px', fontSize: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#ffffff', color: '#475569', outline: 'none' }}
+                />
+              </div>
+
+              <button
+                onClick={handleSync}
+                disabled={syncing || !status.configured}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '8px 14px', fontSize: 13, fontWeight: 500,
+                  borderRadius: 8, border: 'none',
+                  background: '#2563eb', color: '#ffffff',
+                  cursor: syncing || !status.configured ? 'not-allowed' : 'pointer',
+                  opacity: syncing || !status.configured ? 0.6 : 1,
+                  boxShadow: '0 1px 2px rgba(37,99,235,0.3)',
+                }}
+              >
+                <RefreshCw size={13} style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
+                {syncing ? 'Synchronizacja…' : 'Synchronizuj'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {status?.last_sync_error && (
+          <div style={{ marginBottom: 16 }}>
+            <SyncErrorBanner status={status} onResetSession={handleResetSession} resettingSession={resettingSession} />
+          </div>
+        )}
+
+        {syncMsg && (
+          <div style={{
+            fontSize: 13, padding: '10px 16px', borderRadius: 10, marginBottom: 16,
+            background: syncMsg.startsWith('Błąd') ? '#fef2f2' : '#f0fdf4',
+            color: syncMsg.startsWith('Błąd') ? '#b91c1c' : '#15803d',
+            border: `1px solid ${syncMsg.startsWith('Błąd') ? '#fecaca' : '#bbf7d0'}`,
+          }}>
+            {syncMsg}
+          </div>
+        )}
+
+        {/* Admin tools (collapsible) */}
+        <div style={{ marginBottom: 16 }}>
+          <button
+            onClick={() => setShowAdminTools(v => !v)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12, fontWeight: 500, border: '1px solid #e2e8f0', borderRadius: 8, background: '#ffffff', color: '#64748b', cursor: 'pointer' }}
+          >
+            <Settings size={12} />
+            {showAdminTools ? 'Ukryj narzędzia admin' : 'Narzędzia admin'}
+          </button>
+          {showAdminTools && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10, padding: '12px 16px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12 }}>
+              <button
+                onClick={handleDebug}
+                disabled={debugging}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 500, border: '1px solid #e2e8f0', borderRadius: 8, background: '#ffffff', color: '#64748b', cursor: 'pointer', opacity: debugging ? 0.5 : 1 }}
+              >
+                <Bug size={12} /> {debugging ? 'Diagnostyka…' : 'Diagnostyka autoryzacji'}
+              </button>
+              <button
+                onClick={async () => {
+                  const r = await ksefApi.reSuggest()
+                  alert(`Sprawdzono ${r.processed} faktur sprzedażowych, dodano ${r.suggested} sugestii.`)
+                  load()
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 500, border: '1px solid #ddd6fe', borderRadius: 8, background: '#ffffff', color: '#7c3aed', cursor: 'pointer' }}
+              >
+                Przelicz sugestie
+              </button>
+              <button
+                onClick={async () => {
+                  try { const r = await ksefApi.learnClassify(); alert(r.message); load() }
+                  catch (e: any) { alert('Błąd: ' + e.message) }
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 500, border: '1px solid #a7f3d0', borderRadius: 8, background: '#ffffff', color: '#059669', cursor: 'pointer' }}
+              >
+                <Brain size={12} /> Naucz się wzorców
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm('Napraw kierunek (sprzedażowa/zakupowa) wszystkich faktur?')) return
+                  try { const r = await ksefApi.fixDirections(); alert(`Sprawdzono ${r.total} faktur, poprawiono ${r.fixed}.`); load() }
+                  catch (e: any) { alert('Błąd: ' + e.message) }
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 500, border: '1px solid #fde68a', borderRadius: 8, background: '#ffffff', color: '#b45309', cursor: 'pointer' }}
+              >
+                <Wrench size={12} /> Napraw kierunki
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm('Usunąć wszystkie faktury z bazy i zresetować synchronizację?')) return
+                  const r = await ksefApi.removeAll()
+                  setSyncMsg(`Usunięto ${r.deleted} faktur. Kliknij Synchronizuj aby pobrać ponownie.`)
+                  await load()
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 500, border: '1px solid #fecaca', borderRadius: 8, background: '#ffffff', color: '#dc2626', cursor: 'pointer' }}
+              >
+                <Trash2 size={12} /> Resetuj bazę faktur
+              </button>
+              {debugInfo && (
+                <button onClick={() => setDebugInfo(null)} style={{ padding: '6px 12px', fontSize: 12, color: '#94a3b8', background: 'none', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer' }}>
+                  Zamknij diagnostykę
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {debugInfo && (
+          <div style={{ background: '#0f172a', borderRadius: 12, padding: 16, marginBottom: 16, maxHeight: 256, overflowY: 'auto' }}>
+            <pre style={{ fontSize: 11, fontFamily: 'monospace', color: '#4ade80', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {JSON.stringify(debugInfo, null, 2)}
+            </pre>
+          </div>
+        )}
+
+        {/* Filters */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          {/* Assignment filter */}
+          <div style={{ display: 'flex', borderRadius: 8, border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+            {(['all', 'unassigned', 'assigned'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => { setTab(t); setPage(1) }}
+                style={{
+                  padding: '7px 14px', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer', transition: 'background 0.1s',
+                  background: tab === t ? '#2563eb' : '#ffffff',
+                  color: tab === t ? '#ffffff' : '#64748b',
+                }}
+              >
+                {t === 'all' ? 'Wszystkie' : t === 'unassigned' ? 'Nieprzypisane' : 'Przypisane'}
+              </button>
+            ))}
+          </div>
+
+          {/* Payment filter */}
+          <div style={{ display: 'flex', borderRadius: 8, border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+            {([{ value: 'all', label: 'Każda płatność' }, { value: 'paid', label: 'Opłacone' }, { value: 'unpaid', label: 'Nieopłacone' }] as const).map(t => (
+              <button
+                key={t.value}
+                onClick={() => { setPaymentTab(t.value); setPage(1) }}
+                style={{
+                  padding: '7px 14px', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
+                  background: paymentTab === t.value ? '#2563eb' : '#ffffff',
+                  color: paymentTab === t.value ? '#ffffff' : '#64748b',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Direction filter */}
+          <div style={{ display: 'flex', borderRadius: 8, border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+            {([{ value: 'all', label: 'Wszystkie typy' }, { value: 'incoming', label: 'Zakupowe' }, { value: 'outgoing', label: 'Sprzedażowe' }] as const).map(t => (
+              <button
+                key={t.value}
+                onClick={() => { setDirTab(t.value); setPage(1) }}
+                style={{
+                  padding: '7px 14px', fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
+                  background: dirTab === t.value ? '#2563eb' : '#ffffff',
+                  color: dirTab === t.value ? '#ffffff' : '#64748b',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Search */}
+          <div style={{ position: 'relative', flex: '1 1 200px', minWidth: 200 }}>
+            <Search size={13} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input
+              type="text"
+              placeholder="Szukaj (nr faktury, NIP, sprzedawca…)"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1) }}
+              style={{
+                width: '100%', paddingLeft: 30, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
+                fontSize: 13, border: '1px solid #e2e8f0', borderRadius: 8,
+                background: '#ffffff', color: '#0f172a', outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          <span style={{ fontSize: 12, color: '#94a3b8', whiteSpace: 'nowrap' }}>{total} faktur</span>
+        </div>
+
+        {/* Table */}
+        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
+          {loading ? (
+            <div style={{ padding: '64px 0', textAlign: 'center', color: '#94a3b8', fontSize: 14 }}>Ładowanie…</div>
+          ) : invoices.length === 0 ? (
+            <div style={{ padding: '64px 0', textAlign: 'center' }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: '#475569', marginBottom: 4 }}>Brak faktur</div>
+              <div style={{ fontSize: 13, color: '#94a3b8' }}>
+                {status?.configured ? 'Kliknij „Synchronizuj" aby pobrać faktury z KSeF' : 'Skonfiguruj zmienne środowiskowe KSEF_NIP i KSEF_TOKEN'}
+              </div>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
+                    {['Nr faktury / KSeF', 'Sprzedawca', 'Kwota', 'Data', 'Projekt', 'Płatność', 'Akcje'].map(h => (
+                      <th key={h} style={{
+                        padding: h === 'Nr faktury / KSeF' ? '12px 12px 12px 24px' : h === 'Akcje' ? '12px 24px 12px 12px' : '12px',
+                        textAlign: h === 'Kwota' || h === 'Akcje' ? 'right' : 'left',
+                        fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.05em', color: '#94a3b8',
+                      }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map(inv => (
+                    <FullInvoiceRow
+                      key={inv.id}
+                      invoice={inv}
+                      projects={projects}
+                      onUpdated={handleUpdated}
+                      onRemoved={handleRemoved}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 24 }}>
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 14px', fontSize: 13, border: '1px solid #e2e8f0', borderRadius: 8, background: '#ffffff', color: '#475569', cursor: page === 1 ? 'not-allowed' : 'pointer', opacity: page === 1 ? 0.4 : 1 }}
+            >
+              <ChevronLeft size={14} /> Poprzednia
+            </button>
+            <span style={{ fontSize: 13, color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>Strona {page} z {totalPages}</span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '8px 14px', fontSize: 13, border: '1px solid #e2e8f0', borderRadius: 8, background: '#ffffff', color: '#475569', cursor: page === totalPages ? 'not-allowed' : 'pointer', opacity: page === totalPages ? 0.4 : 1 }}
+            >
+              Następna <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
+
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      </div>
+
+      {showPaymentModal && (
+        <PaymentVerificationModal
+          onClose={() => setShowPaymentModal(false)}
+          onPaymentsUpdated={load}
+        />
       )}
     </div>
   )

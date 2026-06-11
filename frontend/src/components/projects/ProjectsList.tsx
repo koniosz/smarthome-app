@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Plus, Search, ChevronRight } from 'lucide-react'
 import { projectsApi, accessRequestsApi } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import type { Project, ProjectType, ProjectStatus } from '../../types'
 import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '../../types'
-import { StatusBadge, TypeBadge, MarginBadge } from '../ui/StatusBadge'
 import AddProjectModal from './AddProjectModal'
 import NewProjectDialog from '../project-wizard/NewProjectDialog'
 import ProjectWizard from '../project-wizard/ProjectWizard'
@@ -12,6 +12,26 @@ import AIProjectWizard from '../project-wizard/AIProjectWizard'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
+}
+
+const STATUS_CHIP_CONFIG: {
+  key: ProjectStatus | ''
+  label: string
+}[] = [
+  { key: '', label: 'Wszystkie' },
+  { key: 'offer_submitted', label: 'Złożenie oferty' },
+  { key: 'negotiation', label: 'Negocjacje' },
+  { key: 'installation', label: 'Instalacja w toku' },
+  { key: 'closing', label: 'Zakończony' },
+]
+
+const STATUS_PILL: Record<ProjectStatus, { bg: string; color: string; label: string }> = {
+  offer_submitted: { bg: '#eff6ff', color: '#1d4ed8', label: '1 · Złożenie oferty' },
+  negotiation:     { bg: '#f5f3ff', color: '#6d28d9', label: '2 · Negocjacje' },
+  ordering:        { bg: '#fffbeb', color: '#b45309', label: '3 · Zamówienie' },
+  installation:    { bg: '#fffbeb', color: '#b45309', label: '4 · Instalacja w toku' },
+  closing:         { bg: '#f0fdf4', color: '#15803d', label: '5 · Zakończony' },
+  cancelled:       { bg: '#fef2f2', color: '#b91c1c', label: '0 · Anulowany' },
 }
 
 export default function ProjectsList() {
@@ -27,6 +47,7 @@ export default function ProjectsList() {
   const [filterStatus, setFilterStatus] = useState<ProjectStatus | ''>('')
   const [sortBy, setSortBy] = useState<'created_at' | 'margin_pct' | 'budget_amount'>('created_at')
   const [requestingAccess, setRequestingAccess] = useState<Record<string, boolean>>({})
+  const [query, setQuery] = useState('')
   const navigate = useNavigate()
 
   const load = () => {
@@ -45,6 +66,14 @@ export default function ProjectsList() {
     list
       .filter(p => !filterType || p.project_type === filterType)
       .filter(p => !filterStatus || p.status === filterStatus)
+      .filter(p => {
+        if (!query.trim()) return true
+        const q = query.toLowerCase()
+        return (
+          p.name.toLowerCase().includes(q) ||
+          (p.client_name ?? '').toLowerCase().includes(q)
+        )
+      })
       .sort((a, b) => {
         if (sortBy === 'margin_pct') return (a.margin_pct ?? 0) - (b.margin_pct ?? 0)
         if (sortBy === 'budget_amount') return (b.budget_amount ?? 0) - (a.budget_amount ?? 0)
@@ -54,6 +83,13 @@ export default function ProjectsList() {
   const filteredMember = applyFiltersSort(memberProjects)
   const filteredNonMember = applyFiltersSort(nonMemberProjects)
   const allFiltered = [...filteredMember, ...filteredNonMember]
+
+  const isFiltered = !!filterStatus || !!filterType || !!query.trim()
+  const totalBudget = memberProjects.reduce((acc, p) => acc + (p.budget_amount ?? 0), 0)
+
+  const countForChip = (chipKey: ProjectStatus | '') => {
+    return memberProjects.filter(p => !chipKey || p.status === chipKey).length
+  }
 
   const handleRequestAccess = async (projectId: string) => {
     setRequestingAccess(prev => ({ ...prev, [projectId]: true }))
@@ -71,192 +107,344 @@ export default function ProjectsList() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-400">Ładowanie...</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
+        <span style={{ fontSize: 14, color: '#94a3b8' }}>Ładowanie…</span>
       </div>
     )
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-5">
+    <div style={{ padding: '36px 32px 64px', maxWidth: 1200, margin: '0 auto' }}>
+
+      {/* Page Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
-          <h1 className="text-lg font-bold text-gray-800 dark:text-gray-100">Projekty</h1>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            {memberProjects.length} {memberProjects.length === 1 ? 'projekt' : 'projektów'} z dostępem
-            {!isAdmin && nonMemberProjects.length > 0 && (
-              <span className="text-gray-400"> · {nonMemberProjects.length} bez dostępu</span>
-            )}
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em', margin: 0, lineHeight: 1.2 }}>
+            Projekty
+          </h1>
+          <p style={{ fontSize: 14, color: '#64748b', margin: '4px 0 0' }}>
+            {isFiltered
+              ? `${allFiltered.length} projektów (z ${memberProjects.length})`
+              : `${memberProjects.length} projektów · łączna wartość ofert ${fmt(totalBudget)} PLN`
+            }
           </p>
         </div>
         <button
           onClick={() => setShowDialog(true)}
-          className="px-4 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors flex items-center gap-2"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '10px 18px',
+            fontSize: 14,
+            fontWeight: 600,
+            color: '#ffffff',
+            background: '#2563eb',
+            border: 'none',
+            borderRadius: 8,
+            cursor: 'pointer',
+            boxShadow: '0 1px 2px rgba(37,99,235,0.3)',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = '#1d4ed8')}
+          onMouseLeave={e => (e.currentTarget.style.background = '#2563eb')}
         >
-          <span>+</span> Nowy projekt
+          <Plus size={16} />
+          Nowy projekt
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <select
-          className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none"
-          value={filterType}
-          onChange={e => setFilterType(e.target.value as any)}
-        >
-          <option value="">Wszystkie typy</option>
-          {(Object.entries(PROJECT_TYPE_LABELS) as [ProjectType, string][]).map(([k, v]) => (
-            <option key={k} value={k}>{v}</option>
-          ))}
-        </select>
-
-        <select
-          className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none"
-          value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value as any)}
-        >
-          <option value="">Wszystkie statusy</option>
-          {(Object.entries(PROJECT_STATUS_LABELS) as [ProjectStatus, string][]).map(([k, v]) => (
-            <option key={k} value={k}>{v}</option>
-          ))}
-        </select>
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-gray-500 dark:text-gray-400">Sortuj:</span>
-          {[
-            { key: 'created_at' as const, label: 'Najnowsze' },
-            { key: 'margin_pct' as const, label: 'Marża ↑' },
-            { key: 'budget_amount' as const, label: 'Budżet ↓' },
-          ].map(s => (
-            <button
-              key={s.key}
-              onClick={() => setSortBy(s.key)}
-              className={`px-2.5 py-1 text-xs rounded-lg transition-colors ${
-                sortBy === s.key
-                  ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300'
-                  : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
+      {/* Filters Row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+        {/* Search */}
+        <div style={{ position: 'relative', width: 300 }}>
+          <Search
+            size={15}
+            style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }}
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Szukaj projektu lub klienta…"
+            style={{
+              width: '100%',
+              padding: '10px 14px 10px 36px',
+              fontSize: 14,
+              color: '#0f172a',
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              outline: 'none',
+              boxSizing: 'border-box',
+              transition: 'border-color 0.15s, box-shadow 0.15s',
+            }}
+            onFocus={e => {
+              e.currentTarget.style.borderColor = '#2563eb'
+              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.12)'
+            }}
+            onBlur={e => {
+              e.currentTarget.style.borderColor = '#e2e8f0'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          />
         </div>
+
+        {/* Separator */}
+        <div style={{ width: 1, height: 24, background: '#e2e8f0', flexShrink: 0 }} />
+
+        {/* Status Chips */}
+        {STATUS_CHIP_CONFIG.map(chip => {
+          const count = countForChip(chip.key)
+          const active = filterStatus === chip.key
+          return (
+            <button
+              key={chip.key === '' ? 'all' : chip.key}
+              onClick={() => setFilterStatus(chip.key as ProjectStatus | '')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 12px',
+                fontSize: 13,
+                fontWeight: 600,
+                borderRadius: 999,
+                border: active ? '1px solid #93c5fd' : '1px solid #e2e8f0',
+                background: active ? '#eff6ff' : '#ffffff',
+                color: active ? '#2563eb' : '#475569',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {chip.label}
+              <span style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: active ? '#2563eb' : '#94a3b8',
+                background: active ? 'rgba(37,99,235,0.1)' : '#f1f5f9',
+                borderRadius: 999,
+                padding: '0 6px',
+                minWidth: 20,
+                textAlign: 'center',
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                {count}
+              </span>
+            </button>
+          )
+        })}
       </div>
 
-      {/* Table */}
-      {allFiltered.length === 0 ? (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-12 text-center">
-          <div className="text-4xl mb-3">📁</div>
-          <div className="text-gray-500 dark:text-gray-400 text-sm">
-            {projects.length === 0
-              ? 'Brak projektów. Kliknij "Nowy projekt" aby zacząć.'
-              : 'Brak wyników dla wybranych filtrów.'}
+      {/* Table Card */}
+      <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
+
+        {/* Column Headers */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '2.2fr 0.9fr 1.4fr 1fr 1fr 0.8fr 40px',
+          padding: '0 24px',
+          borderBottom: '1px solid #f1f5f9',
+          background: '#f8fafc',
+        }}>
+          {['Projekt', 'Typ', 'Status', 'Budżet', 'Koszty', 'Marża', ''].map((col, i) => (
+            <div
+              key={i}
+              style={{
+                padding: '12px 0',
+                fontSize: 12,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: '#94a3b8',
+                textAlign: i >= 3 && i <= 5 ? 'right' : 'left',
+              }}
+            >
+              {col}
+            </div>
+          ))}
+        </div>
+
+        {/* Rows */}
+        {allFiltered.length === 0 ? (
+          <div style={{ padding: '40px 24px', textAlign: 'center', fontSize: 14, color: '#94a3b8' }}>
+            Brak projektów spełniających kryteria.
           </div>
-        </div>
-      ) : (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 dark:bg-gray-800/50">
-              <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                <th className="text-left px-4 py-3">Projekt / Klient</th>
-                <th className="text-left px-4 py-3">Typ</th>
-                <th className="text-left px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Budżet</th>
-                <th className="text-right px-4 py-3">Koszty</th>
-                <th className="text-right px-4 py-3">Marża</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {allFiltered.map(p => {
-                const isMember = p.user_is_member !== false
-                const isOverBudget = isMember && (p.cost_total ?? 0) > p.budget_amount && p.budget_amount > 0
-                const hasPending = p.has_pending_request === true
-                const isRequesting = requestingAccess[p.id] === true
+        ) : (
+          allFiltered.map((p, idx) => {
+            const isMember = p.user_is_member !== false
+            const isOverBudget = isMember && (p.cost_total ?? 0) > p.budget_amount && p.budget_amount > 0
+            const hasPending = p.has_pending_request === true
+            const isRequesting = requestingAccess[p.id] === true
+            const pill = STATUS_PILL[p.status]
+            const isLast = idx === allFiltered.length - 1
 
-                if (!isMember) {
-                  return (
-                    <tr
-                      key={p.id}
-                      className="border-b border-gray-50 dark:border-gray-800 opacity-50 hover:opacity-70 transition-opacity bg-gray-50/50 dark:bg-gray-800/20"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-400 flex-shrink-0">🔒</span>
-                          <div>
-                            <div className="font-medium text-gray-600 dark:text-gray-400">{p.name}</div>
-                            <div className="text-xs text-gray-400">{p.client_name || '—'}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3"><TypeBadge type={p.project_type} /></td>
-                      <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
-                      <td className="px-4 py-3 text-right text-gray-300 dark:text-gray-600 text-xs">—</td>
-                      <td className="px-4 py-3 text-right text-gray-300 dark:text-gray-600 text-xs">—</td>
-                      <td className="px-4 py-3 text-right text-gray-300 dark:text-gray-600 text-xs">—</td>
-                      <td className="px-4 py-3 text-right">
-                        {hasPending ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 whitespace-nowrap">
-                            ⏳ Wniosek wysłany
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => handleRequestAccess(p.id)}
-                            disabled={isRequesting}
-                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors disabled:opacity-50 whitespace-nowrap"
-                          >
-                            {isRequesting ? '⏳ Wysyłam…' : '🔑 Poproś o dostęp'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                }
+            if (!isMember) {
+              return (
+                <div
+                  key={p.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '2.2fr 0.9fr 1.4fr 1fr 1fr 0.8fr 40px',
+                    padding: '16px 24px',
+                    borderBottom: isLast ? 'none' : '1px solid #f1f5f9',
+                    opacity: 0.55,
+                    alignItems: 'center',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>{p.name}</div>
+                    <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>{p.client_name || '—'}</div>
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: '#475569' }}>
+                    {PROJECT_TYPE_LABELS[p.project_type] ?? p.project_type}
+                  </div>
+                  <div>
+                    <span style={{
+                      display: 'inline-block',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      borderRadius: 999,
+                      padding: '3px 10px',
+                      background: pill?.bg ?? '#f1f5f9',
+                      color: pill?.color ?? '#64748b',
+                    }}>
+                      {pill?.label ?? PROJECT_STATUS_LABELS[p.status]}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 14, color: '#cbd5e1', fontVariantNumeric: 'tabular-nums' }}>—</div>
+                  <div style={{ textAlign: 'right', fontSize: 14, color: '#cbd5e1', fontVariantNumeric: 'tabular-nums' }}>—</div>
+                  <div style={{ textAlign: 'right', fontSize: 14, color: '#cbd5e1', fontVariantNumeric: 'tabular-nums' }}>—</div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    {hasPending ? (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '4px 10px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        borderRadius: 999,
+                        background: '#eff6ff',
+                        color: '#1d4ed8',
+                        border: '1px solid #93c5fd',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        Wniosek wysłany
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleRequestAccess(p.id)}
+                        disabled={isRequesting}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '4px 10px',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          borderRadius: 999,
+                          background: '#f5f3ff',
+                          color: '#6d28d9',
+                          border: '1px solid #ddd6fe',
+                          cursor: isRequesting ? 'not-allowed' : 'pointer',
+                          opacity: isRequesting ? 0.6 : 1,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {isRequesting ? 'Wysyłam…' : 'Poproś o dostęp'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            }
 
-                return (
-                  <tr
-                    key={p.id}
-                    onClick={() => navigate(`/projects/${p.id}`)}
-                    className={`border-b border-gray-50 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors ${
-                      isOverBudget ? 'bg-red-50/30 dark:bg-red-950/10' : ''
-                    }`}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        {isOverBudget && <span title="Przekroczony budżet">🚨</span>}
-                        <div>
-                          <div className="font-medium text-gray-800 dark:text-gray-100">{p.name}</div>
-                          <div className="text-xs text-gray-400">{p.client_name || '—'}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3"><TypeBadge type={p.project_type} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={p.status} /></td>
-                    <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300 font-medium">
-                      {fmt(p.budget_amount)}
-                    </td>
-                    <td className={`px-4 py-3 text-right font-medium ${
-                      isOverBudget ? 'text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'
-                    }`}>
-                      {fmt(p.cost_total ?? 0)}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {p.budget_amount > 0
-                        ? <MarginBadge pct={p.margin_pct ?? 0} />
-                        : <span className="text-xs text-gray-400">—</span>
-                      }
-                    </td>
-                    <td className="px-4 py-3 text-gray-400">→</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+            return (
+              <div
+                key={p.id}
+                onClick={() => navigate(`/projects/${p.id}`)}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '2.2fr 0.9fr 1.4fr 1fr 1fr 0.8fr 40px',
+                  padding: '16px 24px',
+                  borderBottom: isLast ? 'none' : '1px solid #f1f5f9',
+                  cursor: 'pointer',
+                  alignItems: 'center',
+                  background: isOverBudget ? 'rgba(254,242,242,0.5)' : '#ffffff',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => {
+                  if (!isOverBudget) e.currentTarget.style.background = '#f8fafc'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = isOverBudget ? 'rgba(254,242,242,0.5)' : '#ffffff'
+                }}
+              >
+                {/* Projekt */}
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{p.name}</div>
+                  <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>{p.client_name || '—'}</div>
+                </div>
 
-      {/* Choice dialog */}
+                {/* Typ */}
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#475569' }}>
+                  {PROJECT_TYPE_LABELS[p.project_type] ?? p.project_type}
+                </div>
+
+                {/* Status */}
+                <div>
+                  <span style={{
+                    display: 'inline-block',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    borderRadius: 999,
+                    padding: '3px 10px',
+                    background: pill?.bg ?? '#f1f5f9',
+                    color: pill?.color ?? '#64748b',
+                  }}>
+                    {pill?.label ?? PROJECT_STATUS_LABELS[p.status]}
+                  </span>
+                </div>
+
+                {/* Budżet */}
+                <div style={{ textAlign: 'right', fontSize: 14, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                  {fmt(p.budget_amount)}
+                </div>
+
+                {/* Koszty */}
+                <div style={{
+                  textAlign: 'right',
+                  fontSize: 14,
+                  color: isOverBudget ? '#dc2626' : '#64748b',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {fmt(p.cost_total ?? 0)}
+                </div>
+
+                {/* Marża */}
+                <div style={{
+                  textAlign: 'right',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: (p.margin_pct ?? 0) > 0 ? '#16a34a' : '#64748b',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {p.budget_amount > 0
+                    ? `${(p.margin_pct ?? 0).toFixed(1)}%`
+                    : '—'
+                  }
+                </div>
+
+                {/* Chevron */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <ChevronRight size={16} color="#cbd5e1" />
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      {/* Modals */}
       {showDialog && (
         <NewProjectDialog
           onClose={() => setShowDialog(false)}

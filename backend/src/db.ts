@@ -179,6 +179,11 @@ export const db = {
   },
 
   extra_costs: {
+    allWithProjects: () =>
+      prisma.extraCost.findMany({
+        include: { project: { select: { id: true, name: true } } },
+        orderBy: { created_at: 'desc' },
+      }),
     forProject: (projectId: string) =>
       prisma.extraCost.findMany({
         where: { project_id: projectId },

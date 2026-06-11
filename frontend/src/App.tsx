@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import AppHeader from './components/layout/AppHeader'
+import type { NavView } from './components/layout/AppHeader'
 import DashboardView from './components/dashboard/DashboardView'
 import ProjectsList from './components/projects/ProjectsList'
 import ProjectDetail from './components/projects/ProjectDetail'
@@ -13,11 +14,27 @@ import KsefPage from './pages/KsefPage'
 import SharedInvoicesPage from './pages/SharedInvoicesPage'
 import FinansePage from './pages/FinansePage'
 import ManualCostsPage from './pages/ManualCostsPage'
+import KosztyPage from './pages/KosztyPage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import SurveyPage from './pages/SurveyPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
-import { AuthProvider } from './auth/AuthContext'
+import { AuthProvider, useAuth } from './auth/AuthContext'
+
+function pathToView(pathname: string): NavView {
+  if (pathname.startsWith('/projects')) return 'projects'
+  if (pathname.startsWith('/product-catalog')) return 'product-catalog'
+  if (pathname.startsWith('/faktury') || pathname.startsWith('/ksef')) return 'faktury'
+  if (pathname.startsWith('/koszty')) return 'koszty'
+  return 'dashboard'
+}
+
+// Faktury design = KSeF cost-invoice page (admin); non-admins see shared invoices
+function viewToPath(view: NavView, isAdmin: boolean): string {
+  if (view === 'dashboard') return '/'
+  if (view === 'faktury') return isAdmin ? '/ksef' : '/faktury'
+  return `/${view}`
+}
 
 function AppContent() {
   const [darkMode, setDarkMode] = useState(() => {
@@ -25,25 +42,19 @@ function AppContent() {
   })
   const navigate = useNavigate()
   const location = useLocation()
+  const { user } = useAuth()
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
     localStorage.setItem('shm-dark', String(darkMode))
   }, [darkMode])
 
-  const activeView = location.pathname.startsWith('/projects')
-    ? 'projects'
-    : location.pathname.startsWith('/employees')
-    ? 'employees'
-    : location.pathname.startsWith('/product-catalog')
-    ? 'product-catalog'
-    : 'dashboard'
+  const activeView = pathToView(location.pathname)
 
   if (location.pathname === '/login') {
     return <LoginPage />
   }
 
-  // Public survey page — no auth required
   if (location.pathname.startsWith('/survey/')) {
     return (
       <Routes>
@@ -52,7 +63,6 @@ function AppContent() {
     )
   }
 
-  // Print view — full Route context for useParams, no app shell
   if (location.pathname.includes('/ai-quotes/') && location.pathname.endsWith('/print')) {
     return (
       <ProtectedRoute>
@@ -65,12 +75,12 @@ function AppContent() {
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen bg-gray-100 dark:bg-gray-950 flex flex-col">
+      <div className="min-h-screen bg-[#f8fafc] dark:bg-gray-950 flex flex-col">
         <AppHeader
           darkMode={darkMode}
           onToggleDark={() => setDarkMode(d => !d)}
           activeView={activeView}
-          onNavigate={(view) => navigate(view === 'dashboard' ? '/' : `/${view}`)}
+          onNavigate={(view) => navigate(viewToPath(view, user?.role === 'admin'))}
         />
         <main className="flex-1 overflow-auto">
           <Routes>
@@ -97,6 +107,7 @@ function AppContent() {
               <AdminRoute><ManualCostsPage /></AdminRoute>
             } />
             <Route path="/faktury" element={<SharedInvoicesPage />} />
+            <Route path="/koszty" element={<KosztyPage />} />
           </Routes>
         </main>
       </div>

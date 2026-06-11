@@ -231,6 +231,9 @@ async function pollJob(url: string, maxMs = 5 * 60 * 1000): Promise<any> {
 }
 
 export const extraCostsApi = {
+  listAll: () =>
+    api.get<(ExtraCost & { project: { id: string; name: string } })[]>('/extra-costs').then(r => r.data),
+
   list: (projectId: string) =>
     api.get<ExtraCost[]>(`/projects/${projectId}/extra-costs`).then(r => r.data),
 

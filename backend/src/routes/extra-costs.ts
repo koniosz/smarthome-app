@@ -13,6 +13,15 @@ function now() {
   return new Date().toISOString()
 }
 
+// GET /api/extra-costs — all extra costs across all projects (admin view)
+export const listAllExtraCosts = async (req: Request, res: Response) => {
+  try {
+    res.json(await db.extra_costs.allWithProjects())
+  } catch (e) {
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+}
+
 // GET /api/projects/:projectId/extra-costs
 router.get('/', async (req: Request, res: Response) => {
   try {
