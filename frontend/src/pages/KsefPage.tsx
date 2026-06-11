@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, X, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug } from 'lucide-react'
+import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, X, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug, Building2 } from 'lucide-react'
 import { ksefApi, bankApi, projectsApi } from '../api/client'
 import type { KsefInvoice, KsefStatus, Project } from '../types'
 import AllocationPanel from '../components/ksef/AllocationPanel'
@@ -18,13 +18,16 @@ function fmtDate(dateStr: string | null | undefined): string {
 
 // ─── Project assign: big visual modal ──────────────────────────────────────────
 
-function AssignProjectModal({ invoice, projects, saving, onPick, onClose }: {
+function AssignProjectModal({ invoice, projects, saving, onPickProject, onPickCompany, onClose }: {
   invoice: KsefInvoice
   projects: Project[]
   saving: boolean
-  onPick: (projectId: string) => void
+  onPickProject: (projectId: string) => void
+  onPickCompany: (notes: string) => void
   onClose: () => void
 }) {
+  const [mode, setMode]   = useState<'project' | 'company'>('project')
+  const [note, setNote]   = useState('')
   const [query, setQuery] = useState('')
 
   const q = query.trim().toLowerCase()
@@ -108,7 +111,73 @@ function AssignProjectModal({ invoice, projects, saving, onPick, onClose }: {
           </div>
         </div>
 
+        {/* Mode switch: project vs company costs */}
+        <div style={{ padding: '14px 24px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {([
+            { key: 'project' as const, label: 'Do projektu',    Icon: Folder },
+            { key: 'company' as const, label: 'Koszty firmowe', Icon: Building2 },
+          ]).map(({ key, label, Icon }) => {
+            const active = mode === key
+            return (
+              <button
+                key={key}
+                onClick={() => setMode(key)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  padding: '12px 0', borderRadius: 10, fontSize: 14, fontWeight: 600,
+                  border: `1px solid ${active ? '#93c5fd' : '#e2e8f0'}`,
+                  background: active ? '#eff6ff' : '#ffffff',
+                  color: active ? '#1d4ed8' : '#475569',
+                  cursor: 'pointer', transition: 'all 0.12s',
+                }}
+              >
+                <Icon size={16} />
+                {label}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Company costs: note + confirm */}
+        {mode === 'company' && (
+          <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+                Notatka <span style={{ fontWeight: 400, color: '#94a3b8' }}>(czego dotyczy koszt — opcjonalnie)</span>
+              </label>
+              <textarea
+                autoFocus
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                placeholder="np. paliwo, narzędzia, materiały biurowe…"
+                rows={3}
+                style={{
+                  padding: '10px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
+                  fontSize: 14, outline: 'none', color: '#0f172a', resize: 'vertical',
+                  fontFamily: "'IBM Plex Sans', sans-serif",
+                }}
+              />
+            </div>
+            <button
+              onClick={() => !saving && onPickCompany(note.trim())}
+              disabled={saving}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '12px 0', borderRadius: 10, fontSize: 14, fontWeight: 600,
+                border: 'none', background: '#2563eb', color: '#ffffff', cursor: 'pointer',
+                boxShadow: '0 1px 2px rgba(37,99,235,0.3)', opacity: saving ? 0.6 : 1,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#1d4ed8' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#2563eb' }}
+            >
+              <Building2 size={16} />
+              {saving ? 'Zapisywanie…' : 'Oznacz jako koszty firmowe'}
+            </button>
+          </div>
+        )}
+
         {/* Search */}
+        {mode === 'project' && (
         <div style={{ padding: '14px 24px 0' }}>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
@@ -124,12 +193,14 @@ function AssignProjectModal({ invoice, projects, saving, onPick, onClose }: {
             />
           </div>
         </div>
+        )}
 
         {/* Project tiles */}
+        {mode === 'project' && (
         <div style={{ padding: '14px 24px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {showSuggested && suggested && (
             <button
-              onClick={() => !saving && onPick(suggested.id)}
+              onClick={() => !saving && onPickProject(suggested.id)}
               style={{ ...tileBase, border: '1px solid #93c5fd', background: '#eff6ff' }}
               onMouseEnter={e => { if (!saving) (e.currentTarget as HTMLButtonElement).style.background = '#dbeafe' }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#eff6ff' }}
@@ -166,7 +237,7 @@ function AssignProjectModal({ invoice, projects, saving, onPick, onClose }: {
               {rest.map(p => (
                 <button
                   key={p.id}
-                  onClick={() => !saving && onPick(p.id)}
+                  onClick={() => !saving && onPickProject(p.id)}
                   style={tileBase}
                   onMouseEnter={e => {
                     if (saving) return
@@ -199,6 +270,7 @@ function AssignProjectModal({ invoice, projects, saving, onPick, onClose }: {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   )
@@ -213,12 +285,43 @@ function AssignDropdown({ invoice, projects, onAssigned }: {
   const [open, setOpen]     = useState(false)
   const [saving, setSaving] = useState(false)
 
-  const handleAssign = async (projectId: string) => {
+  // Pełna alokacja → tworzy CostItem w projekcie, faktura znika z listy
+  const handleAssignProject = async (projectId: string) => {
     setSaving(true)
     try {
-      const updated = await ksefApi.assign(invoice.id, projectId || null, invoice.notes ?? '')
-      onAssigned(updated)
+      const alloc = await ksefApi.addAllocation(
+        invoice.id, projectId, invoice.gross_amount, '', 'materials', 'project',
+      )
+      const proj = projects.find(p => p.id === projectId)
+      onAssigned({
+        ...invoice,
+        project_id: projectId,
+        project: proj ? { id: proj.id, name: proj.name, client_name: proj.client_name } : invoice.project,
+        allocations: [...(invoice.allocations ?? []), alloc],
+      })
       setOpen(false)
+    } catch (err: any) {
+      alert(err?.response?.data?.error ?? 'Nie udało się przypisać faktury.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Koszty firmowe = alokacja "internal" + notatka (bez projektu)
+  const handleCompanyCost = async (notes: string) => {
+    setSaving(true)
+    try {
+      const alloc = await ksefApi.addAllocation(
+        invoice.id, null, invoice.gross_amount, notes, 'other', 'internal',
+      )
+      onAssigned({
+        ...invoice,
+        notes: notes || invoice.notes,
+        allocations: [...(invoice.allocations ?? []), alloc],
+      })
+      setOpen(false)
+    } catch (err: any) {
+      alert(err?.response?.data?.error ?? 'Nie udało się oznaczyć faktury.')
     } finally {
       setSaving(false)
     }
@@ -257,7 +360,8 @@ function AssignDropdown({ invoice, projects, onAssigned }: {
           invoice={invoice}
           projects={projects}
           saving={saving}
-          onPick={handleAssign}
+          onPickProject={handleAssignProject}
+          onPickCompany={handleCompanyCost}
           onClose={() => setOpen(false)}
         />
       )}
@@ -591,23 +695,15 @@ function PaymentBadge({ invoice, onUpdated }: { invoice: KsefInvoice; onUpdated:
 
 // ─── "Do przypisania" table row ────────────────────────────────────────────────
 
-function UnassignedRow({ invoice, projects, onUpdated, onRemoved }: {
+function UnassignedRow({ invoice, projects, onUpdated }: {
   invoice: KsefInvoice
   projects: Project[]
   onUpdated: (inv: KsefInvoice) => void
-  onRemoved: (id: string) => void
 }) {
-  const [showAllocations, setShowAllocations] = useState(false)
   const [previewing, setPreviewing]           = useState(false)
   const [confirmingPayment, setConfirmingPayment] = useState(false)
 
   const hasSuggestion = !!(invoice.suggested_project_id) && !invoice.project_id && !invoice.suggestion_dismissed
-
-  const handleRemove = async () => {
-    if (!confirm('Usunąć tę fakturę z bazy? (Nie usuwa jej z KSeF)')) return
-    await ksefApi.remove(invoice.id)
-    onRemoved(invoice.id)
-  }
 
   return (
     <>
@@ -653,51 +749,18 @@ function UnassignedRow({ invoice, projects, onUpdated, onRemoved }: {
           {fmt(invoice.gross_amount)}
         </div>
 
-        {/* Przypisanie */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
-          <button
-            onClick={async () => {
-              const updated = await ksefApi.share(invoice.id, !invoice.is_shared)
-              onUpdated(updated)
-            }}
-            title={invoice.is_shared ? 'Cofnij udostępnienie' : 'Udostępnij'}
-            style={{ padding: 5, border: 'none', background: 'none', cursor: 'pointer', color: invoice.is_shared ? '#16a34a' : '#cbd5e1', borderRadius: 6 }}
-          >
-            <Share2 size={13} />
-          </button>
+        {/* Przypisanie: tylko podgląd + jeden wyraźny przycisk */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
           <button
             onClick={() => setPreviewing(true)}
             title="Podgląd faktury"
-            style={{ padding: 5, border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8', borderRadius: 6 }}
+            style={{ padding: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8', borderRadius: 6 }}
+            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = '#475569'}
+            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = '#94a3b8'}
           >
-            <Eye size={13} />
-          </button>
-          <button
-            onClick={() => setShowAllocations(v => !v)}
-            title="Alokacje"
-            style={{
-              padding: '4px 8px',
-              fontSize: 11,
-              fontWeight: 500,
-              border: `1px solid ${showAllocations ? '#7c3aed' : '#e2e8f0'}`,
-              borderRadius: 6,
-              background: showAllocations ? '#7c3aed' : 'transparent',
-              color: showAllocations ? '#ffffff' : '#7c3aed',
-              cursor: 'pointer',
-            }}
-          >
-            Alokacje
+            <Eye size={15} />
           </button>
           <AssignDropdown invoice={invoice} projects={projects} onAssigned={onUpdated} />
-          <button
-            onClick={handleRemove}
-            title="Usuń z bazy"
-            style={{ padding: 5, border: 'none', background: 'none', cursor: 'pointer', color: '#cbd5e1', borderRadius: 6 }}
-            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = '#dc2626'}
-            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = '#cbd5e1'}
-          >
-            <Trash2 size={13} />
-          </button>
         </div>
       </div>
 
@@ -755,13 +818,6 @@ function UnassignedRow({ invoice, projects, onUpdated, onRemoved }: {
         </div>
       )}
 
-      {/* Allocation panel */}
-      {showAllocations && (
-        <div style={{ background: '#f5f3ff', borderBottom: '1px solid #ddd6fe', padding: '12px 24px' }}>
-          <AllocationPanel invoice={invoice} isAdmin={true} />
-        </div>
-      )}
-
       {previewing && (
         <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />
       )}
@@ -779,12 +835,18 @@ function AssignedRow({ invoice, projects, onUpdated }: {
   const [unassigning, setUnassigning] = useState(false)
 
   const project = projects.find(p => p.id === invoice.project_id)
+  const isCompanyCost = !invoice.project_id
+    && (invoice.allocations ?? []).some(a => a.allocation_type === 'internal')
 
+  // Cofnij = usuń alokacje (kasuje też CostItem w projekcie) + wyczyść project_id
   const handleUnassign = async () => {
     setUnassigning(true)
     try {
+      for (const a of invoice.allocations ?? []) {
+        await ksefApi.deleteAllocation(a.id)
+      }
       const updated = await ksefApi.assign(invoice.id, null, invoice.notes ?? '')
-      onUpdated(updated)
+      onUpdated({ ...updated, allocations: [] })
     } finally {
       setUnassigning(false)
     }
@@ -832,7 +894,7 @@ function AssignedRow({ invoice, projects, onUpdated }: {
         {fmt(invoice.gross_amount)}
       </div>
 
-      {/* Projekt + cofnij */}
+      {/* Projekt / koszty firmowe + cofnij */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
         {project && (
           <span style={{
@@ -848,6 +910,22 @@ function AssignedRow({ invoice, projects, onUpdated }: {
           }}>
             <Folder size={11} />
             {project.name}
+          </span>
+        )}
+        {isCompanyCost && (
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '4px 12px',
+            borderRadius: 999,
+            fontSize: 13,
+            fontWeight: 600,
+            background: '#f1f5f9',
+            color: '#475569',
+          }}>
+            <Building2 size={11} />
+            Koszty firmowe
           </span>
         )}
         <button
@@ -1409,7 +1487,6 @@ export default function KsefPage() {
                     invoice={inv}
                     projects={projects}
                     onUpdated={handleUpdated}
-                    onRemoved={handleRemoved}
                   />
                 ))}
               </div>

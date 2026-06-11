@@ -319,6 +319,33 @@ router.post('/invoices/:id/confirm-suggestion', requireAdmin, async (req: Reques
       include: { project: { select: { id: true, name: true, client_name: true } } },
     })
 
+    // Pełna alokacja + CostItem, żeby faktura pojawiła się w kosztach projektu
+    // (pomijane, gdy faktura ma już ręczne alokacje częściowe)
+    const existingAllocs = await prisma.ksefInvoiceAllocation.count({ where: { invoice_id: invoice.id } })
+    if (existingAllocs === 0) {
+      const { v4: uuidv4 } = require('uuid')
+      const allocationId = uuidv4()
+      const nowIso = new Date().toISOString()
+      const classified = autoClassify(invoice.seller_name, null)
+      await prisma.ksefInvoiceAllocation.create({
+        data: {
+          id: allocationId,
+          invoice_id: invoice.id,
+          project_id: projectId,
+          amount: invoice.gross_amount,
+          notes: '',
+          category: 'materials',
+          allocation_type: 'project',
+          cost_category: classified.cost_category,
+          subcategory:   classified.subcategory,
+          business_unit: classified.business_unit,
+          created_at: nowIso,
+          updated_at: nowIso,
+        },
+      })
+      await upsertCostItemForAllocation(allocationId, projectId, invoice as any, invoice.gross_amount, '', 'materials')
+    }
+
     // Opcjonalnie: utwórz płatność klienta jeśli req.body.create_payment === true
     if (req.body.create_payment) {
       const { v4: uuid } = require('uuid')
