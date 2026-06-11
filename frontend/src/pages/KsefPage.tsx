@@ -16,8 +16,195 @@ function fmtDate(dateStr: string | null | undefined): string {
   return d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
-// ─── Inline project assign dropdown ────────────────────────────────────────────
+// ─── Project assign: big visual modal ──────────────────────────────────────────
 
+function AssignProjectModal({ invoice, projects, saving, onPick, onClose }: {
+  invoice: KsefInvoice
+  projects: Project[]
+  saving: boolean
+  onPick: (projectId: string) => void
+  onClose: () => void
+}) {
+  const [query, setQuery] = useState('')
+
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? projects.filter(p => (p.name + ' ' + (p.client_name ?? '')).toLowerCase().includes(q))
+    : projects
+
+  const suggested = invoice.suggested_project_id && !invoice.suggestion_dismissed
+    ? projects.find(p => p.id === invoice.suggested_project_id)
+    : undefined
+  const rest = suggested ? filtered.filter(p => p.id !== suggested.id) : filtered
+  const showSuggested = suggested && (!q || (suggested.name + ' ' + (suggested.client_name ?? '')).toLowerCase().includes(q))
+
+  const tileBase: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    width: '100%',
+    textAlign: 'left',
+    padding: '13px 14px',
+    borderRadius: 10,
+    border: '1px solid #e2e8f0',
+    background: '#ffffff',
+    cursor: saving ? 'wait' : 'pointer',
+    transition: 'all 0.12s',
+    opacity: saving ? 0.6 : 1,
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 100,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#ffffff', borderRadius: 16, width: 640, maxWidth: '100%',
+          maxHeight: '85vh', boxShadow: '0 24px 64px rgba(15,23,42,0.25)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px 0' }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a' }}>Do którego projektu przypisać?</div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 32, height: 32, borderRadius: 8, border: 'none', background: 'transparent',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', cursor: 'pointer',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        {/* Invoice summary */}
+        <div style={{ padding: '16px 24px 0' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+            background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '13px 16px',
+          }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {invoice.seller_name ?? '—'}
+              </div>
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+                {invoice.invoice_number ?? invoice.ksef_number ?? '—'} · {fmtDate(invoice.invoice_date)}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                {fmt(invoice.gross_amount)}
+              </div>
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>PLN brutto</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Search */}
+        <div style={{ padding: '14px 24px 0' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+            borderRadius: 8, border: '1px solid #e2e8f0', background: '#ffffff',
+          }}>
+            <Search size={15} color="#94a3b8" />
+            <input
+              autoFocus
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Szukaj projektu lub klienta…"
+              style={{ border: 'none', outline: 'none', fontSize: 14, flex: 1, color: '#0f172a', background: 'transparent' }}
+            />
+          </div>
+        </div>
+
+        {/* Project tiles */}
+        <div style={{ padding: '14px 24px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {showSuggested && suggested && (
+            <button
+              onClick={() => !saving && onPick(suggested.id)}
+              style={{ ...tileBase, border: '1px solid #93c5fd', background: '#eff6ff' }}
+              onMouseEnter={e => { if (!saving) (e.currentTarget as HTMLButtonElement).style.background = '#dbeafe' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#eff6ff' }}
+            >
+              <div style={{
+                width: 38, height: 38, borderRadius: 9, background: '#2563eb', color: '#ffffff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                <Folder size={18} />
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {suggested.name}
+                  </span>
+                  <span style={{
+                    flexShrink: 0, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                    background: '#2563eb', color: '#ffffff',
+                  }}>
+                    Sugerowany{invoice.suggestion_score ? ` · ${Math.round(invoice.suggestion_score * 100)}%` : ''}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{suggested.client_name}</div>
+              </div>
+            </button>
+          )}
+
+          {rest.length === 0 && !showSuggested ? (
+            <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 14, color: '#94a3b8' }}>
+              Brak projektów spełniających kryteria.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {rest.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => !saving && onPick(p.id)}
+                  style={tileBase}
+                  onMouseEnter={e => {
+                    if (saving) return
+                    const el = e.currentTarget as HTMLButtonElement
+                    el.style.borderColor = '#93c5fd'
+                    el.style.background = '#eff6ff'
+                  }}
+                  onMouseLeave={e => {
+                    const el = e.currentTarget as HTMLButtonElement
+                    el.style.borderColor = '#e2e8f0'
+                    el.style.background = '#ffffff'
+                  }}
+                >
+                  <div style={{
+                    width: 38, height: 38, borderRadius: 9, background: '#eff6ff', color: '#2563eb',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}>
+                    <Folder size={18} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.name}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.client_name}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Button + modal wrapper; keeps the old AssignDropdown call sites working
 function AssignDropdown({ invoice, projects, onAssigned }: {
   invoice: KsefInvoice
   projects: Project[]
@@ -25,16 +212,6 @@ function AssignDropdown({ invoice, projects, onAssigned }: {
 }) {
   const [open, setOpen]     = useState(false)
   const [saving, setSaving] = useState(false)
-  const ref                 = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handle = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [open])
 
   const handleAssign = async (projectId: string) => {
     setSaving(true)
@@ -48,99 +225,43 @@ function AssignDropdown({ invoice, projects, onAssigned }: {
   }
 
   return (
-    <div className="relative" ref={ref}>
+    <>
       <button
-        onClick={() => setOpen(v => !v)}
+        onClick={() => setOpen(true)}
         disabled={saving}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
-          gap: 6,
-          padding: '7px 12px',
+          gap: 7,
+          padding: '9px 16px',
           fontSize: 13,
-          fontWeight: 500,
+          fontWeight: 600,
           borderRadius: 8,
-          border: open ? '1px solid #93c5fd' : '1px solid #e2e8f0',
-          background: open ? '#eff6ff' : '#ffffff',
-          color: '#1d4ed8',
+          border: 'none',
+          background: '#2563eb',
+          color: '#ffffff',
           cursor: 'pointer',
-          transition: 'all 0.15s',
+          transition: 'background 0.15s',
           whiteSpace: 'nowrap',
+          boxShadow: '0 1px 2px rgba(37,99,235,0.3)',
         }}
-        onMouseEnter={e => {
-          if (!open) {
-            (e.currentTarget as HTMLButtonElement).style.background = '#eff6ff'
-            ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#93c5fd'
-          }
-        }}
-        onMouseLeave={e => {
-          if (!open) {
-            (e.currentTarget as HTMLButtonElement).style.background = '#ffffff'
-            ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#e2e8f0'
-          }
-        }}
+        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#1d4ed8' }}
+        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#2563eb' }}
       >
-        <Folder size={13} strokeWidth={2} />
-        {saving ? 'Zapisywanie…' : 'Przypisz do projektu'}
-        <ChevronDown size={12} strokeWidth={2.5} style={{ marginLeft: 2 }} />
+        <Folder size={14} strokeWidth={2} />
+        {saving ? 'Zapisywanie…' : 'Przypisz'}
       </button>
 
       {open && (
-        <div style={{
-          position: 'absolute',
-          right: 0,
-          top: 'calc(100% + 6px)',
-          width: 280,
-          background: '#ffffff',
-          border: '1px solid #e2e8f0',
-          borderRadius: 10,
-          boxShadow: '0 8px 24px rgba(15,23,42,0.14)',
-          zIndex: 50,
-          overflow: 'hidden',
-        }}>
-          <div style={{
-            padding: '8px 12px 4px',
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: '0.05em',
-            color: '#94a3b8',
-            textTransform: 'uppercase',
-          }}>
-            Przypisz jako koszt do
-          </div>
-          <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-            {projects.length === 0 ? (
-              <div style={{ padding: '12px 16px', fontSize: 13, color: '#94a3b8' }}>Brak projektów</div>
-            ) : (
-              projects.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => handleAssign(p.id)}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '10px 16px',
-                    fontSize: 13,
-                    color: '#0f172a',
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <span style={{ fontWeight: 500 }}>{p.name}</span>
-                  <span style={{ fontSize: 12, color: '#94a3b8', marginTop: 1 }}>{p.client_name}</span>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
+        <AssignProjectModal
+          invoice={invoice}
+          projects={projects}
+          saving={saving}
+          onPick={handleAssign}
+          onClose={() => setOpen(false)}
+        />
       )}
-    </div>
+    </>
   )
 }
 
