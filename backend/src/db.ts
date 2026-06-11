@@ -178,6 +178,38 @@ export const db = {
       prisma.aiQuoteExample.delete({ where: { id } }),
   },
 
+  tasks: {
+    all: () =>
+      prisma.task.findMany({
+        include: {
+          project: { select: { id: true, name: true } },
+          assignee: { select: { id: true, name: true } },
+        },
+        orderBy: [{ date: 'asc' }, { time: 'asc' }],
+      }),
+    find: (id: string) =>
+      prisma.task.findUnique({ where: { id } }),
+    insert: (item: any) =>
+      prisma.task.create({
+        data: item,
+        include: {
+          project: { select: { id: true, name: true } },
+          assignee: { select: { id: true, name: true } },
+        },
+      }),
+    update: (id: string, patch: any) =>
+      prisma.task.update({
+        where: { id },
+        data: patch,
+        include: {
+          project: { select: { id: true, name: true } },
+          assignee: { select: { id: true, name: true } },
+        },
+      }),
+    delete: (id: string) =>
+      prisma.task.delete({ where: { id } }),
+  },
+
   extra_costs: {
     allWithProjects: () =>
       prisma.extraCost.findMany({

@@ -5,14 +5,23 @@ import { dashboardApi } from '../../api/client'
 import type { DashboardStats, CarAlert, EmployeeAlert } from '../../types'
 import { PROJECT_STATUS_LABELS, PROJECT_TYPE_LABELS } from '../../types'
 import { StatusBadge, TypeBadge, MarginBadge } from '../ui/StatusBadge'
+import CalendarTasksSection from './CalendarTasksSection'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
 }
 
+function taskPlural(n: number) {
+  if (n === 1) return 'zadanie'
+  if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) return 'zadania'
+  return 'zadań'
+}
+
 export default function DashboardView() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [taskModalOpen, setTaskModalOpen] = useState(false)
+  const [upcomingTasks, setUpcomingTasks] = useState(0)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -86,14 +95,14 @@ export default function DashboardView() {
             <p style={{ fontSize: 14, color: '#64748b', marginTop: 4, marginBottom: 0 }}>
               Masz{' '}
               <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#0f172a' }}>
-                {stats.active_projects}
+                {upcomingTasks}
               </span>{' '}
-              aktywnych projektów
+              {taskPlural(upcomingTasks)} do wykonania w najbliższe 3 dni
             </p>
           </div>
           <div className="flex items-center" style={{ gap: 10 }}>
             <button
-              onClick={() => navigate('/projects')}
+              onClick={() => setTaskModalOpen(true)}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -104,7 +113,7 @@ export default function DashboardView() {
                 padding: '10px 18px',
                 fontSize: 14,
                 fontWeight: 600,
-                color: '#2563eb',
+                color: '#0f172a',
                 cursor: 'pointer',
                 fontFamily: "'IBM Plex Sans', sans-serif",
               }}
@@ -317,6 +326,14 @@ export default function DashboardView() {
             <div style={{ fontSize: 13, color: '#64748b' }}>aktywnych projektów</div>
           </div>
         </div>
+
+        {/* ── Calendar + Tasks (najbliższe 3 dni) ── */}
+        <CalendarTasksSection
+          modalOpen={taskModalOpen}
+          onModalClose={() => setTaskModalOpen(false)}
+          onRequestOpenModal={() => setTaskModalOpen(true)}
+          onUpcomingCount={setUpcomingTasks}
+        />
 
         {/* ── Over budget alert ── */}
         {stats.over_budget_count > 0 && (

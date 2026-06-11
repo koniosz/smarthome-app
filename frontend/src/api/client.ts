@@ -3,7 +3,7 @@ import type {
   Project, ProjectDetail, CostItem, LaborEntry, ClientPayment, Employee, EmployeeDetail,
   EmployeeAsset, EmployeeDocument, DashboardStats,
   AiQuote, ProductCatalogItem, ExtraCost, AccessRequest, AppNotification, CostAuditEntry,
-  BankTransaction, ProjectDocument, ClientSurvey, ClientSurveyAttachment,
+  BankTransaction, ProjectDocument, ClientSurvey, ClientSurveyAttachment, Task,
 } from '../types'
 
 const BASE = '/api'
@@ -228,6 +228,13 @@ async function pollJob(url: string, maxMs = 5 * 60 * 1000): Promise<any> {
     await new Promise(r => setTimeout(r, 3000))
   }
   throw new Error('Operacja trwa zbyt długo. Spróbuj ponownie.')
+}
+
+export const tasksApi = {
+  list: () => api.get<Task[]>('/tasks').then(r => r.data),
+  create: (data: Partial<Task>) => api.post<Task>('/tasks', data).then(r => r.data),
+  update: (id: string, data: Partial<Task>) => api.put<Task>(`/tasks/${id}`, data).then(r => r.data),
+  delete: (id: string) => api.delete(`/tasks/${id}`).then(r => r.data),
 }
 
 export const extraCostsApi = {

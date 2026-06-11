@@ -37,8 +37,27 @@ model Project {
   ksef_allocations    KsefInvoiceAllocation[]
   documents           ProjectDocument[]
   surveys             ClientSurvey[]
+  tasks               Task[]
 
   @@map("projects")
+}
+
+model Task {
+  id          String   @id
+  title       String
+  project_id  String?
+  date        String   // YYYY-MM-DD
+  time        String   @default("") // HH:MM
+  type        String   @default("work") // work | event | task
+  assignee_id String?
+  done        Boolean  @default(false)
+  created_at  String
+  updated_at  String   @default("")
+
+  project     Project?  @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  assignee    Employee? @relation(fields: [assignee_id], references: [id], onDelete: SetNull)
+
+  @@map("tasks")
 }
 
 model CostItem {
@@ -114,6 +133,7 @@ model Employee {
 
   assets      EmployeeAsset[]
   documents   EmployeeDocument[]
+  tasks       Task[]
 
   @@map("employees")
 }

@@ -14,6 +14,7 @@ import { updateLabor, deleteLabor } from './routes/labor'
 import paymentsRouter, { updatePayment, deletePayment } from './routes/payments'
 import employeesRouter from './routes/employees'
 import dashboardRouter from './routes/dashboard'
+import tasksRouter from './routes/tasks'
 import attachmentsRouter from './routes/attachments'
 import authRouter from './routes/auth'
 import usersRouter from './routes/users'
@@ -70,6 +71,9 @@ app.use('/api', requireAuth)
 
 // Dashboard
 app.use('/api/dashboard', dashboardRouter)
+
+// Tasks (kalendarz zadań)
+app.use('/api/tasks', tasksRouter)
 
 // Projects
 app.use('/api/projects', projectsRouter)

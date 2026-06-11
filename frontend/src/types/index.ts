@@ -582,3 +582,27 @@ export interface KsefSyncResult {
   saved: number
   errors: string[]
 }
+
+// ─── Tasks (kalendarz zadań) ──────────────────────────────────────────────────
+export type TaskType = 'work' | 'event' | 'task'
+
+export interface Task {
+  id: string
+  title: string
+  project_id: string | null
+  date: string          // YYYY-MM-DD
+  time: string          // HH:MM
+  type: TaskType
+  assignee_id: string | null
+  done: boolean
+  created_at: string
+  updated_at: string
+  project?: { id: string; name: string } | null
+  assignee?: { id: string; name: string } | null
+}
+
+export const TASK_TYPE_LABELS: Record<TaskType, string> = {
+  work:  'Praca',
+  event: 'Wydarzenie',
+  task:  'Zadanie',
+}
