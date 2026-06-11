@@ -394,8 +394,8 @@ export const ksefApi = {
   getSharedXml: (id: string) =>
     api.get<string>(`/ksef/shared/${id}/xml`, { responseType: 'text' }).then(r => r.data),
 
-  assignShared: (id: string, project_id: string | null, notes?: string) =>
-    api.patch<import('../types').KsefInvoice>(`/ksef/shared/${id}/assign`, { project_id, notes }).then(r => r.data),
+  assignShared: (id: string, body: { project_id?: string | null; company_cost?: boolean; notes?: string }) =>
+    api.patch<import('../types').KsefInvoice>(`/ksef/shared/${id}/assign`, body).then(r => r.data),
 
   updatePayment: (invoiceId: string, status: 'paid' | 'unpaid', paidAmount?: number, paidAt?: string) =>
     api.patch(`/ksef/invoices/${invoiceId}/payment`, { status, paid_amount: paidAmount, paid_at: paidAt }).then(r => r.data),

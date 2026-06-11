@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
-import { ksefApi } from '../api/client'
-import type { KsefInvoice } from '../types'
-import AllocationPanel from '../components/ksef/AllocationPanel'
+import { Search, Folder, FileText, ChevronDown, ChevronUp } from 'lucide-react'
+import { ksefApi, projectsApi } from '../api/client'
+import type { KsefInvoice, Project } from '../types'
+import AssignInvoiceModal from '../components/ksef/AssignInvoiceModal'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -42,14 +43,16 @@ function parseXml(xml: string): { fields: Record<string, string>; items: Invoice
   return { fields, items }
 }
 
-function InvoiceCard({ invoice, onUpdated }: {
+function InvoiceCard({ invoice, projects, onAssigned }: {
   invoice: KsefInvoice
-  onUpdated: (inv: KsefInvoice) => void
+  projects: Project[]
+  onAssigned: (id: string) => void
 }) {
-  const [expanded, setExpanded]       = useState(false)
-  const [xml, setXml]                 = useState<string | null>(null)
-  const [loadingXml, setLoadingXml]   = useState(false)
-  const [showAllocations, setShowAllocations] = useState(false)
+  const [expanded, setExpanded]     = useState(false)
+  const [xml, setXml]               = useState<string | null>(null)
+  const [loadingXml, setLoadingXml] = useState(false)
+  const [modalOpen, setModalOpen]   = useState(false)
+  const [saving, setSaving]         = useState(false)
 
   const loadXml = async () => {
     if (xml) { setExpanded(e => !e); return }
@@ -61,88 +64,127 @@ function InvoiceCard({ invoice, onUpdated }: {
     } catch (e) { /* ignore */ } finally { setLoadingXml(false) }
   }
 
-  const { fields, items } = xml ? parseXml(xml) : { fields: {}, items: [] }
+  const { items } = xml ? parseXml(xml) : { items: [] as InvoiceLineItem[] }
+
+  const handlePickProject = async (projectId: string) => {
+    setSaving(true)
+    try {
+      await ksefApi.assignShared(invoice.id, { project_id: projectId })
+      onAssigned(invoice.id)
+    } catch (err: any) {
+      alert(err?.response?.data?.error ?? 'Nie udało się przypisać faktury.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handlePickCompany = async (notes: string) => {
+    setSaving(true)
+    try {
+      await ksefApi.assignShared(invoice.id, { company_cost: true, notes })
+      onAssigned(invoice.id)
+    } catch (err: any) {
+      alert(err?.response?.data?.error ?? 'Nie udało się oznaczyć faktury.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
       {/* Header row */}
-      <div className="flex items-start justify-between p-4 gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{invoice.seller_name || '—'}</span>
-            <span className="text-xs text-gray-400">{invoice.seller_nip}</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', gap: 16 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{invoice.seller_name || '—'}</span>
+            <span style={{ fontSize: 12, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>{invoice.seller_nip}</span>
           </div>
-          <div className="flex items-center gap-3 mt-1 flex-wrap text-xs text-gray-500 dark:text-gray-400">
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginTop: 4, flexWrap: 'wrap', fontSize: 12, color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>
             <span>Nr: {invoice.invoice_number || '—'}</span>
             <span>Data: {invoice.invoice_date || '—'}</span>
-            <span className="font-semibold text-gray-800 dark:text-gray-100 text-sm">{fmt(invoice.gross_amount)} {invoice.currency}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{fmt(invoice.gross_amount)} {invoice.currency}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {invoice.project ? (
-            <span className="text-xs px-2 py-1 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full">✓ {invoice.project.name}</span>
-          ) : (
-            <span className="text-xs px-2 py-1 bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400 rounded-full">Nieprzypisana</span>
-          )}
-          <button
-            onClick={() => setShowAllocations(v => !v)}
-            className={`px-2.5 py-1 text-xs font-medium border rounded-lg transition-colors ${showAllocations
-              ? 'bg-violet-600 border-violet-600 text-white'
-              : 'text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/20'}`}
-          >
-            {showAllocations ? '▲ Alokacje' : '▼ Alokacje'}
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <button
             onClick={loadXml}
             disabled={loadingXml}
-            className="px-2.5 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '8px 13px', fontSize: 13, fontWeight: 600,
+              border: '1px solid #e2e8f0', borderRadius: 8,
+              background: '#ffffff', color: '#475569', cursor: 'pointer',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#ffffff' }}
           >
-            {loadingXml ? '…' : expanded ? '▲ Zwiń' : '▼ Pozycje'}
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {loadingXml ? '…' : 'Pozycje'}
+          </button>
+          <button
+            onClick={() => setModalOpen(true)}
+            disabled={saving}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 7,
+              padding: '9px 16px', fontSize: 13, fontWeight: 600,
+              borderRadius: 8, border: 'none',
+              background: '#2563eb', color: '#ffffff', cursor: 'pointer',
+              boxShadow: '0 1px 2px rgba(37,99,235,0.3)', whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#1d4ed8' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#2563eb' }}
+          >
+            <Folder size={14} />
+            {saving ? 'Zapisywanie…' : 'Przypisz'}
           </button>
         </div>
       </div>
 
-      {/* Allocation panel */}
-      {showAllocations && (
-        <div className="px-4 pb-4 border-t border-violet-100 dark:border-violet-900/30 pt-3 bg-violet-50/30 dark:bg-violet-950/10">
-          <AllocationPanel invoice={invoice} />
-        </div>
-      )}
-
       {/* Line items */}
       {expanded && xml && (
-        <div className="border-t border-gray-100 dark:border-gray-800 p-4">
+        <div style={{ borderTop: '1px solid #f1f5f9', padding: '14px 20px' }}>
           {items.length > 0 ? (
-            <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-850">
-              <table className="w-full text-xs text-gray-800 dark:text-gray-100">
+            <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid #f1f5f9' }}>
+              <table style={{ width: '100%', fontSize: 12, color: '#0f172a', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr className="bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
-                    <th className="text-left px-3 py-2 font-semibold">Nazwa towaru/usługi</th>
-                    <th className="text-right px-3 py-2 font-semibold">Ilość</th>
-                    <th className="text-left px-3 py-2 font-semibold">J.m.</th>
-                    <th className="text-right px-3 py-2 font-semibold">Cena netto</th>
-                    <th className="text-right px-3 py-2 font-semibold">Wartość netto</th>
-                    <th className="text-right px-3 py-2 font-semibold">VAT%</th>
+                  <tr style={{ background: '#f8fafc', color: '#94a3b8' }}>
+                    <th style={{ textAlign: 'left',  padding: '8px 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: 11 }}>Nazwa towaru/usługi</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: 11 }}>Ilość</th>
+                    <th style={{ textAlign: 'left',  padding: '8px 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: 11 }}>J.m.</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: 11 }}>Cena netto</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: 11 }}>Wartość netto</th>
+                    <th style={{ textAlign: 'right', padding: '8px 12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: 11 }}>VAT%</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                <tbody>
                   {items.map((item, i) => (
-                    <tr key={i} className="bg-white dark:bg-gray-800">
-                      <td className="px-3 py-2 font-medium">{item.name}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{item.qty}</td>
-                      <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{item.unit}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{item.unitPrice}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-semibold">{item.netValue}</td>
-                      <td className="px-3 py-2 text-right text-gray-500 dark:text-gray-400">{item.vatRate}%</td>
+                    <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '8px 12px', fontWeight: 500 }}>{item.name}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{item.qty}</td>
+                      <td style={{ padding: '8px 12px', color: '#64748b' }}>{item.unit}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{item.unitPrice}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{item.netValue}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#64748b' }}>{item.vatRate}%</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           ) : (
-            <div className="text-xs text-gray-400 text-center py-4">Brak pozycji w XML lub nieznany format</div>
+            <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: '14px 0' }}>Brak pozycji w XML lub nieznany format</div>
           )}
         </div>
+      )}
+
+      {modalOpen && (
+        <AssignInvoiceModal
+          invoice={invoice}
+          projects={projects}
+          saving={saving}
+          onPickProject={handlePickProject}
+          onPickCompany={handlePickCompany}
+          onClose={() => setModalOpen(false)}
+        />
       )}
     </div>
   )
@@ -150,6 +192,7 @@ function InvoiceCard({ invoice, onUpdated }: {
 
 export default function SharedInvoicesPage() {
   const [invoices, setInvoices] = useState<KsefInvoice[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [total, setTotal]       = useState(0)
   const [loading, setLoading]   = useState(true)
   const [search, setSearch]     = useState('')
@@ -159,61 +202,102 @@ export default function SharedInvoicesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await ksefApi.sharedInvoices({ search: search || undefined, page, limit: LIMIT })
+      const [res, projs] = await Promise.all([
+        ksefApi.sharedInvoices({ search: search || undefined, page, limit: LIMIT }),
+        projectsApi.list(),
+      ])
       setInvoices(res.invoices)
       setTotal(res.total)
+      // members only: employees assign to their own projects
+      setProjects(projs.filter(p => p.user_is_member !== false))
     } finally { setLoading(false) }
   }, [search, page])
 
   useEffect(() => { load() }, [load])
 
+  const handleAssigned = (id: string) => {
+    setInvoices(prev => prev.filter(i => i.id !== id))
+    setTotal(t => Math.max(0, t - 1))
+  }
+
   const totalPages = Math.ceil(total / LIMIT)
 
+  const btnPage: React.CSSProperties = {
+    padding: '7px 14px', fontSize: 13, fontWeight: 600,
+    border: '1px solid #e2e8f0', borderRadius: 8,
+    background: '#ffffff', color: '#475569', cursor: 'pointer',
+  }
+
   return (
-    <div className="p-6 space-y-4 max-w-4xl mx-auto">
-      <div>
-        <h1 className="text-xl font-bold text-gray-800 dark:text-gray-100">📄 Faktury do przypisania</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Faktury udostępnione przez administratora — przypisz do projektu</p>
-      </div>
+    <div style={{ padding: '36px 32px 64px', background: '#f8fafc', minHeight: '100vh', fontFamily: "'IBM Plex Sans', system-ui, sans-serif" }}>
+      <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-      <div className="flex items-center gap-3">
-        <input
-          type="text"
-          placeholder="Szukaj (sprzedawca, nr faktury…)"
-          className="flex-1 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPage(1) }}
-        />
-        <span className="text-xs text-gray-400 whitespace-nowrap">{total} faktur</span>
-      </div>
-
-      {loading ? (
-        <div className="text-center py-16 text-gray-400 text-sm">Ładowanie…</div>
-      ) : invoices.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <div className="text-4xl mb-3">📄</div>
-          <div className="text-sm font-medium">Brak udostępnionych faktur</div>
-          <div className="text-xs mt-1">Administrator musi najpierw udostępnić faktury</div>
+        {/* Header */}
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em', margin: 0 }}>
+            Faktury do przypisania
+          </h1>
+          <p style={{ fontSize: 14, color: '#64748b', marginTop: 4, marginBottom: 0 }}>
+            Faktury udostępnione przez administratora · przypisz do projektu albo oznacz jako koszty firmowe — przypisana faktura znika z listy
+          </p>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {invoices.map(inv => (
-            <InvoiceCard
-              key={inv.id}
-              invoice={inv}
-              onUpdated={updated => setInvoices(prev => prev.map(i => i.id === updated.id ? updated : i))}
+
+        {/* Search */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+            borderRadius: 8, border: '1px solid #e2e8f0', background: '#ffffff', width: 320,
+          }}>
+            <Search size={15} color="#94a3b8" />
+            <input
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1) }}
+              placeholder="Szukaj sprzedawcy lub nr faktury…"
+              style={{ border: 'none', outline: 'none', fontSize: 14, flex: 1, color: '#0f172a', background: 'transparent' }}
             />
-          ))}
+          </div>
+          <span style={{ fontSize: 13, color: '#94a3b8', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+            {total} {total === 1 ? 'faktura' : total % 10 >= 2 && total % 10 <= 4 && (total % 100 < 12 || total % 100 > 14) ? 'faktury' : 'faktur'}
+          </span>
         </div>
-      )}
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-800">← Poprzednia</button>
-          <span className="text-sm text-gray-500">Strona {page} z {totalPages}</span>
-          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-3 py-1.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-800">Następna →</button>
-        </div>
-      )}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '64px 0', color: '#94a3b8', fontSize: 14 }}>Ładowanie…</div>
+        ) : invoices.length === 0 ? (
+          <div style={{
+            background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12,
+            padding: '48px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+          }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: '50%', background: '#f0fdf4', color: '#16a34a',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <FileText size={20} />
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: '#0f172a' }}>Brak faktur do przypisania</div>
+            <div style={{ fontSize: 13, color: '#94a3b8' }}>Nowe pojawią się tu, gdy administrator udostępni kolejne faktury.</div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {invoices.map(inv => (
+              <InvoiceCard
+                key={inv.id}
+                invoice={inv}
+                projects={projects}
+                onAssigned={handleAssigned}
+              />
+            ))}
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={{ ...btnPage, opacity: page === 1 ? 0.4 : 1 }}>← Poprzednia</button>
+            <span style={{ fontSize: 13, color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>Strona {page} z {totalPages}</span>
+            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={{ ...btnPage, opacity: page === totalPages ? 0.4 : 1 }}>Następna →</button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

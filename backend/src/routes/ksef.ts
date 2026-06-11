@@ -532,7 +532,8 @@ router.delete('/invoices', requireAdmin, async (_req: Request, res: Response) =>
 router.get('/shared', requireAuth, async (req: Request, res: Response) => {
   try {
     const { search, page = '1', limit = '50' } = req.query
-    const where: any = { is_shared: true }
+    // tylko faktury wciąż do przypisania — przypisane (projekt lub alokacja) znikają z listy
+    const where: any = { is_shared: true, project_id: null, allocations: { none: {} } }
     if (search) {
       const s = String(search)
       where.OR = [
@@ -573,12 +574,47 @@ router.get('/shared/:id/xml', requireAuth, async (req: Request, res: Response) =
 })
 
 // PATCH /api/ksef/shared/:id/assign — user przypisuje fakturę do swojego projektu
+// albo oznacza jako koszty firmowe ({ company_cost: true, notes })
 router.patch('/shared/:id/assign', requireAuth, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user
-    const { project_id, notes } = req.body
+    const { project_id, notes, company_cost } = req.body
     const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
     if (!invoice || !invoice.is_shared) { res.status(404).json({ error: 'Faktura nie znaleziona lub nieudostępniona' }); return }
+
+    const { v4: uuidv4 } = require('uuid')
+    const nowIso = new Date().toISOString()
+    const existingAllocs = await prisma.ksefInvoiceAllocation.count({ where: { invoice_id: invoice.id } })
+
+    // Koszty firmowe = alokacja "internal" + notatka, bez projektu
+    if (company_cost) {
+      if (existingAllocs === 0) {
+        const classified = autoClassify(invoice.seller_name, notes || null)
+        await prisma.ksefInvoiceAllocation.create({
+          data: {
+            id: uuidv4(),
+            invoice_id: invoice.id,
+            project_id: null,
+            amount: invoice.gross_amount,
+            notes: notes ?? '',
+            category: 'other',
+            allocation_type: 'internal',
+            cost_category: classified.cost_category,
+            subcategory:   classified.subcategory,
+            business_unit: classified.business_unit,
+            created_at: nowIso,
+            updated_at: nowIso,
+          },
+        })
+      }
+      const updated = await prisma.ksefInvoice.update({
+        where: { id: req.params.id },
+        data: { notes: notes ?? invoice.notes },
+        include: { project: { select: { id: true, name: true, client_name: true } } },
+      })
+      res.json(updated)
+      return
+    }
 
     // Sprawdź czy user ma dostęp do projektu
     if (project_id) {
@@ -594,6 +630,30 @@ router.patch('/shared/:id/assign', requireAuth, async (req: Request, res: Respon
       data: { project_id: project_id || null, notes: notes ?? invoice.notes },
       include: { project: { select: { id: true, name: true, client_name: true } } },
     })
+
+    // Pełna alokacja + CostItem — faktura ma pojawić się w kosztach projektu
+    if (project_id && existingAllocs === 0) {
+      const classified = autoClassify(invoice.seller_name, null)
+      const allocationId = uuidv4()
+      await prisma.ksefInvoiceAllocation.create({
+        data: {
+          id: allocationId,
+          invoice_id: invoice.id,
+          project_id,
+          amount: invoice.gross_amount,
+          notes: notes ?? '',
+          category: 'materials',
+          allocation_type: 'project',
+          cost_category: classified.cost_category,
+          subcategory:   classified.subcategory,
+          business_unit: classified.business_unit,
+          created_at: nowIso,
+          updated_at: nowIso,
+        },
+      })
+      await upsertCostItemForAllocation(allocationId, project_id, invoice as any, invoice.gross_amount, notes ?? '', 'materials')
+    }
+
     res.json(updated)
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
