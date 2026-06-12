@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, X, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug, Building2 } from 'lucide-react'
+import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, X, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug, Building2, Users } from 'lucide-react'
 import { ksefApi, bankApi, projectsApi } from '../api/client'
 import type { KsefInvoice, KsefStatus, Project } from '../types'
 import AllocationPanel from '../components/ksef/AllocationPanel'
@@ -443,6 +443,7 @@ function UnassignedRow({ invoice, projects, onUpdated }: {
 }) {
   const [previewing, setPreviewing]           = useState(false)
   const [confirmingPayment, setConfirmingPayment] = useState(false)
+  const [sharing, setSharing]                 = useState(false)
 
   const hasSuggestion = !!(invoice.suggested_project_id) && !invoice.project_id && !invoice.suggestion_dismissed
 
@@ -490,7 +491,7 @@ function UnassignedRow({ invoice, projects, onUpdated }: {
           {fmt(invoice.gross_amount)}
         </div>
 
-        {/* Przypisanie: tylko podgląd + jeden wyraźny przycisk */}
+        {/* Przypisanie: podgląd + przekaż do zespołu + przypisz */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
           <button
             onClick={() => setPreviewing(true)}
@@ -501,6 +502,47 @@ function UnassignedRow({ invoice, projects, onUpdated }: {
           >
             <Eye size={15} />
           </button>
+          {invoice.is_shared ? (
+            <button
+              onClick={async () => {
+                setSharing(true)
+                try { onUpdated(await ksefApi.share(invoice.id, false)) } finally { setSharing(false) }
+              }}
+              disabled={sharing}
+              title="Faktura jest u zespołu — kliknij, aby cofnąć przekazanie"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 13px', fontSize: 13, fontWeight: 600, borderRadius: 8,
+                border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#15803d',
+                cursor: 'pointer', whiteSpace: 'nowrap', opacity: sharing ? 0.6 : 1,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#dcfce7' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f0fdf4' }}
+            >
+              <Users size={13} />
+              U zespołu
+            </button>
+          ) : (
+            <button
+              onClick={async () => {
+                setSharing(true)
+                try { onUpdated(await ksefApi.share(invoice.id, true)) } finally { setSharing(false) }
+              }}
+              disabled={sharing}
+              title="Pracownicy zobaczą fakturę na swojej liście i będą mogli ją przypisać"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 13px', fontSize: 13, fontWeight: 600, borderRadius: 8,
+                border: '1px solid #e2e8f0', background: '#ffffff', color: '#475569',
+                cursor: 'pointer', whiteSpace: 'nowrap', opacity: sharing ? 0.6 : 1,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#ffffff' }}
+            >
+              <Users size={13} />
+              Przekaż do zespołu
+            </button>
+          )}
           <AssignDropdown invoice={invoice} projects={projects} onAssigned={onUpdated} />
         </div>
       </div>
