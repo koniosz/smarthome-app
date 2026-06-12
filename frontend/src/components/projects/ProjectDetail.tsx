@@ -15,6 +15,7 @@ import PaymentTable from '../costs/PaymentTable'
 import AIQuoteTab from '../ai-quote/AIQuoteTab'
 import ExtraCostsTab from '../costs/ExtraCostsTab'
 import SurveyPanel from './SurveyPanel'
+import ProjectAccessModal from './ProjectAccessModal'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
@@ -523,6 +524,7 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('materials')
   const [showEdit, setShowEdit] = useState(false)
+  const [showAccess, setShowAccess] = useState(false)
   const [showAddCost, setShowAddCost] = useState(false)
   const [showAddLabor, setShowAddLabor] = useState(false)
   const [showAddPayment, setShowAddPayment] = useState(false)
@@ -682,6 +684,14 @@ export default function ProjectDetail() {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            {isAdmin && (
+              <button
+                onClick={() => setShowAccess(true)}
+                className="px-3 py-1.5 text-xs font-medium border border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/20 rounded-lg transition-colors"
+              >
+                👥 Dostęp
+              </button>
+            )}
             <button
               onClick={() => setShowEdit(true)}
               className="px-3 py-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
@@ -878,6 +888,13 @@ export default function ProjectDetail() {
           onCreated={() => load()}
           initial={project}
           editMode
+        />
+      )}
+      {showAccess && (
+        <ProjectAccessModal
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setShowAccess(false)}
         />
       )}
       {showAddCost && (
