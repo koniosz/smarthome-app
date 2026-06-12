@@ -174,7 +174,7 @@ export default function FinansePage() {
   const [dateFrom,  setDateFrom]  = useState(`${thisYear}-01-01`)
   const [dateTo,    setDateTo]    = useState(`${thisYear}-12-31`)
   const [bu,        setBU]        = useState('all')
-  const [revSrc,    setRevSrc]    = useState<'payments' | 'ksef' | 'both'>('payments')
+  const [revSrc,    setRevSrc]    = useState<'payments' | 'ksef' | 'both'>('ksef')
   const [loading,   setLoading]   = useState(false)
   const [report,    setReport]    = useState<PnLReport | null>(null)
   const [error,     setError]     = useState<string | null>(null)
@@ -212,8 +212,8 @@ export default function FinansePage() {
           {/* Revenue source toggle */}
           <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden" title="Źródło przychodu w P&L">
             {([
+              { v: 'ksef',     label: '📤 Faktury sprzedażowe (KSeF)' },
               { v: 'payments', label: '💳 Płatności' },
-              { v: 'ksef',     label: '📤 Faktury KSeF' },
               { v: 'both',     label: '⚠️ Oba' },
             ] as const).map(s => (
               <button
@@ -276,13 +276,13 @@ export default function FinansePage() {
           {/* KPI cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <KpiCard
-              label="Przychody"
+              label={report.revenue_source === 'ksef' ? 'Sprzedaż całkowita (netto)' : 'Przychody'}
               value={report.revenue}
               sub={
                 report.revenue_source === 'ksef'
-                  ? `📤 ${fmt(report.revenue_ksef)} z faktur KSeF`
+                  ? `📤 ${report.sales_invoice_count} faktur sprzedażowych z KSeF`
                   : report.revenue_source === 'both'
-                  ? `⚠️ płatności + KSeF`
+                  ? `⚠️ płatności + faktury sprzedażowe`
                   : `💳 ${report.payment_count} wpłat klientów`
               }
               color="blue"
@@ -454,6 +454,65 @@ export default function FinansePage() {
               </tbody>
             </table>
           </div>
+
+          {/* Sprzedaż z KSeF: miesiące + lista faktur sprzedażowych */}
+          {report.revenue_source === 'ksef' && report.sales_invoices && report.sales_invoices.length > 0 && (
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-800 flex items-baseline justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                  📤 Faktury sprzedażowe z KSeF ({report.sales_invoice_count})
+                </h3>
+                <span className="text-xs text-gray-400">pobierane automatycznie co 6 godzin · kwoty netto</span>
+              </div>
+
+              {/* Miesiące */}
+              <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-800 flex flex-wrap gap-2">
+                {Object.entries(report.sales_by_month)
+                  .sort(([a], [b]) => b.localeCompare(a))
+                  .map(([month, amount]) => (
+                    <span key={month} className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/30 text-xs">
+                      <span className="font-medium text-blue-700 dark:text-blue-300">{month}</span>
+                      <span className="font-semibold text-gray-800 dark:text-gray-200 tabular-nums">{fmt(amount)} PLN</span>
+                    </span>
+                  ))}
+              </div>
+
+              <div className="max-h-80 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-50 dark:bg-gray-800">
+                    <tr className="text-gray-400">
+                      <th className="text-left px-5 py-2 font-semibold uppercase tracking-wide">Nabywca</th>
+                      <th className="text-left px-3 py-2 font-semibold uppercase tracking-wide">Nr faktury</th>
+                      <th className="text-left px-3 py-2 font-semibold uppercase tracking-wide">Data</th>
+                      <th className="text-right px-5 py-2 font-semibold uppercase tracking-wide">Netto</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                    {report.sales_invoices.map(inv => (
+                      <tr key={inv.id}>
+                        <td className="px-5 py-2 font-medium text-gray-700 dark:text-gray-300">
+                          {inv.buyer_name ?? '—'}
+                          {inv.buyer_nip && <span className="text-gray-400 font-normal ml-2">{inv.buyer_nip}</span>}
+                        </td>
+                        <td className="px-3 py-2 text-gray-500 tabular-nums">{inv.invoice_number ?? inv.ksef_number ?? '—'}</td>
+                        <td className="px-3 py-2 text-gray-500 tabular-nums">{inv.invoice_date?.slice(0, 10) ?? '—'}</td>
+                        <td className="px-5 py-2 text-right font-semibold text-gray-800 dark:text-gray-200 tabular-nums">
+                          {fmt(inv.net_amount)} {inv.currency}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Brak faktur sprzedażowych w okresie */}
+          {report.revenue_source === 'ksef' && (!report.sales_invoices || report.sales_invoices.length === 0) && (
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+              ℹ️ Brak faktur sprzedażowych z KSeF w wybranym okresie. Sprawdź synchronizację KSeF (pobiera też faktury wystawione przez firmę) lub zmień zakres dat.
+            </div>
+          )}
 
           {/* Revenue by project breakdown */}
           {Object.keys(report.revenue_by_project).length > 0 && (

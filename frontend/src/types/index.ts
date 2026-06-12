@@ -446,6 +446,20 @@ export interface PnLReport {
   revenue: number
   revenue_ksef: number
   revenue_payments: number
+  revenue_sales_invoices: number
+  sales_invoice_count: number
+  sales_by_month: Record<string, number>
+  sales_invoices: {
+    id: string
+    invoice_number: string | null
+    ksef_number: string | null
+    buyer_name: string | null
+    buyer_nip: string | null
+    net_amount: number
+    gross_amount: number
+    invoice_date: string | null
+    currency: string
+  }[]
   revenue_by_type: Record<string, number>
   revenue_by_project: Record<string, number>
   cogs: PnLCategoryData

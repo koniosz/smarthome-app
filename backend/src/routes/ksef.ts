@@ -699,6 +699,32 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       include: { project: { select: { id: true, name: true } } },
     })
 
+    // ── Revenue: faktury sprzedażowe z KSeF (outgoing, Subject1) ─────────────
+    // Synchronizacja pobiera je automatycznie co 6 h — to jest bieżąca
+    // wartość sprzedaży całkowitej bez ręcznych alokacji.
+    const salesWhere: any = { invoice_direction: 'outgoing' }
+    if (dateFrom || dateTo) {
+      const df: any = {}
+      if (dateFrom) df.gte = String(dateFrom)
+      if (dateTo)   df.lte = String(dateTo) + 'T23:59:59Z'
+      salesWhere.invoice_date = df
+    }
+    const salesInvoices = await prisma.ksefInvoice.findMany({
+      where: salesWhere,
+      select: {
+        id: true, invoice_number: true, ksef_number: true,
+        buyer_name: true, buyer_nip: true,
+        net_amount: true, gross_amount: true, invoice_date: true, currency: true,
+      },
+      orderBy: { invoice_date: 'desc' },
+    })
+    const revenue_sales_invoices = salesInvoices.reduce((s, i) => s + (i.net_amount ?? 0), 0)
+    const salesByMonth: Record<string, number> = {}
+    for (const inv of salesInvoices) {
+      const month = (inv.invoice_date ?? '').slice(0, 7) || 'brak daty'
+      salesByMonth[month] = (salesByMonth[month] ?? 0) + (inv.net_amount ?? 0)
+    }
+
     // ── Split allocations: revenue vs cost ───────────────────────────────────
     const costAllocations    = allocations.filter((a: any) => a.allocation_type !== 'revenue')
     const revenueAllocations = allocations.filter((a: any) => a.allocation_type === 'revenue')
@@ -724,13 +750,13 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
     const revenue_ksef     = revenueAllocations.reduce((s: number, a: any) => s + a.amount, 0)
 
     // Wybierz źródło przychodu — domyślnie 'payments' (ClientPayments)
-    // 'ksef'     → tylko faktury sprzedażowe sklasyfikowane jako revenue
+    // 'ksef'     → faktury sprzedażowe pobrane z KSeF (outgoing) — automatyczne, netto
     // 'payments' → tylko wpłaty klientów (ClientPayment)
-    // 'both'     → suma obu (uwaga: może podwójnie liczyć!)
+    // 'both'     → wpłaty + faktury sprzedażowe (uwaga: może podwójnie liczyć!)
     const revenue = revSrc === 'ksef'
-      ? revenue_ksef
+      ? revenue_sales_invoices
       : revSrc === 'both'
-        ? revenue_payments + revenue_ksef
+        ? revenue_payments + revenue_sales_invoices
         : revenue_payments
     const cogs         = grouped['cogs']?.total ?? 0
     const sales        = grouped['sales']?.total ?? 0
@@ -767,6 +793,10 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       revenue,
       revenue_payments,
       revenue_ksef,
+      revenue_sales_invoices,
+      sales_invoice_count: salesInvoices.length,
+      sales_by_month: salesByMonth,
+      sales_invoices: salesInvoices,
       revenue_by_type: revenueByType,
       revenue_by_project: revenueByProject,
       revenue_allocations: revenueAllocations,
