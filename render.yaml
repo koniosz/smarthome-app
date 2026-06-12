@@ -23,5 +23,12 @@ services:
         sync: false
       - key: KSEF_ENV
         value: prod
+      # Microsoft Graph — synchronizacja zadań z kalendarzami Outlook 365
+      - key: MS_TENANT_ID
+        sync: false
+      - key: MS_CLIENT_ID
+        sync: false
+      - key: MS_CLIENT_SECRET
+        sync: false
     healthCheckPath: /api/health
     autoDeploy: true
