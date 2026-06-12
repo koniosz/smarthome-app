@@ -45,6 +45,10 @@ app.use(express.json({ limit: '10mb' }))
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
+// Status integracji Outlook — tylko boolean konfiguracji, bez danych wrażliwych
+app.get('/api/tasks/outlook-status', (_req, res) => {
+  res.json({ configured: Boolean(process.env.MS_TENANT_ID && process.env.MS_CLIENT_ID && process.env.MS_CLIENT_SECRET) })
+})
 app.use('/api/auth', authRouter)
 
 // Publiczne endpointy zatwierdzenia kosztów dodatkowych (klient klika link z emaila — bez JWT)
