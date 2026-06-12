@@ -47,7 +47,8 @@ model Task {
   title       String
   project_id  String?
   date        String   // YYYY-MM-DD
-  time        String   @default("") // HH:MM
+  time        String   @default("") // HH:MM — początek
+  end_time    String   @default("") // HH:MM — koniec (puste = +1h)
   type        String   @default("work") // work | event | task
   assignee_id String?
   done        Boolean  @default(false)

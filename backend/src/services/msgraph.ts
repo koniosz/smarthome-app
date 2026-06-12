@@ -50,7 +50,8 @@ async function getToken(): Promise<string> {
 export interface TaskForCalendar {
   title: string
   date: string          // YYYY-MM-DD
-  time: string          // HH:MM lub ''
+  time: string          // HH:MM lub '' — początek
+  endTime?: string      // HH:MM lub '' — koniec (puste = +1h od początku)
   type: string          // work | event | task
   done: boolean
   projectName?: string | null
@@ -82,16 +83,18 @@ function buildEvent(task: TaskForCalendar) {
     }
   }
 
-  // godzinowe: domyślnie 1 h
+  // godzinowe: koniec z zadania, a gdy brak/niepoprawny — start + 1 h
   const [h, m] = task.time.split(':').map(Number)
-  const endH = String(Math.min(23, h + 1)).padStart(2, '0')
-  const endM = String(m).padStart(2, '0')
+  let end = (task.endTime ?? '').trim()
+  if (!/^\d{2}:\d{2}$/.test(end) || end <= task.time) {
+    end = `${String(Math.min(23, h + 1)).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
   return {
     subject,
     body: { contentType: 'text', content: bodyLines.join('\n') },
     isAllDay: false,
     start: { dateTime: `${task.date}T${task.time}:00`, timeZone: TIMEZONE },
-    end:   { dateTime: `${task.date}T${endH}:${endM}:00`, timeZone: TIMEZONE },
+    end:   { dateTime: `${task.date}T${end}:00`, timeZone: TIMEZONE },
     categories: ['SHC ERP'],
   }
 }

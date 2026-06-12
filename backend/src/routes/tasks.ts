@@ -28,6 +28,7 @@ async function syncTaskToOutlook(task: any): Promise<void> {
       title: task.title,
       date: task.date,
       time: task.time ?? '',
+      endTime: task.end_time ?? '',
       type: task.type ?? 'work',
       done: Boolean(task.done),
       projectName: task.project?.name ?? null,
@@ -87,7 +88,7 @@ router.get('/outlook-status', (_req: Request, res: Response) => {
 // POST /api/tasks
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { title, project_id, date, time, type, assignee_id } = req.body
+    const { title, project_id, date, time, end_time, type, assignee_id } = req.body
     if (!title || !String(title).trim()) {
       res.status(400).json({ error: 'Tytuł jest wymagany' }); return
     }
@@ -100,6 +101,7 @@ router.post('/', async (req: Request, res: Response) => {
       project_id: project_id || null,
       date,
       time: time || '',
+      end_time: end_time || '',
       type: type || 'work',
       assignee_id: assignee_id || null,
       done: false,
@@ -121,12 +123,13 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (!existing) {
       res.status(404).json({ error: 'Zadanie nie znalezione' }); return
     }
-    const { title, project_id, date, time, type, assignee_id, done } = req.body
+    const { title, project_id, date, time, end_time, type, assignee_id, done } = req.body
     const patch: any = { updated_at: now() }
     if (title !== undefined) patch.title = String(title).trim()
     if (project_id !== undefined) patch.project_id = project_id || null
     if (date !== undefined) patch.date = date
     if (time !== undefined) patch.time = time
+    if (end_time !== undefined) patch.end_time = end_time
     if (type !== undefined) patch.type = type
     if (assignee_id !== undefined) patch.assignee_id = assignee_id || null
     if (done !== undefined) patch.done = Boolean(done)

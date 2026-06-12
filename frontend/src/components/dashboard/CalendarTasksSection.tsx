@@ -19,6 +19,11 @@ function iso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+function timeRange(t: Task): string {
+  if (!t.time) return '—'
+  return t.end_time ? `${t.time}–${t.end_time}` : t.time
+}
+
 function initialsOf(name: string): string {
   return name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
 }
@@ -148,8 +153,18 @@ function NewTaskModal({
   const [projectId, setProjectId] = useState<string>(projects[0]?.id ?? '')
   const [date, setDate] = useState(defaultDate)
   const [time, setTime] = useState('09:00')
+  const [endTime, setEndTime] = useState('10:00')
   const [assigneeId, setAssigneeId] = useState<string>(employees[0]?.id ?? '')
   const [saving, setSaving] = useState(false)
+
+  // start przesunięty za koniec → koniec podąża (+1h)
+  const handleStartChange = (v: string) => {
+    setTime(v)
+    if (v && (!endTime || endTime <= v)) {
+      const [h, m] = v.split(':').map(Number)
+      setEndTime(`${String(Math.min(23, h + 1)).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+    }
+  }
 
   const inputStyle: React.CSSProperties = {
     padding: '10px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
@@ -166,6 +181,7 @@ function NewTaskModal({
         project_id: projectId || null,
         date,
         time,
+        end_time: endTime,
         assignee_id: assigneeId || null,
       })
       onCreated(task)
@@ -260,15 +276,19 @@ function NewTaskModal({
             </select>
           </div>
 
-          {/* Data + Godzina */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {/* Data + Godziny od–do */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: 12 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Data</label>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ ...inputStyle, padding: '9px 12px' }} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Godzina</label>
-              <input type="time" value={time} onChange={e => setTime(e.target.value)} style={{ ...inputStyle, padding: '9px 12px' }} />
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Od</label>
+              <input type="time" value={time} onChange={e => handleStartChange(e.target.value)} style={{ ...inputStyle, padding: '9px 12px' }} />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Do</label>
+              <input type="time" value={endTime} min={time} onChange={e => setEndTime(e.target.value)} style={{ ...inputStyle, padding: '9px 12px' }} />
             </div>
           </div>
 
@@ -552,7 +572,7 @@ export default function CalendarTasksSection({
               selectedTasks.map(t => (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #f1f5f9' }}>
                   <TaskCheckbox done={t.done} size={18} onToggle={() => toggleDone(t)} />
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#64748b', fontVariantNumeric: 'tabular-nums', width: 42 }}>{t.time || '—'}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#64748b', fontVariantNumeric: 'tabular-nums', width: 88 }}>{timeRange(t)}</span>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_META[t.type]?.dot ?? '#94a3b8', flexShrink: 0 }} />
                   <span style={{
                     fontSize: 14, fontWeight: 600,
@@ -625,7 +645,7 @@ export default function CalendarTasksSection({
                         {t.title}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#94a3b8' }}>
-                        <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#64748b' }}>{t.time || '—'}</span>
+                        <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#64748b' }}>{timeRange(t)}</span>
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.project?.name ?? ''}</span>
                       </div>
                       <div>

@@ -605,7 +605,8 @@ export interface Task {
   title: string
   project_id: string | null
   date: string          // YYYY-MM-DD
-  time: string          // HH:MM
+  time: string          // HH:MM — początek
+  end_time: string      // HH:MM — koniec
   type: TaskType
   assignee_id: string | null
   done: boolean
