@@ -548,9 +548,9 @@ function UnassignedRow({ invoice, projects, onUpdated }: {
         </div>
       </div>
 
-      {/* Pozycje faktury — dyskretnie, ładowane leniwie */}
+      {/* Pozycje faktury — dyskretnie */}
       <div style={{ padding: '0 24px 12px', marginTop: -8 }}>
-        <InvoiceLineItems load={() => ksefApi.lineItems(invoice.id)} />
+        <InvoiceLineItems invoiceId={invoice.id} load={() => ksefApi.lineItems(invoice.id)} />
       </div>
 
       {/* Suggestion banner */}

@@ -1,52 +1,48 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Package } from 'lucide-react'
 import type { KsefLineItem } from '../../types'
 
-// Dyskretna lista pozycji faktury. Ładuje się leniwie dopiero, gdy wiersz
-// wejdzie w widok (IntersectionObserver), żeby nie odpalać dziesiątek zapytań
-// naraz. Backend cache'uje wynik, więc kolejne wyświetlenia są natychmiastowe.
-export default function InvoiceLineItems({ load, padLeft = 0 }: {
+// Dyskretna lista pozycji faktury. Ładuje się od razu po zamontowaniu wiersza —
+// backend cache'uje wynik (i serializuje pobrania z KSeF), więc nie zalewa API.
+export default function InvoiceLineItems({ invoiceId, load }: {
+  invoiceId: string
   load: () => Promise<KsefLineItem[]>
-  padLeft?: number
 }) {
-  const [items, setItems]   = useState<KsefLineItem[] | null>(null)
-  const [loading, setLoad]  = useState(false)
-  const ref                 = useRef<HTMLDivElement>(null)
-  const started             = useRef(false)
+  const [items, setItems]  = useState<KsefLineItem[] | null>(null)
+  const [loading, setLoad] = useState(true)
 
+  // klucz na invoiceId — pobranie tylko gdy zmieni się faktura, nie przy każdym renderze
   useEffect(() => {
-    const el = ref.current
-    if (!el || started.current) return
-    const io = new IntersectionObserver(entries => {
-      if (entries.some(e => e.isIntersecting) && !started.current) {
-        started.current = true
-        io.disconnect()
-        setLoad(true)
-        load()
-          .then(setItems)
-          .catch(() => setItems([]))
-          .finally(() => setLoad(false))
-      }
-    }, { rootMargin: '120px' })
-    io.observe(el)
-    return () => io.disconnect()
-  }, [load])
+    let alive = true
+    setLoad(true)
+    load()
+      .then(r => { if (alive) setItems(r) })
+      .catch(() => { if (alive) setItems([]) })
+      .finally(() => { if (alive) setLoad(false) })
+    return () => { alive = false }
+  }, [invoiceId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loading) {
+    return <div style={{ fontSize: 11, color: '#cbd5e1', fontStyle: 'italic', marginTop: 4 }}>wczytywanie pozycji…</div>
+  }
+  if (!items || items.length === 0) return null
 
   return (
-    <div ref={ref} style={{ paddingLeft: padLeft, marginTop: 4 }}>
-      {loading && (
-        <div style={{ fontSize: 11, color: '#cbd5e1', fontStyle: 'italic' }}>wczytywanie pozycji…</div>
-      )}
-      {items && items.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 10px', fontSize: 11, color: '#94a3b8', lineHeight: 1.5 }}>
-          {items.map((it, i) => (
-            <span key={i} style={{ whiteSpace: 'nowrap' }}>
-              {it.qty && <span style={{ fontVariantNumeric: 'tabular-nums' }}>{it.qty}{it.unit ? ` ${it.unit}` : ''} × </span>}
-              <span style={{ color: '#64748b' }}>{it.name}</span>
-              {i < items.length - 1 && <span style={{ color: '#e2e8f0' }}> ·</span>}
-            </span>
-          ))}
-        </div>
-      )}
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 5 }}>
+      <Package size={12} color="#cbd5e1" style={{ flexShrink: 0, marginTop: 2 }} />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 8px', fontSize: 11.5, color: '#94a3b8', lineHeight: 1.5 }}>
+        {items.map((it, i) => (
+          <span key={i} style={{ whiteSpace: 'nowrap' }}>
+            {it.qty && (
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#cbd5e1' }}>
+                {Number(it.qty).toLocaleString('pl-PL')}{it.unit ? ` ${it.unit}` : ''}×{' '}
+              </span>
+            )}
+            <span style={{ color: '#64748b' }}>{it.name}</span>
+            {i < items.length - 1 && <span style={{ color: '#e2e8f0' }}> ·</span>}
+          </span>
+        ))}
+      </div>
     </div>
   )
 }

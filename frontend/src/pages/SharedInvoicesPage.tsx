@@ -105,7 +105,7 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
             <span>Data: {invoice.invoice_date || '—'}</span>
             <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{fmt(invoice.gross_amount)} {invoice.currency}</span>
           </div>
-          <InvoiceLineItems load={() => ksefApi.sharedLineItems(invoice.id)} />
+          <InvoiceLineItems invoiceId={invoice.id} load={() => ksefApi.sharedLineItems(invoice.id)} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <button

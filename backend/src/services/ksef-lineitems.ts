@@ -43,13 +43,30 @@ export function parseLineItemsFromXml(xml: string): InvoiceLineItem[] {
     .filter(i => i.name)
 }
 
+// Ogranicznik równoległości — max 2 pobrania XML z KSeF naraz, reszta czeka
+// w kolejce. Chroni przed rate-limitem, gdy lista odpyta wiele faktur naraz.
+let active = 0
+const queue: (() => void)[] = []
+async function withLimit<T>(fn: () => Promise<T>): Promise<T> {
+  if (active >= 2) await new Promise<void>(resolve => queue.push(resolve))
+  active++
+  try {
+    return await fn()
+  } finally {
+    active--
+    queue.shift()?.()
+  }
+}
+
 async function fetchInvoiceXml(ksefNumber: string): Promise<string> {
-  const token = await getActiveSession()
-  const res = await axios.get(
-    `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(ksefNumber)}`,
-    { headers: { Authorization: `Bearer ${token}` }, responseType: 'text', timeout: 15000 },
-  )
-  return typeof res.data === 'string' ? res.data : String(res.data)
+  return withLimit(async () => {
+    const token = await getActiveSession()
+    const res = await axios.get(
+      `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(ksefNumber)}`,
+      { headers: { Authorization: `Bearer ${token}` }, responseType: 'text', timeout: 15000 },
+    )
+    return typeof res.data === 'string' ? res.data : String(res.data)
+  })
 }
 
 // Zwróć pozycje faktury — z cache w DB, a przy pierwszym wywołaniu pobierz XML,
