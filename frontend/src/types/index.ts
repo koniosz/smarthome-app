@@ -479,6 +479,16 @@ export interface PnLReport {
   allocations: KsefInvoiceAllocation[]
 }
 
+export interface KsefLineItem {
+  nr: string
+  name: string
+  unit: string
+  qty: string
+  unitPrice: string
+  netValue: string
+  vatRate: string
+}
+
 export interface KsefInvoice {
   id: string
   ksef_number: string | null

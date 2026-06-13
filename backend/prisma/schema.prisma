@@ -373,6 +373,7 @@ model KsefInvoice {
   payment_due_date String?
   bank_tx_id       String?            // reference to BankTransaction
   created_at       String
+  line_items       Json?              // cache pozycji z XML faktury (parsowane raz)
 
   project     Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
   allocations KsefInvoiceAllocation[]

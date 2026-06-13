@@ -246,6 +246,28 @@ router.get('/invoices/:id/xml', requireAdmin, async (req: Request, res: Response
   }
 })
 
+// GET /api/ksef/invoices/:id/line-items — pozycje faktury (cache w DB, admin)
+router.get('/invoices/:id/line-items', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { getInvoiceLineItems } = await import('../services/ksef-lineitems')
+    res.json({ items: await getInvoiceLineItems(req.params.id) })
+  } catch (err: any) {
+    res.json({ items: [], error: err?.message ?? 'Błąd' })
+  }
+})
+
+// GET /api/ksef/shared/:id/line-items — pozycje faktury dla pracownika (tylko udostępnione)
+router.get('/shared/:id/line-items', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id }, select: { is_shared: true } })
+    if (!invoice || !invoice.is_shared) { res.status(404).json({ error: 'Faktura nieudostępniona' }); return }
+    const { getInvoiceLineItems } = await import('../services/ksef-lineitems')
+    res.json({ items: await getInvoiceLineItems(req.params.id) })
+  } catch (err: any) {
+    res.json({ items: [], error: err?.message ?? 'Błąd' })
+  }
+})
+
 // PATCH /api/ksef/invoices/:id/assign
 router.patch('/invoices/:id/assign', requireAdmin, async (req: Request, res: Response) => {
   try {

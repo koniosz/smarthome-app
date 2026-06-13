@@ -5,6 +5,7 @@ import type { KsefInvoice, KsefStatus, Project } from '../types'
 import AllocationPanel from '../components/ksef/AllocationPanel'
 import PaymentVerificationModal from '../components/ksef/PaymentVerificationModal'
 import AssignInvoiceModal from '../components/ksef/AssignInvoiceModal'
+import InvoiceLineItems from '../components/ksef/InvoiceLineItems'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -545,6 +546,11 @@ function UnassignedRow({ invoice, projects, onUpdated }: {
           )}
           <AssignDropdown invoice={invoice} projects={projects} onAssigned={onUpdated} />
         </div>
+      </div>
+
+      {/* Pozycje faktury — dyskretnie, ładowane leniwie */}
+      <div style={{ padding: '0 24px 12px', marginTop: -8 }}>
+        <InvoiceLineItems load={() => ksefApi.lineItems(invoice.id)} />
       </div>
 
       {/* Suggestion banner */}

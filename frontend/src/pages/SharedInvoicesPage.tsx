@@ -3,6 +3,7 @@ import { Search, Folder, FileText, ChevronDown, ChevronUp } from 'lucide-react'
 import { ksefApi, projectsApi } from '../api/client'
 import type { KsefInvoice, Project } from '../types'
 import AssignInvoiceModal from '../components/ksef/AssignInvoiceModal'
+import InvoiceLineItems from '../components/ksef/InvoiceLineItems'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -104,6 +105,7 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
             <span>Data: {invoice.invoice_date || '—'}</span>
             <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{fmt(invoice.gross_amount)} {invoice.currency}</span>
           </div>
+          <InvoiceLineItems load={() => ksefApi.sharedLineItems(invoice.id)} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <button
