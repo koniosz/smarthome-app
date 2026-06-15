@@ -1,28 +1,37 @@
 import { Router, Request, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
-import { PrismaClient } from '@prisma/client'
 import db from '../db'
 import {
   graphConfigured, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent,
   type TaskForCalendar,
 } from '../services/msgraph'
 
-const prisma = new PrismaClient()
 const router = Router()
 
 function now() {
   return new Date().toISOString()
 }
 
-// ── Synchronizacja zadania z kalendarzem Outlook przypisanej osoby ────────────
-// Wydarzenie żyje w kalendarzu pracownika (Employee.email). Zmiana przypisania
-// przenosi wydarzenie do kalendarza nowej osoby. Błędy Graph nie blokują CRUD.
-async function syncTaskToOutlook(task: any): Promise<void> {
+// Normalizuj listę przypisanych z body (akceptuje assignee_ids[] lub stare assignee_id)
+function readAssigneeIds(body: any): string[] | undefined {
+  if (Array.isArray(body.assignee_ids)) {
+    const ids = body.assignee_ids.filter((x: any) => typeof x === 'string' && !!x) as string[]
+    return Array.from(new Set(ids))
+  }
+  if (body.assignee_id !== undefined) {
+    return body.assignee_id ? [body.assignee_id] : []
+  }
+  return undefined // pole nieobecne → nie zmieniaj przypisań
+}
+
+// ── Synchronizacja zadania z kalendarzami Outlook wszystkich przypisanych osób ──
+// Każdy przypisany pracownik ma własne wydarzenie w swoim kalendarzu (TaskAssignee).
+// Błędy Graph nie blokują CRUD zadań.
+async function syncTaskToOutlook(taskId: string): Promise<void> {
   if (!graphConfigured()) return
   try {
-    const assigneeEmail: string | null = task.assignee_id
-      ? ((await prisma.employee.findUnique({ where: { id: task.assignee_id }, select: { email: true } }))?.email || null)
-      : null
+    const task: any = await db.tasks.find(taskId)
+    if (!task) return
 
     const payload: TaskForCalendar = {
       title: task.title,
@@ -34,44 +43,35 @@ async function syncTaskToOutlook(task: any): Promise<void> {
       projectName: task.project?.name ?? null,
     }
 
-    const prevOwner: string | null = task.outlook_event_owner ?? null
-    const prevEvent: string | null = task.outlook_event_id ?? null
+    for (const a of task.assignees as any[]) {
+      const email: string | null = a.employee?.email || null
+      const prevEvent: string | null = a.outlook_event_id ?? null
+      const prevOwner: string | null = a.outlook_event_owner ?? null
 
-    let nextOwner: string | null = prevOwner
-    let nextEvent: string | null = prevEvent
+      if (!email) {
+        // brak maila pracownika — nie da się utworzyć wydarzenia; posprzątaj ewentualny ślad
+        if (prevEvent && prevOwner) { await deleteCalendarEvent(prevOwner, prevEvent); await db.tasks.setAssigneeEvent(a.id, null, null) }
+        continue
+      }
 
-    if (prevEvent && prevOwner && prevOwner !== assigneeEmail) {
-      // przypisanie zmienione → usuń z poprzedniego kalendarza
-      await deleteCalendarEvent(prevOwner, prevEvent)
-      nextOwner = null
-      nextEvent = null
-    }
-
-    if (assigneeEmail) {
-      if (nextEvent && nextOwner === assigneeEmail) {
-        const ok = await updateCalendarEvent(assigneeEmail, nextEvent, payload)
-        if (!ok) { // wydarzenie mogło zostać usunięte ręcznie w Outlooku — utwórz na nowo
-          nextEvent = await createCalendarEvent(assigneeEmail, payload)
-          nextOwner = nextEvent ? assigneeEmail : null
+      if (prevEvent && prevOwner === email) {
+        const ok = await updateCalendarEvent(email, prevEvent, payload)
+        if (!ok) {
+          const ev = await createCalendarEvent(email, payload)
+          await db.tasks.setAssigneeEvent(a.id, ev, ev ? email : null)
         }
       } else {
-        nextEvent = await createCalendarEvent(assigneeEmail, payload)
-        nextOwner = nextEvent ? assigneeEmail : null
+        if (prevEvent && prevOwner) await deleteCalendarEvent(prevOwner, prevEvent) // mail się zmienił
+        const ev = await createCalendarEvent(email, payload)
+        await db.tasks.setAssigneeEvent(a.id, ev, ev ? email : null)
       }
-    }
-
-    if (nextEvent !== prevEvent || nextOwner !== prevOwner) {
-      await prisma.task.update({
-        where: { id: task.id },
-        data: { outlook_event_id: nextEvent, outlook_event_owner: nextOwner },
-      })
     }
   } catch (err: any) {
     console.error('[Outlook] Synchronizacja zadania nieudana:', err?.message ?? err)
   }
 }
 
-// GET /api/tasks — all tasks with project + assignee info
+// GET /api/tasks
 router.get('/', async (_req: Request, res: Response) => {
   try {
     res.json(await db.tasks.all())
@@ -80,36 +80,35 @@ router.get('/', async (_req: Request, res: Response) => {
   }
 })
 
-// GET /api/tasks/outlook-status — czy integracja z Outlookiem jest skonfigurowana
-router.get('/outlook-status', (_req: Request, res: Response) => {
-  res.json({ configured: graphConfigured() })
-})
-
 // POST /api/tasks
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { title, project_id, date, time, end_time, type, assignee_id } = req.body
+    const { title, project_id, date, time, end_time, type } = req.body
     if (!title || !String(title).trim()) {
       res.status(400).json({ error: 'Tytuł jest wymagany' }); return
     }
     if (!date) {
       res.status(400).json({ error: 'Data jest wymagana' }); return
     }
-    const task = await db.tasks.insert({
-      id: uuidv4(),
+    const assigneeIds = readAssigneeIds(req.body) ?? []
+    const id = uuidv4()
+    await db.tasks.insert({
+      id,
       title: String(title).trim(),
       project_id: project_id || null,
       date,
       time: time || '',
       end_time: end_time || '',
       type: type || 'work',
-      assignee_id: assignee_id || null,
       done: false,
       created_at: now(),
       updated_at: now(),
     })
-    // Outlook w tle — odpowiedź nie czeka na Graph
-    syncTaskToOutlook(task)
+    for (const empId of assigneeIds) {
+      await db.tasks.addAssignee(id, empId, now())
+    }
+    const task = await db.tasks.find(id)
+    syncTaskToOutlook(id) // w tle
     res.status(201).json(task)
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })
@@ -119,11 +118,11 @@ router.post('/', async (req: Request, res: Response) => {
 // PUT /api/tasks/:id
 router.put('/:id', async (req: Request, res: Response) => {
   try {
-    const existing = await db.tasks.find(req.params.id)
+    const existing: any = await db.tasks.find(req.params.id)
     if (!existing) {
       res.status(404).json({ error: 'Zadanie nie znalezione' }); return
     }
-    const { title, project_id, date, time, end_time, type, assignee_id, done } = req.body
+    const { title, project_id, date, time, end_time, type, done } = req.body
     const patch: any = { updated_at: now() }
     if (title !== undefined) patch.title = String(title).trim()
     if (project_id !== undefined) patch.project_id = project_id || null
@@ -131,11 +130,32 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (time !== undefined) patch.time = time
     if (end_time !== undefined) patch.end_time = end_time
     if (type !== undefined) patch.type = type
-    if (assignee_id !== undefined) patch.assignee_id = assignee_id || null
     if (done !== undefined) patch.done = Boolean(done)
-    const updated = await db.tasks.update(req.params.id, patch)
-    syncTaskToOutlook({ ...updated, outlook_event_id: (existing as any).outlook_event_id, outlook_event_owner: (existing as any).outlook_event_owner })
-    res.json(updated)
+    await db.tasks.update(req.params.id, patch)
+
+    // Zmiana listy przypisanych (jeśli podano)
+    const wanted = readAssigneeIds(req.body)
+    if (wanted) {
+      const current: any[] = existing.assignees ?? []
+      const currentIds = current.map(a => a.employee_id)
+      // usuń tych, których nie ma na nowej liście — skasuj ich wydarzenie z Outlooka
+      for (const a of current) {
+        if (!wanted.includes(a.employee_id)) {
+          if (a.outlook_event_id && a.outlook_event_owner) {
+            await deleteCalendarEvent(a.outlook_event_owner, a.outlook_event_id)
+          }
+          await db.tasks.removeAssignee(a.id)
+        }
+      }
+      // dodaj nowych
+      for (const empId of wanted) {
+        if (!currentIds.includes(empId)) await db.tasks.addAssignee(req.params.id, empId, now())
+      }
+    }
+
+    const task = await db.tasks.find(req.params.id)
+    syncTaskToOutlook(req.params.id) // w tle — zaktualizuje istniejące i utworzy nowe wydarzenia
+    res.json(task)
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })
   }
@@ -148,8 +168,10 @@ router.delete('/:id', async (req: Request, res: Response) => {
     if (!existing) {
       res.status(404).json({ error: 'Zadanie nie znalezione' }); return
     }
-    if (existing.outlook_event_id && existing.outlook_event_owner) {
-      await deleteCalendarEvent(existing.outlook_event_owner, existing.outlook_event_id)
+    for (const a of existing.assignees ?? []) {
+      if (a.outlook_event_id && a.outlook_event_owner) {
+        await deleteCalendarEvent(a.outlook_event_owner, a.outlook_event_id)
+      }
     }
     await db.tasks.delete(req.params.id)
     res.json({ ok: true })

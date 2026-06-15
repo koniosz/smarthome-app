@@ -34,14 +34,18 @@ function employeeColor(employees: Employee[], id: string | null | undefined): st
   return idx >= 0 ? AVATAR_COLORS[idx % AVATAR_COLORS.length] : '#94a3b8'
 }
 
-// ─── Avatar with assignment dropdown ─────────────────────────────────────────
-function AssigneeAvatar({
-  task, employees, size, onAssign,
+function assigneeIdsOf(task: Task): string[] {
+  return (task.assignees ?? []).map(a => a.employee_id)
+}
+
+// ─── Stos awatarów + dropdown wielokrotnego wyboru ────────────────────────────
+function AssigneeAvatars({
+  task, employees, size, onToggle,
 }: {
   task: Task
   employees: Employee[]
   size: number
-  onAssign: (taskId: string, employeeId: string) => void
+  onToggle: (taskId: string, employeeId: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -55,43 +59,76 @@ function AssigneeAvatar({
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  const name = task.assignee?.name ?? 'Nieprzypisane'
-  const color = employeeColor(employees, task.assignee_id)
+  const assigned = task.assignees ?? []
+  const assignedIds = assigneeIdsOf(task)
+  const shown = assigned.slice(0, 3)
+  const extra = assigned.length - shown.length
+  const overlap = Math.round(size * 0.32)
 
   return (
     <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
       <div
         onClick={() => setOpen(o => !o)}
-        title={name}
-        style={{
-          width: size, height: size, borderRadius: '50%',
-          background: color, color: '#fff',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: size >= 30 ? 11 : 10, fontWeight: 700, cursor: 'pointer',
-          boxShadow: '0 0 0 2px #ffffff, 0 0 0 3px #e2e8f0',
-        }}
+        title={assigned.length ? assigned.map(a => a.employee?.name).filter(Boolean).join(', ') : 'Nieprzypisane'}
+        style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}
       >
-        {task.assignee ? initialsOf(task.assignee.name) : '?'}
+        {assigned.length === 0 ? (
+          <div style={{
+            width: size, height: size, borderRadius: '50%',
+            border: '1.5px dashed #cbd5e1', color: '#94a3b8',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Plus size={size >= 30 ? 15 : 12} />
+          </div>
+        ) : (
+          shown.map((a, i) => (
+            <div
+              key={a.id}
+              style={{
+                width: size, height: size, borderRadius: '50%',
+                background: employeeColor(employees, a.employee_id), color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: size >= 30 ? 11 : 10, fontWeight: 700,
+                boxShadow: '0 0 0 2px #ffffff, 0 0 0 3px #e2e8f0',
+                marginLeft: i === 0 ? 0 : -overlap, position: 'relative', zIndex: 10 - i,
+              }}
+            >
+              {a.employee ? initialsOf(a.employee.name) : '?'}
+            </div>
+          ))
+        )}
+        {extra > 0 && (
+          <div style={{
+            width: size, height: size, borderRadius: '50%',
+            background: '#e2e8f0', color: '#475569',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: size >= 30 ? 11 : 10, fontWeight: 700,
+            boxShadow: '0 0 0 2px #ffffff, 0 0 0 3px #e2e8f0',
+            marginLeft: -overlap, position: 'relative', zIndex: 1,
+          }}>
+            +{extra}
+          </div>
+        )}
       </div>
       {open && (
         <div style={{
           position: 'absolute', top: size + 8, right: 0, zIndex: 30,
           background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10,
           boxShadow: '0 8px 24px rgba(15,23,42,0.14)', padding: 6,
-          display: 'flex', flexDirection: 'column', gap: 2, width: 210,
+          display: 'flex', flexDirection: 'column', gap: 2, width: 230,
         }}>
           <div style={{
             fontSize: 11, fontWeight: 700, letterSpacing: '0.05em',
             textTransform: 'uppercase', color: '#94a3b8', padding: '6px 10px 4px',
           }}>
-            Przypisz do
+            Przypisani pracownicy
           </div>
           {employees.map((e, i) => {
-            const active = task.assignee_id === e.id
+            const active = assignedIds.includes(e.id)
             return (
               <div
                 key={e.id}
-                onClick={() => { onAssign(task.id, e.id); setOpen(false) }}
+                onClick={() => onToggle(task.id, e.id)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
@@ -101,15 +138,22 @@ function AssigneeAvatar({
                 onMouseLeave={ev => { (ev.currentTarget as HTMLDivElement).style.background = active ? '#eff6ff' : 'transparent' }}
               >
                 <span style={{
+                  width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                  border: `1.5px solid ${active ? '#2563eb' : '#cbd5e1'}`,
+                  background: active ? '#2563eb' : '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {active && <Check size={11} color="#fff" strokeWidth={3.5} />}
+                </span>
+                <span style={{
                   width: 24, height: 24, borderRadius: '50%',
                   background: AVATAR_COLORS[i % AVATAR_COLORS.length], color: '#fff',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, fontWeight: 700,
+                  fontSize: 10, fontWeight: 700, flexShrink: 0,
                 }}>
                   {initialsOf(e.name)}
                 </span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', flex: 1 }}>{e.name}</span>
-                {active && <Check size={14} color="#2563eb" strokeWidth={3} />}
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
               </div>
             )
           })}
@@ -154,8 +198,11 @@ function NewTaskModal({
   const [date, setDate] = useState(defaultDate)
   const [time, setTime] = useState('09:00')
   const [endTime, setEndTime] = useState('10:00')
-  const [assigneeId, setAssigneeId] = useState<string>(employees[0]?.id ?? '')
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(employees[0]?.id ? [employees[0].id] : [])
   const [saving, setSaving] = useState(false)
+
+  const toggleAssignee = (id: string) =>
+    setAssigneeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
 
   // start przesunięty za koniec → koniec podąża (+1h)
   const handleStartChange = (v: string) => {
@@ -182,7 +229,7 @@ function NewTaskModal({
         date,
         time,
         end_time: endTime,
-        assignee_id: assigneeId || null,
+        assignee_ids: assigneeIds,
       })
       onCreated(task)
     } catch {
@@ -292,15 +339,54 @@ function NewTaskModal({
             </div>
           </div>
 
-          {/* Pracownik */}
+          {/* Pracownicy — wielokrotny wybór */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Przypisz do pracownika</label>
-            <select value={assigneeId} onChange={e => setAssigneeId(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-              <option value="">— nieprzypisane —</option>
-              {employees.map(e => (
-                <option key={e.id} value={e.id}>{e.name}</option>
-              ))}
-            </select>
+            <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>
+              Przypisz do pracowników
+              {assigneeIds.length > 0 && <span style={{ fontWeight: 400, color: '#94a3b8' }}> · wybrano {assigneeIds.length}</span>}
+            </label>
+            <div style={{
+              border: '1px solid #e2e8f0', borderRadius: 8, padding: 4,
+              maxHeight: 168, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2,
+            }}>
+              {employees.length === 0 && (
+                <div style={{ fontSize: 13, color: '#94a3b8', padding: '8px 10px' }}>Brak pracowników</div>
+              )}
+              {employees.map((e, i) => {
+                const active = assigneeIds.includes(e.id)
+                return (
+                  <div
+                    key={e.id}
+                    onClick={() => toggleAssignee(e.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 10px', borderRadius: 7, cursor: 'pointer',
+                      background: active ? '#eff6ff' : 'transparent',
+                    }}
+                    onMouseEnter={ev => { if (!active) (ev.currentTarget as HTMLDivElement).style.background = '#f8fafc' }}
+                    onMouseLeave={ev => { (ev.currentTarget as HTMLDivElement).style.background = active ? '#eff6ff' : 'transparent' }}
+                  >
+                    <span style={{
+                      width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                      border: `1.5px solid ${active ? '#2563eb' : '#cbd5e1'}`,
+                      background: active ? '#2563eb' : '#fff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {active && <Check size={11} color="#fff" strokeWidth={3.5} />}
+                    </span>
+                    <span style={{
+                      width: 24, height: 24, borderRadius: '50%',
+                      background: AVATAR_COLORS[i % AVATAR_COLORS.length], color: '#fff',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 10, fontWeight: 700, flexShrink: 0,
+                    }}>
+                      {initialsOf(e.name)}
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{e.name}</span>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
 
@@ -434,8 +520,15 @@ export default function CalendarTasksSection({
     setTasks(prev => prev.map(t => t.id === task.id ? updated : t))
   }
 
-  const assign = async (taskId: string, employeeId: string) => {
-    const updated = await tasksApi.update(taskId, { assignee_id: employeeId })
+  // Przełącz przypisanie pracownika (dodaj/usuń) — wysyła pełną nową listę
+  const toggleAssignee = async (taskId: string, employeeId: string) => {
+    const task = tasks.find(t => t.id === taskId)
+    if (!task) return
+    const current = assigneeIdsOf(task)
+    const next = current.includes(employeeId)
+      ? current.filter(id => id !== employeeId)
+      : [...current, employeeId]
+    const updated = await tasksApi.update(taskId, { assignee_ids: next })
     setTasks(prev => prev.map(t => t.id === taskId ? updated : t))
   }
 
@@ -584,7 +677,7 @@ export default function CalendarTasksSection({
                   <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {t.project?.name ?? ''}
                   </span>
-                  <AssigneeAvatar task={t} employees={employees} size={26} onAssign={assign} />
+                  <AssigneeAvatars task={t} employees={employees} size={26} onToggle={toggleAssignee} />
                 </div>
               ))
             )}
@@ -659,7 +752,7 @@ export default function CalendarTasksSection({
                         </span>
                       </div>
                     </div>
-                    <AssigneeAvatar task={t} employees={employees} size={30} onAssign={assign} />
+                    <AssigneeAvatars task={t} employees={employees} size={30} onToggle={toggleAssignee} />
                   </div>
                 ))
               )}

@@ -230,10 +230,11 @@ async function pollJob(url: string, maxMs = 5 * 60 * 1000): Promise<any> {
   throw new Error('Operacja trwa zbyt długo. Spróbuj ponownie.')
 }
 
+type TaskInput = Partial<Omit<Task, 'assignees'>> & { assignee_ids?: string[] }
 export const tasksApi = {
   list: () => api.get<Task[]>('/tasks').then(r => r.data),
-  create: (data: Partial<Task>) => api.post<Task>('/tasks', data).then(r => r.data),
-  update: (id: string, data: Partial<Task>) => api.put<Task>(`/tasks/${id}`, data).then(r => r.data),
+  create: (data: TaskInput) => api.post<Task>('/tasks', data).then(r => r.data),
+  update: (id: string, data: TaskInput) => api.put<Task>(`/tasks/${id}`, data).then(r => r.data),
   delete: (id: string) => api.delete(`/tasks/${id}`).then(r => r.data),
 }
 

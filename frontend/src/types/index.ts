@@ -610,6 +610,12 @@ export interface KsefSyncResult {
 // ─── Tasks (kalendarz zadań) ──────────────────────────────────────────────────
 export type TaskType = 'work' | 'event' | 'task'
 
+export interface TaskAssignee {
+  id: string
+  employee_id: string
+  employee?: { id: string; name: string; email?: string } | null
+}
+
 export interface Task {
   id: string
   title: string
@@ -618,12 +624,11 @@ export interface Task {
   time: string          // HH:MM — początek
   end_time: string      // HH:MM — koniec
   type: TaskType
-  assignee_id: string | null
   done: boolean
   created_at: string
   updated_at: string
   project?: { id: string; name: string } | null
-  assignee?: { id: string; name: string } | null
+  assignees: TaskAssignee[]
 }
 
 export const TASK_TYPE_LABELS: Record<TaskType, string> = {

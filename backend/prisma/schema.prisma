@@ -50,17 +50,34 @@ model Task {
   time        String   @default("") // HH:MM — początek
   end_time    String   @default("") // HH:MM — koniec (puste = +1h)
   type        String   @default("work") // work | event | task
-  assignee_id String?
+  assignee_id String?  // DEPRECATED — zachowane dla migracji; teraz wielu przez TaskAssignee
   done        Boolean  @default(false)
   created_at  String
   updated_at  String   @default("")
-  outlook_event_id    String? // id wydarzenia w Outlook (Microsoft Graph)
-  outlook_event_owner String? // email właściciela kalendarza z wydarzeniem
+  outlook_event_id    String? // DEPRECATED (było 1 osoba) — teraz per TaskAssignee
+  outlook_event_owner String? // DEPRECATED
 
-  project     Project?  @relation(fields: [project_id], references: [id], onDelete: SetNull)
-  assignee    Employee? @relation(fields: [assignee_id], references: [id], onDelete: SetNull)
+  project     Project?       @relation(fields: [project_id], references: [id], onDelete: SetNull)
+  assignee    Employee?      @relation(fields: [assignee_id], references: [id], onDelete: SetNull)
+  assignees   TaskAssignee[]
 
   @@map("tasks")
+}
+
+// Przypisanie zadania do pracownika (wielu na zadanie) + ślad wydarzenia w Outlooku tej osoby
+model TaskAssignee {
+  id                  String  @id
+  task_id             String
+  employee_id         String
+  outlook_event_id    String? // id wydarzenia w kalendarzu tego pracownika
+  outlook_event_owner String? // email kalendarza, w którym powstało wydarzenie
+  created_at          String
+
+  task     Task     @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@unique([task_id, employee_id])
+  @@map("task_assignees")
 }
 
 model CostItem {
@@ -137,6 +154,7 @@ model Employee {
   assets      EmployeeAsset[]
   documents   EmployeeDocument[]
   tasks       Task[]
+  task_assignments TaskAssignee[]
 
   @@map("employees")
 }

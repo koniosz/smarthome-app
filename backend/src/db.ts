@@ -183,18 +183,24 @@ export const db = {
       prisma.task.findMany({
         include: {
           project: { select: { id: true, name: true } },
-          assignee: { select: { id: true, name: true } },
+          assignees: { include: { employee: { select: { id: true, name: true, email: true } } } },
         },
         orderBy: [{ date: 'asc' }, { time: 'asc' }],
       }),
     find: (id: string) =>
-      prisma.task.findUnique({ where: { id } }),
+      prisma.task.findUnique({
+        where: { id },
+        include: {
+          project: { select: { id: true, name: true } },
+          assignees: { include: { employee: { select: { id: true, name: true, email: true } } } },
+        },
+      }),
     insert: (item: any) =>
       prisma.task.create({
         data: item,
         include: {
           project: { select: { id: true, name: true } },
-          assignee: { select: { id: true, name: true } },
+          assignees: { include: { employee: { select: { id: true, name: true, email: true } } } },
         },
       }),
     update: (id: string, patch: any) =>
@@ -203,11 +209,19 @@ export const db = {
         data: patch,
         include: {
           project: { select: { id: true, name: true } },
-          assignee: { select: { id: true, name: true } },
+          assignees: { include: { employee: { select: { id: true, name: true, email: true } } } },
         },
       }),
     delete: (id: string) =>
       prisma.task.delete({ where: { id } }),
+    addAssignee: (taskId: string, employeeId: string, createdAt: string) =>
+      prisma.taskAssignee.create({
+        data: { id: require('uuid').v4(), task_id: taskId, employee_id: employeeId, created_at: createdAt },
+      }),
+    removeAssignee: (id: string) =>
+      prisma.taskAssignee.delete({ where: { id } }),
+    setAssigneeEvent: (id: string, eventId: string | null, owner: string | null) =>
+      prisma.taskAssignee.update({ where: { id }, data: { outlook_event_id: eventId, outlook_event_owner: owner } }),
   },
 
   extra_costs: {
