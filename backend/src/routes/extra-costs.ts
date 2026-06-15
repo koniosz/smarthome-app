@@ -197,6 +197,25 @@ export async function updateExtraCost(req: Request, res: Response): Promise<void
     if (!existing) { res.status(404).json({ error: 'Nie znaleziono' }); return }
 
     const { description, quantity, unit_price, date, is_out_of_scope, status, notes } = req.body
+
+    // Koszt zaakceptowany przez klienta jest zablokowany — nie wolno zmieniać
+    // kwoty/opisu/zakresu (klient zaakceptował konkretną wartość). Dozwolone są
+    // tylko notatki wewnętrzne. Zmiana wymaga nowej pozycji i ponownej akceptacji.
+    if (existing.status === 'approved') {
+      const triesContentChange =
+        (description !== undefined && String(description).trim() !== existing.description) ||
+        (quantity !== undefined && (Number(quantity) || 1) !== existing.quantity) ||
+        (unit_price !== undefined && (Number(unit_price) || 0) !== existing.unit_price) ||
+        (date !== undefined && date !== existing.date) ||
+        (is_out_of_scope !== undefined && Boolean(is_out_of_scope) !== existing.is_out_of_scope) ||
+        (status !== undefined && status !== existing.status)
+      if (triesContentChange) {
+        res.status(423).json({
+          error: 'Koszt został zaakceptowany przez klienta i jest zablokowany. Aby go zmienić, dodaj nową pozycję i wyślij ją do ponownej akceptacji.',
+        }); return
+      }
+    }
+
     const patch: any = { updated_at: now() }
     if (description !== undefined) patch.description = String(description).trim()
     if (quantity !== undefined) patch.quantity = Number(quantity) || 1
@@ -221,6 +240,9 @@ export async function deleteExtraCost(req: Request, res: Response): Promise<void
   try {
     const existing = await db.extra_costs.find(req.params.id)
     if (!existing) { res.status(404).json({ error: 'Nie znaleziono' }); return }
+    if (existing.status === 'approved') {
+      res.status(423).json({ error: 'Koszt zaakceptowany przez klienta jest zablokowany i nie można go usunąć.' }); return
+    }
     await db.extra_costs.delete(req.params.id)
     res.json({ success: true })
   } catch (e) {

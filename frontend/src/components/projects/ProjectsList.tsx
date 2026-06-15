@@ -45,7 +45,7 @@ export default function ProjectsList() {
   const [showAIWizard, setShowAIWizard] = useState(false)
   const [filterType, setFilterType] = useState<ProjectType | ''>('')
   const [filterStatus, setFilterStatus] = useState<ProjectStatus | ''>('')
-  const [sortBy, setSortBy] = useState<'created_at' | 'margin_pct' | 'budget_amount'>('created_at')
+  const [sortBy, setSortBy] = useState<'created_at' | 'name_asc' | 'name_desc' | 'margin_pct' | 'budget_amount'>('created_at')
   const [requestingAccess, setRequestingAccess] = useState<Record<string, boolean>>({})
   const [query, setQuery] = useState('')
   const navigate = useNavigate()
@@ -75,6 +75,8 @@ export default function ProjectsList() {
         )
       })
       .sort((a, b) => {
+        if (sortBy === 'name_asc')  return a.name.localeCompare(b.name, 'pl')
+        if (sortBy === 'name_desc') return b.name.localeCompare(a.name, 'pl')
         if (sortBy === 'margin_pct') return (a.margin_pct ?? 0) - (b.margin_pct ?? 0)
         if (sortBy === 'budget_amount') return (b.budget_amount ?? 0) - (a.budget_amount ?? 0)
         return b.created_at.localeCompare(a.created_at)
@@ -234,6 +236,26 @@ export default function ProjectsList() {
             </button>
           )
         })}
+
+        {/* Sort dropdown — wypchnięty do prawej */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 13, color: '#94a3b8', whiteSpace: 'nowrap' }}>Sortuj:</span>
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as typeof sortBy)}
+            style={{
+              padding: '8px 12px', fontSize: 13, fontWeight: 500, color: '#475569',
+              background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8,
+              cursor: 'pointer', outline: 'none',
+            }}
+          >
+            <option value="created_at">Najnowsze</option>
+            <option value="name_asc">Nazwa (A–Z)</option>
+            <option value="name_desc">Nazwa (Z–A)</option>
+            <option value="budget_amount">Budżet (malejąco)</option>
+            <option value="margin_pct">Marża (rosnąco)</option>
+          </select>
+        </div>
       </div>
 
       {/* Table Card */}

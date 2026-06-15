@@ -491,9 +491,13 @@ function ProjectDocumentsTab({ projectId, project }: { projectId: string; projec
                     {PROJECT_DOC_TYPE_LABELS[doc.doc_type as keyof typeof PROJECT_DOC_TYPE_LABELS] ?? doc.doc_type}
                   </span>
                   <span className="text-xs text-gray-400">{doc.file_name}</span>
-                  {doc.notes && <span className="text-xs text-gray-400 italic truncate max-w-xs">{doc.notes}</span>}
                   <span className="text-xs text-gray-400">{new Date(doc.uploaded_at).toLocaleDateString('pl-PL')}</span>
                 </div>
+                {doc.notes && (
+                  <p className="text-xs text-gray-600 dark:text-gray-300 mt-1.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 rounded-md px-2 py-1 leading-snug">
+                    📝 {doc.notes}
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => handleDownload(doc)}

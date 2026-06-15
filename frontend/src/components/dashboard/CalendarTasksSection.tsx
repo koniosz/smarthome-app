@@ -3,6 +3,9 @@ import { Check, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import { tasksApi, employeesApi, projectsApi } from '../../api/client'
 import type { Task, TaskType, Employee, Project } from '../../types'
 import { TASK_TYPE_LABELS } from '../../types'
+import { useAuth } from '../../auth/AuthContext'
+
+type CalView = 'month' | 'week' | 'day'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 const FONT = "'IBM Plex Sans', sans-serif"
@@ -181,25 +184,32 @@ function TaskCheckbox({ done, size, onToggle }: { done: boolean; size: number; o
   )
 }
 
-// ─── New task modal ───────────────────────────────────────────────────────────
-function NewTaskModal({
-  defaultDate, projects, employees, onClose, onCreated,
+// ─── Task modal (dodawanie / edycja) ──────────────────────────────────────────
+function TaskModal({
+  defaultDate, task, projects, employees, onClose, onCreated, onUpdated, onDeleted,
 }: {
   defaultDate: string
+  task?: Task | null
   projects: Project[]
   employees: Employee[]
   onClose: () => void
   onCreated: (task: Task) => void
+  onUpdated: (task: Task) => void
+  onDeleted: (id: string) => void
 }) {
-  const [title, setTitle] = useState('')
+  const isEdit = !!task
+  const [title, setTitle] = useState(task?.title ?? '')
   const [titleError, setTitleError] = useState(false)
-  const [type, setType] = useState<TaskType>('work')
-  const [projectId, setProjectId] = useState<string>(projects[0]?.id ?? '')
-  const [date, setDate] = useState(defaultDate)
-  const [time, setTime] = useState('09:00')
-  const [endTime, setEndTime] = useState('10:00')
-  const [assigneeIds, setAssigneeIds] = useState<string[]>(employees[0]?.id ? [employees[0].id] : [])
+  const [type, setType] = useState<TaskType>(task?.type ?? 'work')
+  const [projectId, setProjectId] = useState<string>(task?.project_id ?? projects[0]?.id ?? '')
+  const [date, setDate] = useState(task?.date ?? defaultDate)
+  const [time, setTime] = useState(task?.time || '09:00')
+  const [endTime, setEndTime] = useState(task?.end_time || '10:00')
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(
+    task ? (task.assignees ?? []).map(a => a.employee_id) : (employees[0]?.id ? [employees[0].id] : []),
+  )
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const toggleAssignee = (id: string) =>
     setAssigneeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -218,11 +228,24 @@ function NewTaskModal({
     fontSize: 14, outline: 'none', color: '#0f172a', fontFamily: FONT, background: '#fff',
   }
 
+  const handleDelete = async () => {
+    if (!task) return
+    if (!confirm('Usunąć to zadanie? Zniknie też z kalendarzy Outlook przypisanych osób.')) return
+    setDeleting(true)
+    try {
+      await tasksApi.delete(task.id)
+      onDeleted(task.id)
+    } catch {
+      alert('Nie udało się usunąć zadania.')
+      setDeleting(false)
+    }
+  }
+
   const handleSubmit = async () => {
     if (!title.trim()) { setTitleError(true); return }
     setSaving(true)
     try {
-      const task = await tasksApi.create({
+      const payload = {
         title: title.trim(),
         type,
         project_id: projectId || null,
@@ -230,10 +253,16 @@ function NewTaskModal({
         time,
         end_time: endTime,
         assignee_ids: assigneeIds,
-      })
-      onCreated(task)
+      }
+      if (isEdit && task) {
+        const updated = await tasksApi.update(task.id, payload)
+        onUpdated(updated)
+      } else {
+        const created = await tasksApi.create(payload)
+        onCreated(created)
+      }
     } catch {
-      alert('Nie udało się dodać zadania.')
+      alert(isEdit ? 'Nie udało się zapisać zmian.' : 'Nie udało się dodać zadania.')
       setSaving(false)
     }
   }
@@ -255,7 +284,7 @@ function NewTaskModal({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px 0' }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a' }}>Nowe zadanie</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a' }}>{isEdit ? 'Edytuj zadanie' : 'Nowe zadanie'}</div>
           <div
             onClick={onClose}
             style={{
@@ -391,12 +420,27 @@ function NewTaskModal({
         </div>
 
         <div style={{
-          display: 'flex', justifyContent: 'flex-end', gap: 10,
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10,
           padding: '16px 24px', background: '#f8fafc', borderTop: '1px solid #f1f5f9',
         }}>
+          {isEdit && (
+            <button
+              onClick={handleDelete}
+              disabled={saving || deleting}
+              style={{
+                marginRight: 'auto', padding: '10px 16px', borderRadius: 8,
+                border: '1px solid #fecaca', background: '#fff', color: '#dc2626',
+                fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: FONT,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fef2f2' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+            >
+              {deleting ? 'Usuwam…' : 'Usuń'}
+            </button>
+          )}
           <button
             onClick={onClose}
-            disabled={saving}
+            disabled={saving || deleting}
             style={{
               padding: '10px 18px', borderRadius: 8, border: '1px solid #e2e8f0',
               background: '#fff', color: '#475569', fontSize: 14, fontWeight: 600,
@@ -407,7 +451,7 @@ function NewTaskModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={saving}
+            disabled={saving || deleting}
             style={{
               padding: '10px 20px', borderRadius: 8, border: 'none',
               background: '#2563eb', color: '#fff', fontSize: 14, fontWeight: 600,
@@ -417,7 +461,7 @@ function NewTaskModal({
             onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#1d4ed8' }}
             onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#2563eb' }}
           >
-            {saving ? 'Zapisuję…' : 'Dodaj zadanie'}
+            {saving ? 'Zapisuję…' : isEdit ? 'Zapisz zmiany' : 'Dodaj zadanie'}
           </button>
         </div>
       </div>
@@ -436,12 +480,21 @@ export default function CalendarTasksSection({
 }) {
   const today = new Date()
   const todayIso = iso(today)
+  const { user } = useAuth()
+  const myEmail = (user?.email ?? '').toLowerCase()
 
   const [tasks, setTasks] = useState<Task[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [viewMonth, setViewMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
   const [selectedDate, setSelectedDate] = useState(todayIso)
+  const [calView, setCalView] = useState<CalView>('month')
+  const [onlyMine, setOnlyMine] = useState(true)
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
+
+  // czy zadanie jest przypisane do zalogowanej osoby (po e-mailu pracownika)
+  const isMine = (t: Task) =>
+    !!myEmail && (t.assignees ?? []).some(a => (a.employee?.email ?? '').toLowerCase() === myEmail)
 
   useEffect(() => {
     tasksApi.list().then(setTasks).catch(() => {})
@@ -460,7 +513,7 @@ export default function CalendarTasksSection({
     return map
   }, [tasks])
 
-  // 3-day groups: today, tomorrow, day after
+  // 3-day groups: today, tomorrow, day after — opcjonalnie tylko moje zadania
   const threeDays = useMemo(() => {
     return [0, 1, 2].map(offset => {
       const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
@@ -469,14 +522,15 @@ export default function CalendarTasksSection({
         const name = d.toLocaleDateString('pl-PL', { weekday: 'long' })
         return name.charAt(0).toUpperCase() + name.slice(1)
       })()
+      const dayTasks = (tasksByDate.get(dIso) ?? []).filter(t => !onlyMine || isMine(t))
       return {
         iso: dIso,
         label,
         dateLabel: d.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' }),
-        tasks: tasksByDate.get(dIso) ?? [],
+        tasks: dayTasks,
       }
     })
-  }, [tasksByDate, todayIso]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tasksByDate, todayIso, onlyMine, myEmail]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const upcomingCount = threeDays.reduce((s, g) => s + g.tasks.filter(t => !t.done).length, 0)
 
@@ -502,11 +556,6 @@ export default function CalendarTasksSection({
     return result
   }, [viewMonth])
 
-  const monthLabel = (() => {
-    const l = viewMonth.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' })
-    return l.charAt(0).toUpperCase() + l.slice(1)
-  })()
-
   const selectedLabel = (() => {
     const [y, m, d] = selectedDate.split('-').map(Number)
     return new Date(y, m - 1, d).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -514,10 +563,65 @@ export default function CalendarTasksSection({
 
   const selectedTasks = tasksByDate.get(selectedDate) ?? []
 
+  // dni tygodnia zawierającego wybrany dzień (Pn–Nd) — dla widoku tygodnia
+  const weekDays = useMemo(() => {
+    const [y, m, d] = selectedDate.split('-').map(Number)
+    const base = new Date(y, m - 1, d)
+    const offset = (base.getDay() + 6) % 7 // Pn = 0
+    const monday = new Date(y, m - 1, d - offset)
+    return Array.from({ length: 7 }, (_, i) => {
+      const dd = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i)
+      return { date: dd, iso: iso(dd) }
+    })
+  }, [selectedDate])
+
+  // etykieta nagłówka zależna od widoku
+  const headerLabel = (() => {
+    if (calView === 'day') {
+      const [y, m, d] = selectedDate.split('-').map(Number)
+      const l = new Date(y, m - 1, d).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })
+      return l.charAt(0).toUpperCase() + l.slice(1)
+    }
+    if (calView === 'week') {
+      const a = weekDays[0].date, b = weekDays[6].date
+      const fmtShort = (x: Date) => x.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })
+      return `${fmtShort(a)} – ${fmtShort(b)} ${b.getFullYear()}`
+    }
+    const l = viewMonth.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' })
+    return l.charAt(0).toUpperCase() + l.slice(1)
+  })()
+
+  // nawigacja prev/next zależna od widoku
+  const shiftDate = (dIso: string, days: number) => {
+    const [y, m, d] = dIso.split('-').map(Number)
+    return iso(new Date(y, m - 1, d + days))
+  }
+  const goPrev = () => {
+    if (calView === 'month') setViewMonth(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))
+    else setSelectedDate(s => shiftDate(s, calView === 'week' ? -7 : -1))
+  }
+  const goNext = () => {
+    if (calView === 'month') setViewMonth(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))
+    else setSelectedDate(s => shiftDate(s, calView === 'week' ? 7 : 1))
+  }
+  const goToday = () => {
+    setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1))
+    setSelectedDate(todayIso)
+  }
+
   // ── mutations ──
   const toggleDone = async (task: Task) => {
     const updated = await tasksApi.update(task.id, { done: !task.done })
     setTasks(prev => prev.map(t => t.id === task.id ? updated : t))
+  }
+
+  const handleUpdated = (updated: Task) => {
+    setTasks(prev => prev.map(t => t.id === updated.id ? updated : t))
+    setEditingTask(null)
+  }
+  const handleDeleted = (id: string) => {
+    setTasks(prev => prev.filter(t => t.id !== id))
+    setEditingTask(null)
   }
 
   // Przełącz przypisanie pracownika (dodaj/usuń) — wysyła pełną nową listę
@@ -551,12 +655,31 @@ export default function CalendarTasksSection({
 
         {/* ── Calendar card ── */}
         <div style={{ ...card, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '18px 24px', borderBottom: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
             <div style={{ fontSize: 16, fontWeight: 600, color: '#0f172a' }}>Kalendarz</div>
-            <div style={{ fontSize: 13, color: '#94a3b8' }}>kliknij dzień, aby zobaczyć i dodać zadania</div>
             <div style={{ flex: 1 }} />
+
+            {/* Przełącznik widoku */}
+            <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 8, padding: 2 }}>
+              {([['month', 'Miesiąc'], ['week', 'Tydzień'], ['day', 'Dzień']] as [CalView, string][]).map(([v, lbl]) => (
+                <button
+                  key={v}
+                  onClick={() => setCalView(v)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    fontSize: 13, fontWeight: 600, fontFamily: FONT,
+                    background: calView === v ? '#fff' : 'transparent',
+                    color: calView === v ? '#1d4ed8' : '#64748b',
+                    boxShadow: calView === v ? '0 1px 2px rgba(15,23,42,0.08)' : 'none',
+                  }}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+
             <button
-              onClick={() => { setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1)); setSelectedDate(todayIso) }}
+              onClick={goToday}
               style={{
                 padding: '6px 12px', borderRadius: 7, border: '1px solid #e2e8f0', background: '#fff',
                 fontSize: 13, fontWeight: 600, color: '#475569', cursor: 'pointer', fontFamily: FONT,
@@ -566,14 +689,14 @@ export default function CalendarTasksSection({
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <button
-                onClick={() => setViewMonth(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                onClick={goPrev}
                 style={{ width: 30, height: 30, borderRadius: 7, border: 'none', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', cursor: 'pointer' }}
               >
                 <ChevronLeft size={16} />
               </button>
-              <div style={{ fontSize: 14, fontWeight: 700, minWidth: 130, textAlign: 'center', color: '#0f172a' }}>{monthLabel}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, minWidth: 150, textAlign: 'center', color: '#0f172a', textTransform: 'capitalize' }}>{headerLabel}</div>
               <button
-                onClick={() => setViewMonth(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                onClick={goNext}
                 style={{ width: 30, height: 30, borderRadius: 7, border: 'none', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', cursor: 'pointer' }}
               >
                 <ChevronRight size={16} />
@@ -581,7 +704,8 @@ export default function CalendarTasksSection({
             </div>
           </div>
 
-          {/* Grid */}
+          {/* Grid (widok miesiąca) */}
+          {calView === 'month' && (
           <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, paddingBottom: 4 }}>
               {['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'].map(d => (
@@ -641,9 +765,60 @@ export default function CalendarTasksSection({
               </div>
             ))}
           </div>
+          )}
 
-          {/* Selected day */}
-          <div style={{ borderTop: '1px solid #e2e8f0', padding: '18px 24px 22px', display: 'flex', flexDirection: 'column', gap: 10, background: '#fcfdfe' }}>
+          {/* Widok tygodnia — 7 kolumn dni z agendą */}
+          {calView === 'week' && (
+            <div style={{ padding: '16px 16px 20px', display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+              {weekDays.map(({ date, iso: dIso }) => {
+                const dayTasks = tasksByDate.get(dIso) ?? []
+                const isToday = dIso === todayIso
+                const isSelected = dIso === selectedDate
+                const wd = date.toLocaleDateString('pl-PL', { weekday: 'short' })
+                return (
+                  <div
+                    key={dIso}
+                    onClick={() => setSelectedDate(dIso)}
+                    style={{
+                      minHeight: 220, borderRadius: 10, padding: 8, cursor: 'pointer',
+                      display: 'flex', flexDirection: 'column', gap: 5,
+                      background: isSelected ? '#eff6ff' : '#fff',
+                      border: `1px solid ${isSelected ? '#93c5fd' : '#f1f5f9'}`, overflow: 'hidden',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, paddingBottom: 4, borderBottom: '1px solid #f1f5f9' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8' }}>{wd}</span>
+                      <span style={{
+                        width: 24, height: 24, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                        color: isToday ? '#fff' : '#0f172a', background: isToday ? '#2563eb' : 'transparent',
+                      }}>{date.getDate()}</span>
+                    </div>
+                    {dayTasks.length === 0 && <span style={{ fontSize: 11, color: '#cbd5e1', textAlign: 'center', marginTop: 4 }}>—</span>}
+                    {dayTasks.map(t => (
+                      <div
+                        key={t.id}
+                        onClick={e => { e.stopPropagation(); setEditingTask(t) }}
+                        title={`${timeRange(t)} ${t.title}`}
+                        style={{
+                          fontSize: 11, fontWeight: 600, padding: '3px 6px', borderRadius: 5, cursor: 'pointer',
+                          background: TYPE_META[t.type]?.chipBg ?? '#f1f5f9',
+                          color: TYPE_META[t.type]?.chipFg ?? '#475569',
+                          textDecoration: t.done ? 'line-through' : 'none', opacity: t.done ? 0.6 : 1,
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {t.time ? `${t.time} ` : ''}{t.title}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Selected day (agenda — w widoku dnia jest jedyną treścią) */}
+          <div style={{ borderTop: calView === 'day' ? 'none' : '1px solid #e2e8f0', padding: '18px 24px 22px', display: 'flex', flexDirection: 'column', gap: 10, background: calView === 'day' ? '#fff' : '#fcfdfe' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 14, fontWeight: 700, textTransform: 'capitalize', color: '#0f172a' }}>{selectedLabel}</div>
               <div
@@ -667,14 +842,20 @@ export default function CalendarTasksSection({
                   <TaskCheckbox done={t.done} size={18} onToggle={() => toggleDone(t)} />
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#64748b', fontVariantNumeric: 'tabular-nums', width: 88 }}>{timeRange(t)}</span>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_META[t.type]?.dot ?? '#94a3b8', flexShrink: 0 }} />
-                  <span style={{
-                    fontSize: 14, fontWeight: 600,
-                    color: t.done ? '#94a3b8' : '#0f172a',
-                    textDecoration: t.done ? 'line-through' : 'none',
-                  }}>
+                  <span
+                    onClick={() => setEditingTask(t)}
+                    title="Kliknij, aby edytować"
+                    style={{
+                      fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                      color: t.done ? '#94a3b8' : '#0f172a',
+                      textDecoration: t.done ? 'line-through' : 'none',
+                    }}
+                  >
                     {t.title}
                   </span>
-                  <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span
+                    onClick={() => setEditingTask(t)}
+                    style={{ fontSize: 13, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>
                     {t.project?.name ?? ''}
                   </span>
                   <AssigneeAvatars task={t} employees={employees} size={26} onToggle={toggleAssignee} />
@@ -686,7 +867,7 @@ export default function CalendarTasksSection({
 
         {/* ── Tasks panel ── */}
         <div style={{ ...card, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 20px', borderBottom: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
             <div style={{ fontSize: 16, fontWeight: 600, color: '#0f172a' }}>Do zrobienia</div>
             <span style={{
               display: 'inline-flex', alignItems: 'center', padding: '2px 10px', borderRadius: 999,
@@ -695,7 +876,24 @@ export default function CalendarTasksSection({
               {upcomingCount}
             </span>
             <div style={{ flex: 1 }} />
-            <div style={{ fontSize: 13, color: '#94a3b8' }}>najbliższe 3 dni</div>
+            {/* Filtr: moje / wszystkie */}
+            <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 8, padding: 2 }}>
+              {([[true, 'Moje'], [false, 'Wszystkie']] as [boolean, string][]).map(([v, lbl]) => (
+                <button
+                  key={lbl}
+                  onClick={() => setOnlyMine(v)}
+                  style={{
+                    padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, fontFamily: FONT,
+                    background: onlyMine === v ? '#fff' : 'transparent',
+                    color: onlyMine === v ? '#1d4ed8' : '#64748b',
+                    boxShadow: onlyMine === v ? '0 1px 2px rgba(15,23,42,0.08)' : 'none',
+                  }}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
           </div>
 
           {threeDays.map(g => (
@@ -729,7 +927,7 @@ export default function CalendarTasksSection({
                     <div style={{ marginTop: 1 }}>
                       <TaskCheckbox done={t.done} size={20} onToggle={() => toggleDone(t)} />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                    <div onClick={() => setEditingTask(t)} style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0, cursor: 'pointer' }}>
                       <div style={{
                         fontSize: 14, fontWeight: 600, lineHeight: 1.35,
                         color: t.done ? '#94a3b8' : '#0f172a',
@@ -784,13 +982,16 @@ export default function CalendarTasksSection({
         </div>
       </div>
 
-      {modalOpen && (
-        <NewTaskModal
+      {(modalOpen || editingTask) && (
+        <TaskModal
           defaultDate={selectedDate}
+          task={editingTask}
           projects={projects}
           employees={employees}
-          onClose={onModalClose}
+          onClose={() => { setEditingTask(null); onModalClose() }}
           onCreated={handleCreated}
+          onUpdated={handleUpdated}
+          onDeleted={handleDeleted}
         />
       )}
     </>

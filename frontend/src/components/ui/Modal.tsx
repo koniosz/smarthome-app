@@ -21,8 +21,8 @@ export default function Modal({ title, onClose, children, wide }: ModalProps) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className={`bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 ${wide ? 'w-full max-w-2xl' : 'w-full max-w-lg'}`}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div className={`bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 flex flex-col max-h-[90vh] ${wide ? 'w-full max-w-2xl' : 'w-full max-w-lg'}`}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
           <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">{title}</h2>
           <button
             onClick={onClose}
@@ -31,7 +31,7 @@ export default function Modal({ title, onClose, children, wide }: ModalProps) {
             ✕
           </button>
         </div>
-        <div className="p-5">
+        <div className="p-5 overflow-y-auto">
           {children}
         </div>
       </div>

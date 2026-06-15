@@ -620,8 +620,12 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact, o
 
   const handleDelete = async (id: string) => {
     if (!confirm('Usunąć ten koszt?')) return
-    await extraCostsApi.delete(id)
-    setItems(prev => prev.filter(i => i.id !== id))
+    try {
+      await extraCostsApi.delete(id)
+      setItems(prev => prev.filter(i => i.id !== id))
+    } catch (err: any) {
+      alert(err?.response?.data?.error ?? 'Nie udało się usunąć kosztu.')
+    }
   }
 
   const handleSent = (ids: string[], sentAt: string) => {
@@ -762,17 +766,31 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact, o
                     }
                   </td>
                   <td className="px-3 py-2.5">
-                    <select
-                      value={item.status}
-                      onChange={e => handleStatusChange(item, e.target.value as ExtraCostStatus)}
-                      className={`text-xs px-2 py-1 rounded-md border-0 cursor-pointer ${EXTRA_COST_STATUS_COLORS[item.status]}`}
-                    >
-                      {Object.entries(EXTRA_COST_STATUS_LABELS).map(([k, v]) => (
-                        <option key={k} value={k}>{v}</option>
-                      ))}
-                    </select>
+                    {item.status === 'approved' ? (
+                      <span
+                        title="Zaakceptowane przez klienta — zablokowane"
+                        className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${EXTRA_COST_STATUS_COLORS[item.status]}`}
+                      >
+                        🔒 {EXTRA_COST_STATUS_LABELS[item.status]}
+                      </span>
+                    ) : (
+                      <select
+                        value={item.status}
+                        onChange={e => handleStatusChange(item, e.target.value as ExtraCostStatus)}
+                        className={`text-xs px-2 py-1 rounded-md border-0 cursor-pointer ${EXTRA_COST_STATUS_COLORS[item.status]}`}
+                      >
+                        {Object.entries(EXTRA_COST_STATUS_LABELS).map(([k, v]) => (
+                          <option key={k} value={k}>{v}</option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td className="px-2 py-2">
+                    {item.status === 'approved' ? (
+                      <div className="flex items-center justify-center text-gray-300 dark:text-gray-600" title="Koszt zaakceptowany przez klienta — zablokowany do edycji">
+                        🔒
+                      </div>
+                    ) : (
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity items-center">
                       {/* Move to regular cost category */}
                       {movingId === item.id ? (
@@ -805,6 +823,7 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact, o
                         className="text-xs text-red-400 hover:text-red-600 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700"
                       >🗑</button>
                     </div>
+                    )}
                   </td>
                 </tr>
               ))}
