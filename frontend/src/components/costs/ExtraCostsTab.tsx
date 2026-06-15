@@ -27,17 +27,23 @@ const STATUS_FILTER_OPTIONS: { key: ExtraCostStatus | 'all'; label: string }[] =
 ]
 
 // ─── Add/Edit form (inline modal) ─────────────────────────────────────────────
-interface FormData {
+interface Position {
   description: string
   quantity: string
   unit_price: string
+}
+
+interface FormData {
+  positions: Position[]
   date: string
   is_out_of_scope: boolean
   notes: string
 }
 
+const EMPTY_POSITION: Position = { description: '', quantity: '1', unit_price: '0' }
+
 const EMPTY_FORM: FormData = {
-  description: '', quantity: '1', unit_price: '0',
+  positions: [{ ...EMPTY_POSITION }],
   date: new Date().toISOString().slice(0, 10),
   is_out_of_scope: false, notes: '',
 }
@@ -51,12 +57,15 @@ function AddEditModal({
   onClose: () => void
   onSave: (data: FormData) => Promise<void>
 }) {
+  const isEdit = !!initial
   const [form, setForm] = useState<FormData>(
     initial
       ? {
-          description: initial.description,
-          quantity: String(initial.quantity),
-          unit_price: String(initial.unit_price),
+          positions: [{
+            description: initial.description,
+            quantity: String(initial.quantity),
+            unit_price: String(initial.unit_price),
+          }],
           date: initial.date,
           is_out_of_scope: initial.is_out_of_scope,
           notes: initial.notes,
@@ -69,15 +78,24 @@ function AddEditModal({
 
   useEffect(() => { descRef.current?.focus() }, [])
 
-  const preview = (Number(form.quantity) || 0) * (Number(form.unit_price) || 0)
+  const updatePosition = (idx: number, patch: Partial<Position>) =>
+    setForm(f => ({ ...f, positions: f.positions.map((p, i) => i === idx ? { ...p, ...patch } : p) }))
+  const addPosition = () =>
+    setForm(f => ({ ...f, positions: [...f.positions, { ...EMPTY_POSITION }] }))
+  const removePosition = (idx: number) =>
+    setForm(f => ({ ...f, positions: f.positions.filter((_, i) => i !== idx) }))
+
+  const lineTotal = (p: Position) => (Number(p.quantity) || 0) * (Number(p.unit_price) || 0)
+  const grandTotal = form.positions.reduce((s, p) => s + lineTotal(p), 0)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.description.trim()) { setError('Opis jest wymagany.'); return }
+    const filled = form.positions.filter(p => p.description.trim())
+    if (filled.length === 0) { setError('Podaj opis przynajmniej jednej pozycji.'); return }
     setSaving(true)
     setError('')
     try {
-      await onSave(form)
+      await onSave({ ...form, positions: filled })
     } catch (err: any) {
       setError(err?.response?.data?.error ?? 'Błąd zapisu.')
     } finally {
@@ -88,47 +106,75 @@ function AddEditModal({
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 w-full max-w-lg shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 w-full max-w-xl shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
           <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">
-            {initial ? 'Edytuj koszt dodatkowy' : 'Dodaj koszt dodatkowy'}
+            {isEdit ? 'Edytuj koszt dodatkowy' : 'Dodaj koszt dodatkowy'}
           </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-lg">✕</button>
         </div>
 
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          {/* Description */}
-          <div>
-            <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1.5">Opis kosztu *</label>
-            <input
-              ref={descRef}
-              className="w-full border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
-              placeholder="np. Dodatkowa trasa kablowa w garażu"
-              value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-            />
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 overflow-y-auto">
+          {/* Positions */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                {isEdit ? 'Pozycja' : 'Pozycje kosztów *'}
+              </label>
+              {!isEdit && (
+                <span className="text-xs text-gray-400">{form.positions.length} {form.positions.length === 1 ? 'pozycja' : 'pozycji'}</span>
+              )}
+            </div>
+
+            {/* column headers */}
+            <div className="grid grid-cols-[1fr_72px_96px_auto] gap-2 px-0.5">
+              <span className="text-[11px] uppercase tracking-wide text-gray-400">Opis</span>
+              <span className="text-[11px] uppercase tracking-wide text-gray-400">Ilość</span>
+              <span className="text-[11px] uppercase tracking-wide text-gray-400">Cena netto</span>
+              <span />
+            </div>
+
+            {form.positions.map((p, idx) => (
+              <div key={idx} className="grid grid-cols-[1fr_72px_96px_auto] gap-2 items-center">
+                <input
+                  ref={idx === 0 ? descRef : undefined}
+                  className="border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                  placeholder={idx === 0 ? 'np. Kamera IP' : 'np. Słupek metalowy'}
+                  value={p.description}
+                  onChange={e => updatePosition(idx, { description: e.target.value })}
+                />
+                <input
+                  type="number" min="0" step="0.1"
+                  className="border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-right"
+                  value={p.quantity}
+                  onChange={e => updatePosition(idx, { quantity: e.target.value })}
+                />
+                <input
+                  type="number" min="0" step="1"
+                  className="border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-right"
+                  value={p.unit_price}
+                  onChange={e => updatePosition(idx, { unit_price: e.target.value })}
+                />
+                {!isEdit && form.positions.length > 1 ? (
+                  <button type="button" onClick={() => removePosition(idx)}
+                    title="Usuń pozycję"
+                    className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors">
+                    ✕
+                  </button>
+                ) : <span className="w-8" />}
+              </div>
+            ))}
+
+            {!isEdit && (
+              <button type="button" onClick={addPosition}
+                className="mt-1 w-full py-2 text-sm font-medium text-violet-600 dark:text-violet-400 border border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors">
+                + Dodaj pozycję
+              </button>
+            )}
           </div>
 
-          {/* Qty + Price + Date */}
+          {/* Date */}
           <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1.5">Ilość</label>
-              <input
-                type="number" min="0" step="0.1"
-                className="w-full border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
-                value={form.quantity}
-                onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1.5">Cena netto PLN</label>
-              <input
-                type="number" min="0" step="1"
-                className="w-full border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
-                value={form.unit_price}
-                onChange={e => setForm(f => ({ ...f, unit_price: e.target.value }))}
-              />
-            </div>
             <div>
               <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1.5">Data</label>
               <input
@@ -141,9 +187,9 @@ function AddEditModal({
           </div>
 
           {/* Total preview */}
-          {preview > 0 && (
+          {grandTotal > 0 && (
             <div className="text-right text-sm font-medium text-gray-700 dark:text-gray-300">
-              Razem: <span className="text-violet-600 dark:text-violet-400">{fmt(preview)} PLN</span>
+              Razem: <span className="text-violet-600 dark:text-violet-400">{fmt(grandTotal)} PLN</span>
             </div>
           )}
 
@@ -534,24 +580,31 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact, o
   const totalFiltered = filtered.reduce((s, i) => s + i.total_price, 0)
 
   const handleAdd = async (form: FormData) => {
-    const item = await extraCostsApi.create(projectId, {
-      description: form.description,
-      quantity: Number(form.quantity),
-      unit_price: Number(form.unit_price),
-      date: form.date,
-      is_out_of_scope: form.is_out_of_scope,
-      notes: form.notes,
-    })
-    setItems(prev => [item, ...prev])
+    // każda pozycja = osobny koszt dodatkowy; trafiają razem na listę i można je
+    // wysłać jednym mailem do akceptacji klienta
+    const created: ExtraCost[] = []
+    for (const p of form.positions) {
+      const item = await extraCostsApi.create(projectId, {
+        description: p.description,
+        quantity: Number(p.quantity),
+        unit_price: Number(p.unit_price),
+        date: form.date,
+        is_out_of_scope: form.is_out_of_scope,
+        notes: form.notes,
+      })
+      created.push(item)
+    }
+    setItems(prev => [...created.reverse(), ...prev])
     setShowAdd(false)
   }
 
   const handleEdit = async (form: FormData) => {
     if (!editingItem) return
+    const p = form.positions[0]
     const updated = await extraCostsApi.update(editingItem.id, {
-      description: form.description,
-      quantity: Number(form.quantity),
-      unit_price: Number(form.unit_price),
+      description: p.description,
+      quantity: Number(p.quantity),
+      unit_price: Number(p.unit_price),
       date: form.date,
       is_out_of_scope: form.is_out_of_scope,
       notes: form.notes,
