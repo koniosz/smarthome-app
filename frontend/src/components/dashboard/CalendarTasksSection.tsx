@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
 import { tasksApi, employeesApi, projectsApi } from '../../api/client'
+import type { OutlookEvent } from '../../api/client'
 import type { Task, TaskType, Employee, Project } from '../../types'
 import { TASK_TYPE_LABELS } from '../../types'
 import { useAuth } from '../../auth/AuthContext'
@@ -491,6 +492,29 @@ export default function CalendarTasksSection({
   const [calView, setCalView] = useState<CalView>('month')
   const [onlyMine, setOnlyMine] = useState(true)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [outlookEvents, setOutlookEvents] = useState<OutlookEvent[]>([])
+
+  // okno pobierania wydarzeń Outlook zależne od oglądanego miesiąca
+  const anchor = calView === 'month'
+    ? viewMonth
+    : (() => { const [y, m] = selectedDate.split('-').map(Number); return new Date(y, m - 1, 1) })()
+  const anchorKey = `${anchor.getFullYear()}-${anchor.getMonth()}`
+  useEffect(() => {
+    const from = new Date(anchor.getFullYear(), anchor.getMonth(), -7)
+    const to   = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 14)
+    tasksApi.outlookEvents(iso(from), iso(to)).then(setOutlookEvents).catch(() => {})
+  }, [anchorKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const outlookByDate = useMemo(() => {
+    const map = new Map<string, OutlookEvent[]>()
+    for (const ev of outlookEvents) {
+      const list = map.get(ev.date) ?? []
+      list.push(ev)
+      map.set(ev.date, list)
+    }
+    for (const list of map.values()) list.sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
+    return map
+  }, [outlookEvents])
 
   // czy zadanie jest przypisane do zalogowanej osoby (po e-mailu pracownika)
   const isMine = (t: Task) =>
@@ -716,6 +740,12 @@ export default function CalendarTasksSection({
               <div key={wi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
                 {week.map(day => {
                   const dayTasks = tasksByDate.get(day.iso) ?? []
+                  const dayOutlook = outlookByDate.get(day.iso) ?? []
+                  const totalEntries = dayTasks.length + dayOutlook.length
+                  const shownTasks = dayTasks.slice(0, 2)
+                  const outlookSlots = Math.max(0, 2 - shownTasks.length)
+                  const shownOutlook = dayOutlook.slice(0, outlookSlots)
+                  const moreCount = totalEntries - shownTasks.length - shownOutlook.length
                   const isToday = day.iso === todayIso
                   const isSelected = day.iso === selectedDate
                   return (
@@ -744,7 +774,7 @@ export default function CalendarTasksSection({
                       }}>
                         {day.date.getDate()}
                       </span>
-                      {dayTasks.slice(0, 2).map(t => (
+                      {shownTasks.map(t => (
                         <div key={t.id} style={{
                           fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 5,
                           background: TYPE_META[t.type]?.chipBg ?? '#f1f5f9',
@@ -754,9 +784,18 @@ export default function CalendarTasksSection({
                           {t.time ? `${t.time} ` : ''}{t.title}
                         </div>
                       ))}
-                      {dayTasks.length > 2 && (
+                      {shownOutlook.map(ev => (
+                        <div key={ev.id} title={`Outlook · ${ev.employee_name}: ${ev.subject}`} style={{
+                          fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 5,
+                          background: '#eef2ff', color: '#4f46e5', border: '1px dashed #c7d2fe',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>
+                          {ev.start_time ? `${ev.start_time} ` : ''}{ev.subject}
+                        </div>
+                      ))}
+                      {moreCount > 0 && (
                         <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, paddingLeft: 2 }}>
-                          +{dayTasks.length - 2} więcej
+                          +{moreCount} więcej
                         </div>
                       )}
                     </div>
@@ -772,6 +811,7 @@ export default function CalendarTasksSection({
             <div style={{ padding: '16px 16px 20px', display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
               {weekDays.map(({ date, iso: dIso }) => {
                 const dayTasks = tasksByDate.get(dIso) ?? []
+                const dayOutlook = outlookByDate.get(dIso) ?? []
                 const isToday = dIso === todayIso
                 const isSelected = dIso === selectedDate
                 const wd = date.toLocaleDateString('pl-PL', { weekday: 'short' })
@@ -794,7 +834,7 @@ export default function CalendarTasksSection({
                         color: isToday ? '#fff' : '#0f172a', background: isToday ? '#2563eb' : 'transparent',
                       }}>{date.getDate()}</span>
                     </div>
-                    {dayTasks.length === 0 && <span style={{ fontSize: 11, color: '#cbd5e1', textAlign: 'center', marginTop: 4 }}>—</span>}
+                    {dayTasks.length === 0 && dayOutlook.length === 0 && <span style={{ fontSize: 11, color: '#cbd5e1', textAlign: 'center', marginTop: 4 }}>—</span>}
                     {dayTasks.map(t => (
                       <div
                         key={t.id}
@@ -809,6 +849,19 @@ export default function CalendarTasksSection({
                         }}
                       >
                         {t.time ? `${t.time} ` : ''}{t.title}
+                      </div>
+                    ))}
+                    {dayOutlook.map(ev => (
+                      <div
+                        key={ev.id}
+                        title={`Outlook · ${ev.employee_name}: ${ev.subject}`}
+                        style={{
+                          fontSize: 11, fontWeight: 600, padding: '3px 6px', borderRadius: 5,
+                          background: '#eef2ff', color: '#4f46e5', border: '1px dashed #c7d2fe',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {ev.start_time ? `${ev.start_time} ` : ''}{ev.subject}
                       </div>
                     ))}
                   </div>
@@ -834,7 +887,7 @@ export default function CalendarTasksSection({
                 Dodaj na ten dzień
               </div>
             </div>
-            {selectedTasks.length === 0 ? (
+            {selectedTasks.length === 0 && (outlookByDate.get(selectedDate) ?? []).length === 0 ? (
               <div style={{ fontSize: 13, color: '#94a3b8', padding: '6px 0' }}>Brak zadań w tym dniu.</div>
             ) : (
               selectedTasks.map(t => (
@@ -862,6 +915,21 @@ export default function CalendarTasksSection({
                 </div>
               ))
             )}
+
+            {/* Wydarzenia z Outlooka (tylko do odczytu) */}
+            {(outlookByDate.get(selectedDate) ?? []).map(ev => (
+              <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ width: 18, display: 'inline-flex', justifyContent: 'center', flexShrink: 0, fontSize: 12 }}>📅</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#6366f1', fontVariantNumeric: 'tabular-nums', width: 88 }}>
+                  {ev.is_all_day ? 'cały dzień' : (ev.end_time ? `${ev.start_time}–${ev.end_time}` : ev.start_time)}
+                </span>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#6366f1', flexShrink: 0 }} />
+                <span style={{ fontSize: 14, fontWeight: 600, color: '#4338ca' }}>{ev.subject}</span>
+                <span style={{ fontSize: 12, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {ev.employee_name} · Outlook
+                </span>
+              </div>
+            ))}
           </div>
         </div>
 

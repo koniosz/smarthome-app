@@ -231,11 +231,23 @@ async function pollJob(url: string, maxMs = 5 * 60 * 1000): Promise<any> {
 }
 
 type TaskInput = Partial<Omit<Task, 'assignees'>> & { assignee_ids?: string[] }
+export interface OutlookEvent {
+  id: string
+  employee_id: string
+  employee_name: string
+  subject: string
+  date: string
+  start_time: string
+  end_time: string
+  is_all_day: boolean
+}
 export const tasksApi = {
   list: () => api.get<Task[]>('/tasks').then(r => r.data),
   create: (data: TaskInput) => api.post<Task>('/tasks', data).then(r => r.data),
   update: (id: string, data: TaskInput) => api.put<Task>(`/tasks/${id}`, data).then(r => r.data),
   delete: (id: string) => api.delete(`/tasks/${id}`).then(r => r.data),
+  outlookEvents: (from: string, to: string) =>
+    api.get<{ events: OutlookEvent[] }>('/tasks/outlook-events', { params: { from, to } }).then(r => r.data.events),
 }
 
 export const extraCostsApi = {

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import db from '../db'
 import {
   graphConfigured, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent,
-  type TaskForCalendar,
+  listCalendarEvents, type TaskForCalendar,
 } from '../services/msgraph'
 
 const router = Router()
@@ -77,6 +77,39 @@ router.get('/', async (_req: Request, res: Response) => {
     res.json(await db.tasks.all())
   } catch (e) {
     res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
+// GET /api/tasks/outlook-events?from=YYYY-MM-DD&to=YYYY-MM-DD
+// Wydarzenia z kalendarzy Outlook pracowników (kierunek Outlook → aplikacja),
+// pokazywane w kalendarzu jako warstwa tylko do odczytu.
+router.get('/outlook-events', async (req: Request, res: Response) => {
+  try {
+    if (!graphConfigured()) { res.json({ events: [] }); return }
+    const from = String(req.query.from ?? '').slice(0, 10)
+    const to   = String(req.query.to ?? '').slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      res.status(400).json({ error: 'Wymagane: from, to (YYYY-MM-DD)' }); return
+    }
+    const employees = (await db.employees.all()).filter((e: any) => e.email)
+    const perEmployee = await Promise.all(
+      employees.map(async (e: any) => {
+        const evs = await listCalendarEvents(e.email, from, to)
+        return evs.map(ev => ({
+          id: `${e.id}:${ev.id}`,
+          employee_id: e.id,
+          employee_name: e.name,
+          subject: ev.subject,
+          date: ev.date,
+          start_time: ev.startTime,
+          end_time: ev.endTime,
+          is_all_day: ev.isAllDay,
+        }))
+      }),
+    )
+    res.json({ events: perEmployee.flat() })
+  } catch (e) {
+    res.json({ events: [] })
   }
 })
 

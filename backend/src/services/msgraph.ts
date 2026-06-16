@@ -152,3 +152,54 @@ export async function deleteCalendarEvent(userEmail: string, eventId: string): P
     return false
   }
 }
+
+// ── Odczyt wydarzeń z kalendarza Outlook (kierunek Outlook → aplikacja) ─────────
+export interface OutlookCalendarEvent {
+  id: string
+  subject: string
+  date: string        // YYYY-MM-DD (czas lokalny Europe/Warsaw)
+  startTime: string   // HH:MM ('' dla całodniowych)
+  endTime: string     // HH:MM ('' dla całodniowych)
+  isAllDay: boolean
+}
+
+// Wydarzenia kalendarza pracownika w zakresie dat. Pomija wydarzenia utworzone
+// przez aplikację (kategoria „SHC ERP"), bo te już widać jako zadania portalu.
+export async function listCalendarEvents(userEmail: string, fromDate: string, toDate: string): Promise<OutlookCalendarEvent[]> {
+  if (!graphConfigured() || !userEmail) return []
+  try {
+    const token = await getToken()
+    const url = `${GRAPH}/users/${encodeURIComponent(userEmail)}/calendarView`
+    const res = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}`, Prefer: `outlook.timezone="${TIMEZONE}"` },
+      params: {
+        startDateTime: `${fromDate}T00:00:00`,
+        endDateTime: `${toDate}T23:59:59`,
+        $select: 'id,subject,start,end,isAllDay,categories,isCancelled',
+        $orderby: 'start/dateTime',
+        $top: 150,
+      },
+      timeout: 15000,
+    })
+    const items: any[] = res.data?.value ?? []
+    return items
+      .filter(ev => !ev.isCancelled && !(Array.isArray(ev.categories) && ev.categories.includes('SHC ERP')))
+      .map(ev => {
+        const startDt: string = ev.start?.dateTime ?? '' // "2026-06-15T10:00:00.0000000"
+        const endDt: string = ev.end?.dateTime ?? ''
+        const date = startDt.slice(0, 10)
+        return {
+          id: ev.id as string,
+          subject: (ev.subject ?? '(bez tytułu)') as string,
+          date,
+          startTime: ev.isAllDay ? '' : startDt.slice(11, 16),
+          endTime: ev.isAllDay ? '' : endDt.slice(11, 16),
+          isAllDay: Boolean(ev.isAllDay),
+        }
+      })
+      .filter(ev => ev.date)
+  } catch (err: any) {
+    console.error(`[Outlook] Błąd odczytu kalendarza (${userEmail}):`, err?.response?.data?.error?.message ?? err.message)
+    return []
+  }
+}
