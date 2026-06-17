@@ -202,7 +202,9 @@ function TaskModal({
   const [title, setTitle] = useState(task?.title ?? '')
   const [titleError, setTitleError] = useState(false)
   const [type, setType] = useState<TaskType>(task?.type ?? 'work')
-  const [projectId, setProjectId] = useState<string>(task?.project_id ?? projects[0]?.id ?? '')
+  // Nowe zadanie/spotkanie domyślnie BEZ projektu (można utworzyć bez wyboru projektu).
+  // Edycja istniejącego zachowuje jego projekt.
+  const [projectId, setProjectId] = useState<string>(task?.project_id ?? '')
   const [date, setDate] = useState(task?.date ?? defaultDate)
   const [time, setTime] = useState(task?.time || '09:00')
   const [endTime, setEndTime] = useState(task?.end_time || '10:00')
