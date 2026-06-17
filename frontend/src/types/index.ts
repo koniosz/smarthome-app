@@ -333,7 +333,9 @@ export interface AiQuoteDescription {
 
 export interface AiQuote {
   id: string
-  project_id: string
+  project_id: string | null      // null → wycena samodzielna (bez projektu)
+  client_name?: string | null
+  client_contact?: string | null
   status: QuoteStatus
   floor_plan_filename: string | null
   floor_plan_original: string | null

@@ -155,6 +155,12 @@ export const db = {
         where: { project_id: projectId },
         orderBy: { created_at: 'desc' },
       }),
+    // Wyceny samodzielne (bez projektu) — dla zakładki „Wycena"
+    allStandalone: () =>
+      prisma.aiQuote.findMany({
+        where: { project_id: null },
+        orderBy: { created_at: 'desc' },
+      }),
     find: (id: string) =>
       prisma.aiQuote.findUnique({ where: { id } }),
     insert: (item: any) =>

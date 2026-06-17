@@ -15,6 +15,7 @@ import SharedInvoicesPage from './pages/SharedInvoicesPage'
 import FinansePage from './pages/FinansePage'
 import ManualCostsPage from './pages/ManualCostsPage'
 import KosztyPage from './pages/KosztyPage'
+import WycenaPage from './pages/WycenaPage'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import SurveyPage from './pages/SurveyPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
@@ -23,6 +24,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 
 function pathToView(pathname: string): NavView {
   if (pathname.startsWith('/projects')) return 'projects'
+  if (pathname.startsWith('/wycena')) return 'wycena'
   if (pathname.startsWith('/product-catalog')) return 'product-catalog'
   if (pathname.startsWith('/faktury') || pathname.startsWith('/ksef')) return 'faktury'
   if (pathname.startsWith('/koszty')) return 'koszty'
@@ -108,6 +110,7 @@ function AppContent() {
             } />
             <Route path="/faktury" element={<SharedInvoicesPage />} />
             <Route path="/koszty" element={<KosztyPage />} />
+            <Route path="/wycena" element={<WycenaPage />} />
           </Routes>
         </main>
       </div>

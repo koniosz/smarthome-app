@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Project, ProductCatalogItem, QuoteBrand } from '../../types'
 import { QUOTE_BRANDS, QUOTE_BRAND_COLORS } from '../../types'
-import { projectsApi, aiQuotesApi, productCatalogApi } from '../../api/client'
+import { projectsApi, aiQuotesApi, quotesApi, productCatalogApi } from '../../api/client'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface Room { id: string; name: string }
@@ -37,10 +37,13 @@ function stepLabel(s: number) {
 }
 
 // ─── Main component ────────────────────────────────────────────────────────────
-export default function ProjectWizard({ onClose, onCreated }: {
+export default function ProjectWizard({ onClose, onCreated, mode = 'project', onQuoteCreated }: {
   onClose: () => void
   onCreated: (p: Project) => void
+  mode?: 'project' | 'quote'                       // 'quote' → tworzy samodzielną wycenę zamiast projektu
+  onQuoteCreated?: (q: import('../../types').AiQuote) => void
 }) {
+  const isQuote = mode === 'quote'
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [saving, setSaving] = useState(false)
@@ -72,6 +75,21 @@ export default function ProjectWizard({ onClose, onCreated }: {
     setSaving(true)
     try {
       const allRooms = data.floors.flatMap(f => f.rooms.map(r => `${f.name} / ${r.name}`))
+
+      // Tryb wyceny: utwórz samodzielną wycenę (bez projektu)
+      if (isQuote) {
+        const quote = await quotesApi.create({
+          name: data.name,
+          client_name: data.client_name,
+          client_contact: data.client_contact,
+          items: data.items,
+          rooms_detected: allRooms,
+          notes: data.description || '',
+        })
+        onQuoteCreated?.(quote)
+        return
+      }
+
       // Create project
       const project = await projectsApi.create({
         name: data.name,
@@ -97,7 +115,7 @@ export default function ProjectWizard({ onClose, onCreated }: {
       onCreated(project)
       navigate(`/projects/${project.id}`)
     } catch (err: any) {
-      alert(err?.response?.data?.error || 'Błąd zapisu projektu.')
+      alert(err?.response?.data?.error || (isQuote ? 'Błąd zapisu wyceny.' : 'Błąd zapisu projektu.'))
     } finally {
       setSaving(false)
     }
@@ -111,7 +129,7 @@ export default function ProjectWizard({ onClose, onCreated }: {
           <div className="flex items-center gap-3">
             <span className="text-xl">🧙‍♂️</span>
             <div>
-              <div className="font-bold text-gray-800 dark:text-gray-100 text-sm">Kreator projektu</div>
+              <div className="font-bold text-gray-800 dark:text-gray-100 text-sm">{isQuote ? 'Nowa wycena' : 'Kreator projektu'}</div>
               <div className="text-xs text-gray-400">Krok {step} / 2 — {stepLabel(step)}</div>
             </div>
           </div>
@@ -154,7 +172,7 @@ export default function ProjectWizard({ onClose, onCreated }: {
                 disabled={saving}
                 className="px-6 py-2 text-sm font-medium bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-lg transition-colors"
               >
-                {saving ? 'Tworzę projekt…' : '✅ Utwórz projekt'}
+                {saving ? (isQuote ? 'Tworzę wycenę…' : 'Tworzę projekt…') : (isQuote ? '✅ Utwórz wycenę' : '✅ Utwórz projekt')}
               </button>
             )}
           </div>

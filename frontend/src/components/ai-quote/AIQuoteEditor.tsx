@@ -6,7 +6,7 @@ import { QUOTE_BRAND_COLORS, QUOTE_BRANDS, QUOTE_STATUS_LABELS } from '../../typ
 import { aiQuotesApi, productCatalogApi, api } from '../../api/client'
 
 interface AIQuoteEditorProps {
-  projectId: string
+  projectId: string | null   // null → wycena samodzielna (bez projektu)
   quote: AiQuote
   onUpdated: (q: AiQuote) => void
   onDeleted: (quoteId: string) => void
@@ -29,6 +29,7 @@ function itemTotal(item: AiQuoteItem) {
 
 export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }: AIQuoteEditorProps) {
   const navigate = useNavigate()
+  const standalone = !projectId   // wycena bez projektu — ukryj funkcje wymagające projektu (druk, ETS, AI-refine, plan)
   const [items, setItems] = useState<AiQuoteItem[]>(
     quote.items.map(i => ({ ...i, discount_pct: i.discount_pct ?? 0 }))
   )
@@ -280,6 +281,7 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
   }
 
   const handlePrint = () => {
+    if (!projectId) return
     navigate(`/projects/${projectId}/ai-quotes/${quote.id}/print`)
   }
 
@@ -713,12 +715,13 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
       { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `wycena_${projectId}_${date}.xlsx`
+    a.href = url; a.download = `wycena_${projectId || 'samodzielna'}_${date}.xlsx`
     document.body.appendChild(a); a.click()
     document.body.removeChild(a); URL.revokeObjectURL(url)
   }
 
   const handleEtsExport = async () => {
+    if (!projectId) return
     try {
       const blob = await aiQuotesApi.exportEts(projectId, quote.id)
       const url = URL.createObjectURL(blob)
@@ -766,6 +769,7 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
   }
 
   const handleRefine = async () => {
+    if (!projectId) return
     const text = refineSuggestion.trim()
     if (!text) return
     setRefineLoading(true)
@@ -826,15 +830,17 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
         </div>
         <div className="flex items-center gap-2">
           {dirty && <span className="text-xs text-amber-500">● Niezapisane zmiany</span>}
-          <button onClick={handlePrint}
-            className="px-3 py-1.5 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
-            📄 PDF
-          </button>
+          {!standalone && (
+            <button onClick={handlePrint}
+              className="px-3 py-1.5 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+              📄 PDF
+            </button>
+          )}
           <button onClick={handleExcelExport}
             className="px-3 py-1.5 text-xs border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950/20 rounded-lg transition-colors">
             📊 Excel
           </button>
-          {hasKnxItems && (
+          {!standalone && hasKnxItems && (
             <button onClick={handleEtsExport}
               className="px-3 py-1.5 text-xs border border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/20 rounded-lg transition-colors">
               🏗 KNX ETS
@@ -1334,7 +1340,8 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
         />
       </div>
 
-      {/* ── AI Refinement Panel ─────────────────────────────────────────── */}
+      {/* ── AI Refinement Panel (tylko wyceny powiązane z projektem) ── */}
+      {!standalone && (
       <div className="rounded-2xl border border-violet-200 dark:border-violet-800/50 bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-950/20 dark:to-indigo-950/10 overflow-hidden">
         {/* Header */}
         <div className="px-4 py-3 flex items-center gap-3 border-b border-violet-100 dark:border-violet-800/30">
@@ -1468,6 +1475,7 @@ export default function AIQuoteEditor({ projectId, quote, onUpdated, onDeleted }
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Modal: Zatwierdź jako wzorzec AI ──────────────────────────────── */}
       {approveModalOpen && (

@@ -8,6 +8,7 @@ import {
   Package,
   FileText,
   Banknote,
+  FileBarChart,
   Search,
   Bell,
   ChevronDown,
@@ -16,7 +17,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
 import type { AppNotification } from '../../types'
 
-export type NavView = 'dashboard' | 'projects' | 'product-catalog' | 'faktury' | 'koszty'
+export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty'
 
 interface AppHeaderProps {
   darkMode: boolean
@@ -135,6 +136,7 @@ function NotificationsPanel({
 const NAV_ITEMS: { view: NavView; label: string; Icon: typeof Zap }[] = [
   { view: 'dashboard',       label: 'Dashboard', Icon: LayoutDashboard },
   { view: 'projects',        label: 'Projekty',  Icon: Folder },
+  { view: 'wycena',          label: 'Wycena',    Icon: FileBarChart },
   { view: 'product-catalog', label: 'Katalog',   Icon: Package },
   { view: 'faktury',         label: 'Faktury',   Icon: FileText },
   { view: 'koszty',          label: 'Koszty',    Icon: Banknote },

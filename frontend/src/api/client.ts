@@ -150,8 +150,9 @@ export const aiQuotesApi = {
   list: (projectId: string) =>
     api.get<AiQuote[]>(`/projects/${projectId}/ai-quotes`).then(r => r.data),
 
-  get: (projectId: string, quoteId: string) =>
-    api.get<AiQuote>(`/projects/${projectId}/ai-quotes/${quoteId}`).then(r => r.data),
+  // projectId === null → wycena samodzielna (/api/quotes/:id)
+  get: (projectId: string | null, quoteId: string) =>
+    api.get<AiQuote>(projectId ? `/projects/${projectId}/ai-quotes/${quoteId}` : `/quotes/${quoteId}`).then(r => r.data),
 
   analyze: (
     projectId: string,
@@ -190,11 +191,11 @@ export const aiQuotesApi = {
   }) =>
     api.post<AiQuote>(`/projects/${projectId}/ai-quotes/manual`, data).then(r => r.data),
 
-  update: (projectId: string, quoteId: string, data: Partial<AiQuote>) =>
-    api.put<AiQuote>(`/projects/${projectId}/ai-quotes/${quoteId}`, data).then(r => r.data),
+  update: (projectId: string | null, quoteId: string, data: Partial<AiQuote>) =>
+    api.put<AiQuote>(projectId ? `/projects/${projectId}/ai-quotes/${quoteId}` : `/quotes/${quoteId}`, data).then(r => r.data),
 
-  delete: (projectId: string, quoteId: string) =>
-    api.delete(`/projects/${projectId}/ai-quotes/${quoteId}`).then(r => r.data),
+  delete: (projectId: string | null, quoteId: string) =>
+    api.delete(projectId ? `/projects/${projectId}/ai-quotes/${quoteId}` : `/quotes/${quoteId}`).then(r => r.data),
 
   floorPlanUrl: (filename: string) => `/api/attachments/${filename}`,
 
@@ -216,6 +217,21 @@ export const aiQuotesApi = {
     )
     return pollJob(`/projects/${projectId}/ai-quotes/jobs/${jobId}`)
   },
+}
+
+// ─── Wyceny samodzielne (bez projektu) — zakładka „Wycena" ──────────────────────
+export const quotesApi = {
+  list: () => api.get<AiQuote[]>('/quotes').then(r => r.data),
+  create: (data: {
+    name?: string
+    client_name?: string
+    client_contact?: string
+    items?: Partial<import('../types').AiQuoteItem>[]
+    rooms_detected?: string[]
+    notes?: string
+  }) => api.post<AiQuote>('/quotes', data).then(r => r.data),
+  accept: (quoteId: string) => api.post<Project>(`/quotes/${quoteId}/accept`, {}).then(r => r.data),
+  delete: (quoteId: string) => api.delete(`/quotes/${quoteId}`).then(r => r.data),
 }
 
 // Polling helper — odpytuje /jobs/:id co 3s max 5 minut

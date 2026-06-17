@@ -239,8 +239,10 @@ model ProductCatalog {
 
 model AiQuote {
   id                   String   @id
-  project_id           String
+  project_id           String?
   name                 String?
+  client_name          String?
+  client_contact       String?
   status               String   @default("draft")
   discount_pct         Float    @default(0)
   labor_cost_pct       Float    @default(100)
@@ -265,7 +267,7 @@ model AiQuote {
   updated_at           String?
   created_by           String?
 
-  project      Project  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  project      Project? @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@map("ai_quotes")
 }
