@@ -339,6 +339,84 @@ export function rejectionFormHtml(projectName: string, total: number, postUrl: s
 </html>`
 }
 
+// Strona decyzji klienta (link SMS / udostępniony) — 2 przyciski: Akceptuj / Nie akceptuję.
+// "Nie akceptuję" odsłania pole komentarza. Akcja wykonuje się dopiero przez POST (klik),
+// więc samo otwarcie linku (lub podgląd w komunikatorze) niczego nie zatwierdza.
+export function approvalDecisionHtml(
+  projectName: string,
+  total: number,
+  items: Array<{ description: string; quantity: number; unit_price: number; total_price: number }>,
+  postUrl: string,
+) {
+  const rows = items.map(i => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #f0f0f0;color:#374151;font-size:14px">${i.description}${i.quantity > 1 ? ` <span style="color:#9ca3af">(${i.quantity} × ${fmt(i.unit_price)})</span>` : ''}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;color:#111827;font-size:14px;white-space:nowrap">${fmt(i.total_price)} PLN</td>
+    </tr>`).join('')
+
+  return `<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Akceptacja kosztów dodatkowych</title>
+</head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh">
+  <div style="max-width:520px;margin:0 auto;padding:24px 16px">
+    <div style="background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.1);overflow:hidden">
+      <div style="background:linear-gradient(135deg,#2563eb,#1d4ed8);padding:36px 40px;text-align:center">
+        <div style="font-size:56px;margin-bottom:8px;line-height:1">📋</div>
+        <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">Prośba o akceptację kosztów</h1>
+      </div>
+      <div style="padding:32px 28px">
+        <p style="margin:0 0 4px;color:#6b7280;font-size:14px">Projekt: <strong style="color:#374151">${projectName}</strong></p>
+        <p style="margin:0 0 16px;color:#6b7280;font-size:14px">Prosimy o akceptację poniższych kosztów dodatkowych:</p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:8px">
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;margin-top:6px;border-top:2px solid #111827">
+          <span style="font-size:15px;font-weight:600;color:#374151">Razem</span>
+          <span style="font-size:20px;font-weight:800;color:#2563eb">${fmt(total)} PLN</span>
+        </div>
+
+        <form method="POST" action="${postUrl}" style="margin-top:28px">
+          <div id="choiceButtons">
+            <button type="submit" name="action" value="approve"
+              style="width:100%;background:#16a34a;color:#fff;border:none;border-radius:12px;padding:17px;font-size:17px;font-weight:700;cursor:pointer;font-family:inherit">
+              ✅&nbsp; Akceptuję
+            </button>
+            <button type="button" onclick="document.getElementById('rejectBox').style.display='block';document.getElementById('choiceButtons').style.display='none'"
+              style="width:100%;margin-top:12px;background:#fff;color:#dc2626;border:2px solid #dc2626;border-radius:12px;padding:15px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit">
+              ❌&nbsp; Nie akceptuję
+            </button>
+          </div>
+
+          <div id="rejectBox" style="display:none">
+            <label style="display:block;font-size:14px;font-weight:600;color:#374151;margin:8px 0 8px">
+              Powód odmowy <span style="font-weight:400;color:#9ca3af">(opcjonalnie)</span>
+            </label>
+            <textarea name="comment" rows="4" placeholder="Napisz dlaczego nie akceptujesz tych kosztów..."
+              style="width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;font-family:inherit;color:#374151;resize:vertical;outline:none"></textarea>
+            <button type="submit" name="action" value="reject"
+              style="margin-top:16px;width:100%;background:#dc2626;color:#fff;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit">
+              Potwierdź odmowę
+            </button>
+            <button type="button" onclick="document.getElementById('rejectBox').style.display='none';document.getElementById('choiceButtons').style.display='block'"
+              style="margin-top:10px;width:100%;background:none;color:#6b7280;border:none;padding:8px;font-size:14px;cursor:pointer;font-family:inherit">
+              ← Wróć
+            </button>
+          </div>
+        </form>
+      </div>
+      <div style="background:#f9fafb;padding:16px 40px;border-top:1px solid #e5e7eb;text-align:center">
+        <p style="margin:0;font-size:12px;color:#9ca3af">Twoja odpowiedź zostanie przekazana firmie wykonawczej.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`
+}
+
 // ─── Przypomnienia o wygasających badaniach lekarskich i BHP ─────────────────
 
 export interface EmployeeExpiryItem {

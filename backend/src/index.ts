@@ -20,7 +20,7 @@ import authRouter from './routes/auth'
 import usersRouter from './routes/users'
 import aiQuotesRouter from './routes/ai-quotes'
 import productCatalogRouter from './routes/product-catalog'
-import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, submitRejectExtraCost, approveSmsByJwt, listAllExtraCosts } from './routes/extra-costs'
+import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, submitRejectExtraCost, approveSmsByJwt, submitSmsDecision, listAllExtraCosts } from './routes/extra-costs'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -40,6 +40,7 @@ const PORT = process.env.PORT || 4001
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true })) // formularze akceptacji/odmowy kosztów (POST z przeglądarki)
 
 // Public routes
 app.get('/api/health', (_req, res) => {
@@ -55,8 +56,10 @@ app.use('/api/auth', authRouter)
 app.get('/api/extra-costs/approve/:token',      approveExtraCost)
 app.get('/api/extra-costs/reject/:token',       rejectExtraCost)
 app.post('/api/extra-costs/reject/:token',      submitRejectExtraCost)
-// JWT-based SMS approval — token is self-contained, no DB lookup
+// JWT-based SMS approval — token is self-contained, no DB lookup.
+// GET pokazuje stronę decyzji (Akceptuj / Nie akceptuję), POST wykonuje decyzję.
 app.get('/api/extra-costs/approve-sms/:jwtToken', approveSmsByJwt)
+app.post('/api/extra-costs/approve-sms/:jwtToken', submitSmsDecision)
 
 // Publiczne serwowanie załączników (pliki mają losowe nazwy — bezpieczeństwo przez obscurity)
 // MUSI być przed requireAuth, bo przeglądarka otwierając link w nowej karcie nie wysyła JWT

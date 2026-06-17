@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { randomBytes } from 'crypto'
 import jwt from 'jsonwebtoken'
 import db from '../db'
-import { sendExtraCostApprovalEmail, approvalConfirmationHtml, rejectionFormHtml } from '../services/mailer'
+import { sendExtraCostApprovalEmail, approvalConfirmationHtml, rejectionFormHtml, approvalDecisionHtml } from '../services/mailer'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'shc-secret-key'
 
@@ -327,35 +327,93 @@ export async function approveSmsByJwt(req: Request, res: Response): Promise<void
       `); return
     }
 
-    // Check if already processed
+    const project = await db.projects.find(projectId)
+    const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
+
+    // Już przetworzone? → pokaż potwierdzenie (idempotentnie)
     const alreadyDone = items.every((i: any) => i.status === 'approved' || i.status === 'rejected')
     if (alreadyDone) {
-      const project = await db.projects.find(projectId)
-      const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
       const wasApproved = items[0].status === 'approved'
       res.setHeader('Content-Type', 'text/html; charset=utf-8')
       res.send(approvalConfirmationHtml(wasApproved, project?.name ?? '', total))
       return
     }
 
+    // NIE zatwierdzaj automatycznie — pokaż stronę decyzji (Akceptuj / Nie akceptuję).
+    // Zatwierdzenie/odmowa wykonuje się dopiero po kliknięciu (POST).
+    const appUrl = (process.env.APP_URL ?? 'https://smarthome-app-ssrv.onrender.com').replace(/\/$/, '')
+    const postUrl = `${appUrl}/api/extra-costs/approve-sms/${jwtToken}`
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.send(approvalDecisionHtml(
+      project?.name ?? '',
+      total,
+      items.map((i: any) => ({ description: i.description, quantity: i.quantity, unit_price: i.unit_price, total_price: i.total_price })),
+      postUrl,
+    ))
+  } catch (e) {
+    console.error('[approve-sms]', e)
+    res.status(500).send('<h1>Błąd serwera. Spróbuj ponownie.</h1>')
+  }
+}
+
+// POST /api/extra-costs/approve-sms/:jwtToken — decyzja klienta (approve | reject + komentarz)
+export async function submitSmsDecision(req: Request, res: Response): Promise<void> {
+  try {
+    const { jwtToken } = req.params
+    const action = String(req.body?.action ?? 'approve')
+    const comment = String(req.body?.comment ?? '').trim()
+
+    let payload: any
+    try {
+      payload = jwt.verify(jwtToken, JWT_SECRET)
+    } catch {
+      res.status(400).send('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>⚠️ Link nieważny lub wygasł.</h2></body></html>'); return
+    }
+    if (payload.type !== 'sms_approval' || !Array.isArray(payload.ids) || !payload.projectId) {
+      res.status(400).send('<h2>Nieprawidłowy link.</h2>'); return
+    }
+
+    const { ids, projectId } = payload as { ids: string[]; projectId: string }
+    const allItems = await db.extra_costs.forProject(projectId)
+    const items = allItems.filter((i: any) => ids.includes(i.id))
+    if (items.length === 0) {
+      res.status(404).send('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>⚠️ Pozycje nie znalezione.</h2></body></html>'); return
+    }
+
     const project = await db.projects.find(projectId)
     const total = items.reduce((s: number, i: any) => s + i.total_price, 0)
 
-    const approvedAt = now()
-    const approvedAtPl = new Date(approvedAt).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' })
-    for (const item of items) {
-      const currentNotes = item.notes ? item.notes + '\n' : ''
-      await db.extra_costs.update(item.id, {
-        status: 'approved',
-        updated_at: approvedAt,
-        notes: `${currentNotes}✅ Klient zaakceptował SMS-em ${approvedAtPl}`,
-      })
+    // Idempotencja — jeśli już przetworzone, pokaż potwierdzenie
+    const alreadyDone = items.every((i: any) => i.status === 'approved' || i.status === 'rejected')
+    if (alreadyDone) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.send(approvalConfirmationHtml(items[0].status === 'approved', project?.name ?? '', total))
+      return
     }
 
+    const ts = now()
+    const tsPl = new Date(ts).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' })
+
+    if (action === 'reject') {
+      for (const item of items) {
+        const cn = item.notes ? item.notes + '\n' : ''
+        const c = comment ? `\nPowód odmowy: ${comment}` : ''
+        await db.extra_costs.update(item.id, { status: 'rejected', updated_at: ts, notes: `${cn}❌ Klient odrzucił (link) ${tsPl}${c}` })
+      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.send(approvalConfirmationHtml(false, project?.name ?? '', total, comment || undefined))
+      return
+    }
+
+    // approve (domyślnie)
+    for (const item of items) {
+      const cn = item.notes ? item.notes + '\n' : ''
+      await db.extra_costs.update(item.id, { status: 'approved', updated_at: ts, notes: `${cn}✅ Klient zaakceptował (link) ${tsPl}` })
+    }
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(approvalConfirmationHtml(true, project?.name ?? '', total))
   } catch (e) {
-    console.error('[approve-sms]', e)
+    console.error('[approve-sms POST]', e)
     res.status(500).send('<h1>Błąd serwera. Spróbuj ponownie.</h1>')
   }
 }
