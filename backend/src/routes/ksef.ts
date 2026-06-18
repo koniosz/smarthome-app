@@ -638,14 +638,7 @@ router.patch('/shared/:id/assign', requireAuth, async (req: Request, res: Respon
       return
     }
 
-    // Sprawdź czy user ma dostęp do projektu
-    if (project_id) {
-      const member = await prisma.projectMember.findFirst({ where: { project_id, user_id: user.id } })
-      const project = await prisma.project.findFirst({ where: { id: project_id, created_by: user.id } })
-      if (!member && !project && user.role !== 'admin') {
-        res.status(403).json({ error: 'Brak dostępu do tego projektu' }); return
-      }
-    }
+    // Każdy zalogowany pracownik ma dostęp do każdego projektu — brak sprawdzania członkostwa.
 
     const updated = await prisma.ksefInvoice.update({
       where: { id: req.params.id },

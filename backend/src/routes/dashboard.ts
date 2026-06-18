@@ -7,14 +7,8 @@ const prisma = new PrismaClient()
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const user = (req as any).user
-    let projects = await db.projects.all()
-
-    if (user && user.role === 'employee') {
-      const members = await db.project_members.forUser(user.id)
-      const memberProjectIds = new Set(members.map((m: any) => m.project_id))
-      projects = projects.filter((p: any) => memberProjectIds.has(p.id))
-    }
+    // Wszyscy zalogowani widzą wszystkie projekty (bez filtrowania po członkostwie).
+    const projects = await db.projects.all()
 
     let totalBudget = 0
     let totalCosts = 0

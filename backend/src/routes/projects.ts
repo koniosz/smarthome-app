@@ -45,38 +45,10 @@ async function computeCosts(projectId: string) {
 // GET /api/projects
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const user = (req as any).user
     const allProjects = await db.projects.all()
 
-    let memberProjectIds: Set<string> | null = null
-    let pendingRequestProjectIds: Set<string> = new Set()
-
-    if (user && user.role === 'employee') {
-      const members = await db.project_members.forUser(user.id)
-      memberProjectIds = new Set(members.map((m: any) => m.project_id))
-      const allRequests = await db.access_requests.all()
-      const pendingRequests = allRequests.filter(
-        (r: any) => r.requester_id === user.id && r.status === 'pending'
-      )
-      pendingRequestProjectIds = new Set(pendingRequests.map((r: any) => r.project_id))
-    }
-
+    // Wszyscy zalogowani pracownicy mają dostęp do każdego projektu — bez członkostwa ani wniosków o dostęp.
     const result = await Promise.all(allProjects.map(async (p: any) => {
-      const isCreator = user && p.created_by === user.id
-      const isMember = memberProjectIds === null || memberProjectIds.has(p.id) || isCreator
-      const hasPendingRequest = pendingRequestProjectIds.has(p.id)
-
-      if (!isMember) {
-        return {
-          id: p.id, name: p.name, client_name: p.client_name,
-          project_type: p.project_type, status: p.status,
-          budget_amount: 0, area_m2: null, smart_features: [],
-          start_date: p.start_date, end_date: p.end_date,
-          description: '', created_at: p.created_at, updated_at: p.updated_at,
-          user_is_member: false, has_pending_request: hasPendingRequest,
-        }
-      }
-
       const costs = await computeCosts(p.id)
       const revenue = Math.max(p.budget_amount, costs.payments_total)
       const margin_pln = revenue - costs.cost_total
