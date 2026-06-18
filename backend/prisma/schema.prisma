@@ -244,6 +244,41 @@ model StockMovement {
   @@map("stock_movements")
 }
 
+// Dokumenty magazynowe: PZ (przyjęcie zewnętrzne) i WZ (wydanie zewnętrzne)
+model WarehouseDoc {
+  id           String   @id
+  type         String   // WZ | PZ
+  number       String   // np. 2026/06/001/WZ
+  date         String
+  contractor   String?  // kontrahent: dostawca (PZ) / odbiorca (WZ)
+  project_id   String?  // WZ przypisany do projektu
+  cost_item_id String?  // utworzona pozycja kosztowa w projekcie
+  total_net    Float    @default(0)
+  notes        String?
+  created_by   String?
+  created_at   String
+
+  lines        WarehouseDocLine[]
+
+  @@map("warehouse_docs")
+}
+
+model WarehouseDocLine {
+  id                String   @id
+  doc_id            String
+  warehouse_item_id String?
+  name              String
+  sku               String?
+  quantity          Float
+  unit              String   @default("szt.")
+  unit_price        Float    @default(0)
+  total             Float    @default(0)
+
+  doc WarehouseDoc @relation(fields: [doc_id], references: [id], onDelete: Cascade)
+
+  @@map("warehouse_doc_lines")
+}
+
 model ProjectMember {
   project_id String
   user_id    String

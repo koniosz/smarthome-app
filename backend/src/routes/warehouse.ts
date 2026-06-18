@@ -191,4 +191,124 @@ router.post('/import', upload.single('file'), async (req: Request, res: Response
   }
 })
 
+// ─── Dokumenty WZ / PZ ──────────────────────────────────────────────────────────
+
+// GET /api/warehouse/docs — lista dokumentów
+router.get('/docs', async (_req: Request, res: Response) => {
+  try { res.json(await db.warehouse_docs.all()) }
+  catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// GET /api/warehouse/docs/:id — dokument z pozycjami
+router.get('/docs/:id', async (req: Request, res: Response) => {
+  try {
+    const doc = await db.warehouse_docs.find(req.params.id)
+    if (!doc) { res.status(404).json({ error: 'Dokument nie znaleziony' }); return }
+    res.json(doc)
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// POST /api/warehouse/docs — utwórz WZ/PZ, zaktualizuj stany + ruchy
+router.post('/docs', async (req: Request, res: Response) => {
+  try {
+    const type = req.body.type === 'WZ' ? 'WZ' : 'PZ'
+    const rawLines: any[] = Array.isArray(req.body.lines) ? req.body.lines : []
+    const date = (req.body.date && String(req.body.date)) || now().slice(0, 10)
+    const ts = now()
+    const userId = (req as any).user?.id || null
+
+    const allItems: any[] = await db.warehouse_items.all()
+    // walidacja + rozwiązanie pozycji
+    const resolved: { raw: any; qty: number; price: number; item: any | null }[] = []
+    for (const l of rawLines) {
+      const qty = Number(l.quantity) || 0
+      if (qty <= 0) continue
+      const price = Number(l.unit_price) || 0
+      let item = l.warehouse_item_id ? allItems.find(i => i.id === l.warehouse_item_id) : null
+      if (!item && l.sku) item = allItems.find(i => i.sku && i.sku === String(l.sku).trim())
+      if (type === 'WZ') {
+        if (!item) { res.status(400).json({ error: `Pozycja „${l.name}" nie istnieje w magazynie — WZ wydaje tylko istniejący towar` }); return }
+        if (qty > item.quantity) { res.status(400).json({ error: `Niewystarczający stan: ${item.name} (dostępne ${item.quantity} ${item.unit})` }); return }
+      }
+      resolved.push({ raw: l, qty, price, item })
+    }
+    if (resolved.length === 0) { res.status(400).json({ error: 'Dodaj przynajmniej jedną pozycję' }); return }
+
+    // numer dokumentu: RRRR/MM/NNN/TYP
+    const d = new Date()
+    const prefix = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/`
+    const count = await db.warehouse_docs.countForPrefix(prefix, type)
+    const number = `${prefix}${String(count + 1).padStart(3, '0')}/${type}`
+
+    const total = resolved.reduce((s, r) => s + r.qty * r.price, 0)
+    const docId = uuidv4()
+    await db.warehouse_docs.insert({
+      id: docId, type, number, date,
+      contractor: req.body.contractor ? String(req.body.contractor).trim() : null,
+      project_id: null, cost_item_id: null, total_net: total,
+      notes: req.body.notes ? String(req.body.notes).trim() : null,
+      created_by: userId, created_at: ts,
+    })
+
+    for (const r of resolved) {
+      let item = r.item
+      if (type === 'PZ') {
+        if (!item) {
+          item = {
+            id: uuidv4(), name: String(r.raw.name || 'Pozycja').trim(), sku: r.raw.sku ? String(r.raw.sku).trim() : null,
+            unit: r.raw.unit ? String(r.raw.unit).trim() : 'szt.', unit_price: r.price, quantity: 0, min_quantity: 0,
+            category: null, location: null, notes: null, created_at: ts, updated_at: ts,
+          }
+          await db.warehouse_items.insert(item)
+        }
+        await db.warehouse_items.update(item.id, { quantity: item.quantity + r.qty, updated_at: ts })
+        item.quantity += r.qty
+      } else {
+        await db.warehouse_items.update(item.id, { quantity: item.quantity - r.qty, updated_at: ts })
+        item.quantity -= r.qty
+      }
+      await db.stock_movements.insert({
+        id: uuidv4(), warehouse_item_id: item.id, type: type === 'PZ' ? 'in' : 'out',
+        quantity: r.qty, unit_price: r.price, reason: `${type} ${number}`, project_ref: null,
+        created_by: userId, created_at: ts,
+      })
+      await db.warehouse_doc_lines.insert({
+        id: uuidv4(), doc_id: docId, warehouse_item_id: item.id,
+        name: String(r.raw.name || item.name).trim(), sku: r.raw.sku ? String(r.raw.sku).trim() : (item.sku || null),
+        quantity: r.qty, unit: r.raw.unit ? String(r.raw.unit).trim() : (item.unit || 'szt.'),
+        unit_price: r.price, total: r.qty * r.price,
+      })
+    }
+
+    res.status(201).json(await db.warehouse_docs.find(docId))
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? 'Błąd serwera' })
+  }
+})
+
+// POST /api/warehouse/docs/:id/assign-project — przenieś WZ do projektu jako koszt
+router.post('/docs/:id/assign-project', async (req: Request, res: Response) => {
+  try {
+    const doc: any = await db.warehouse_docs.find(req.params.id)
+    if (!doc) { res.status(404).json({ error: 'Dokument nie znaleziony' }); return }
+    if (doc.type !== 'WZ') { res.status(400).json({ error: 'Tylko WZ można przypisać do projektu' }); return }
+    if (doc.project_id) { res.status(409).json({ error: 'WZ jest już przypisany do projektu' }); return }
+    const project = await db.projects.find(req.body.project_id)
+    if (!project) { res.status(404).json({ error: 'Projekt nie znaleziony' }); return }
+
+    const ts = now()
+    const costId = uuidv4()
+    await db.cost_items.insert({
+      id: costId, project_id: project.id, category: 'wz',
+      description: `WZ ${doc.number}`, quantity: 1, unit_price: doc.total_net, total_price: doc.total_net,
+      supplier: doc.contractor || '', invoice_number: doc.number, date: doc.date, created_at: ts,
+    })
+    await db.projects.update(project.id, { updated_at: ts })
+    await db.warehouse_docs.update(doc.id, { project_id: project.id, cost_item_id: costId })
+    res.json(await db.warehouse_docs.find(doc.id))
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? 'Błąd serwera' })
+  }
+})
+
 export default router

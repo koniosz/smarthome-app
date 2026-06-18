@@ -272,6 +272,41 @@ export const warehouseApi = {
     const fd = new FormData(); fd.append('file', file)
     return api.post<{ imported: number }>('/warehouse/import', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
   },
+  // Dokumenty WZ/PZ
+  docsList: () => api.get<WarehouseDoc[]>('/warehouse/docs').then(r => r.data),
+  docGet: (id: string) => api.get<WarehouseDoc>(`/warehouse/docs/${id}`).then(r => r.data),
+  docCreate: (data: { type: 'WZ' | 'PZ'; date?: string; contractor?: string; notes?: string; lines: WarehouseDocLineInput[] }) =>
+    api.post<WarehouseDoc>('/warehouse/docs', data).then(r => r.data),
+  assignDoc: (id: string, project_id: string) =>
+    api.post<WarehouseDoc>(`/warehouse/docs/${id}/assign-project`, { project_id }).then(r => r.data),
+}
+
+export interface WarehouseDocLineInput {
+  warehouse_item_id?: string | null
+  name: string
+  sku?: string | null
+  quantity: number
+  unit?: string
+  unit_price?: number
+}
+export interface WarehouseDocLine extends WarehouseDocLineInput {
+  id: string
+  doc_id: string
+  total: number
+}
+export interface WarehouseDoc {
+  id: string
+  type: 'WZ' | 'PZ'
+  number: string
+  date: string
+  contractor: string | null
+  project_id: string | null
+  cost_item_id: string | null
+  total_net: number
+  notes: string | null
+  created_by: string | null
+  created_at: string
+  lines?: WarehouseDocLine[]
 }
 
 // Polling helper — odpytuje /jobs/:id co 3s max 5 minut

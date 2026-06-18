@@ -165,6 +165,19 @@ export const db = {
     insert: (item: any) => prisma.stockMovement.create({ data: item }),
   },
 
+  warehouse_docs: {
+    all: () => prisma.warehouseDoc.findMany({ orderBy: { created_at: 'desc' } }),
+    find: (id: string) => prisma.warehouseDoc.findUnique({ where: { id }, include: { lines: true } }),
+    countForPrefix: (prefix: string, type: string) =>
+      prisma.warehouseDoc.count({ where: { type, number: { startsWith: prefix } } }),
+    insert: (item: any) => prisma.warehouseDoc.create({ data: item }),
+    update: (id: string, patch: any) => prisma.warehouseDoc.update({ where: { id }, data: patch }),
+    delete: (id: string) => prisma.warehouseDoc.delete({ where: { id } }),
+  },
+  warehouse_doc_lines: {
+    insert: (item: any) => prisma.warehouseDocLine.create({ data: item }),
+  },
+
   ai_quotes: {
     forProject: (projectId: string) =>
       prisma.aiQuote.findMany({
