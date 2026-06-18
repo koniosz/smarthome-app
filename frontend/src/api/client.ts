@@ -234,6 +234,46 @@ export const quotesApi = {
   delete: (quoteId: string) => api.delete(`/quotes/${quoteId}`).then(r => r.data),
 }
 
+// ─── Magazyn (warehouse) ────────────────────────────────────────────────────────
+export interface WarehouseItem {
+  id: string
+  name: string
+  sku: string | null
+  unit: string
+  unit_price: number
+  quantity: number
+  min_quantity: number
+  category: string | null
+  location: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string | null
+}
+export interface StockMovement {
+  id: string
+  warehouse_item_id: string
+  type: 'in' | 'out' | 'initial' | 'adjust'
+  quantity: number
+  unit_price: number
+  reason: string | null
+  project_ref: string | null
+  created_by: string | null
+  created_at: string
+}
+export const warehouseApi = {
+  list: () => api.get<WarehouseItem[]>('/warehouse').then(r => r.data),
+  create: (data: Partial<WarehouseItem>) => api.post<WarehouseItem>('/warehouse', data).then(r => r.data),
+  update: (id: string, data: Partial<WarehouseItem>) => api.put<WarehouseItem>(`/warehouse/${id}`, data).then(r => r.data),
+  delete: (id: string) => api.delete(`/warehouse/${id}`).then(r => r.data),
+  move: (id: string, data: { type: 'in' | 'out'; quantity: number; reason?: string; project_ref?: string }) =>
+    api.post<WarehouseItem>(`/warehouse/${id}/move`, data).then(r => r.data),
+  movements: (id: string) => api.get<StockMovement[]>(`/warehouse/${id}/movements`).then(r => r.data),
+  importExcel: (file: File) => {
+    const fd = new FormData(); fd.append('file', file)
+    return api.post<{ imported: number }>('/warehouse/import', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+  },
+}
+
 // Polling helper — odpytuje /jobs/:id co 3s max 5 minut
 async function pollJob(url: string, maxMs = 5 * 60 * 1000): Promise<any> {
   const started = Date.now()

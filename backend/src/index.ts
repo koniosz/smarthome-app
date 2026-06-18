@@ -22,6 +22,7 @@ import aiQuotesRouter from './routes/ai-quotes'
 import productCatalogRouter from './routes/product-catalog'
 import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, submitRejectExtraCost, approveSmsByJwt, submitSmsDecision, listAllExtraCosts } from './routes/extra-costs'
 import quotesRouter from './routes/quotes'
+import warehouseRouter from './routes/warehouse'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -86,6 +87,7 @@ app.use('/api/tasks', tasksRouter)
 // Projects
 app.use('/api/projects', projectsRouter)
 app.use('/api/quotes', quotesRouter)           // wyceny samodzielne (bez projektu)
+app.use('/api/warehouse', warehouseRouter)     // magazyn (dostęp: admin lub can_view_warehouse)
 app.use('/api/projects/:projectId/costs', costsRouter)
 app.use('/api/projects/:projectId/labor', laborRouter)
 app.use('/api/projects/:projectId/payments', paymentsRouter)

@@ -9,6 +9,7 @@ import {
   FileText,
   Banknote,
   FileBarChart,
+  Warehouse,
   Search,
   Bell,
   ChevronDown,
@@ -17,7 +18,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
 import type { AppNotification } from '../../types'
 
-export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty'
+export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'magazyn'
 
 interface AppHeaderProps {
   darkMode: boolean
@@ -140,6 +141,7 @@ const NAV_ITEMS: { view: NavView; label: string; Icon: typeof Zap }[] = [
   { view: 'product-catalog', label: 'Katalog',   Icon: Package },
   { view: 'faktury',         label: 'Faktury',   Icon: FileText },
   { view: 'koszty',          label: 'Koszty',    Icon: Banknote },
+  { view: 'magazyn',         label: 'Magazyn',   Icon: Warehouse },
 ]
 
 // ─── Main AppHeader ───────────────────────────────────────────────────────────
@@ -260,7 +262,7 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
 
         {/* Nav */}
         <nav className="flex items-center gap-1">
-          {NAV_ITEMS.map(({ view, label, Icon }) => {
+          {NAV_ITEMS.filter(({ view }) => view !== 'magazyn' || user?.role === 'admin' || user?.can_view_warehouse).map(({ view, label, Icon }) => {
             const isActive = activeView === view
             return (
               <button

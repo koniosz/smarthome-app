@@ -149,6 +149,22 @@ export const db = {
       prisma.productCatalog.count(),
   },
 
+  warehouse_items: {
+    all: () => prisma.warehouseItem.findMany({ orderBy: { name: 'asc' } }),
+    find: (id: string) => prisma.warehouseItem.findUnique({ where: { id } }),
+    insert: (item: any) => prisma.warehouseItem.create({ data: item }),
+    update: (id: string, patch: any) => prisma.warehouseItem.update({ where: { id }, data: patch }),
+    delete: (id: string) => prisma.warehouseItem.delete({ where: { id } }),
+  },
+
+  stock_movements: {
+    forItem: (warehouseItemId: string) =>
+      prisma.stockMovement.findMany({ where: { warehouse_item_id: warehouseItemId }, orderBy: { created_at: 'desc' } }),
+    recent: (limit = 200) =>
+      prisma.stockMovement.findMany({ orderBy: { created_at: 'desc' }, take: limit }),
+    insert: (item: any) => prisma.stockMovement.create({ data: item }),
+  },
+
   ai_quotes: {
     forProject: (projectId: string) =>
       prisma.aiQuote.findMany({

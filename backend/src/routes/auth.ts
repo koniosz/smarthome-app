@@ -16,7 +16,7 @@ function now() {
 }
 
 function makeUser(row: any): AuthUser {
-  return { id: row.id, email: row.email, display_name: row.display_name, role: row.role }
+  return { id: row.id, email: row.email, display_name: row.display_name, role: row.role, can_view_warehouse: !!row.can_view_warehouse }
 }
 
 // POST /api/auth/login
@@ -118,6 +118,7 @@ router.post('/azure', async (req: Request, res: Response) => {
         email,
         display_name,
         role: isFirstUser ? 'admin' : 'employee',
+        can_view_warehouse: false,
         azure_oid: oid,
         password_hash: null,
         created_at: now(),
@@ -135,9 +136,14 @@ router.post('/azure', async (req: Request, res: Response) => {
   }
 })
 
-// GET /api/auth/me
-router.get('/me', requireAuth, (req: Request, res: Response) => {
-  res.json(req.user)
+// GET /api/auth/me — świeży odczyt z bazy (uprawnienia, np. Magazyn, działają bez re-logowania)
+router.get('/me', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const u = await db.users.find(req.user!.id)
+    res.json(u ? makeUser(u) : req.user)
+  } catch {
+    res.json(req.user)
+  }
 })
 
 // POST /api/auth/change-password — zmiana własnego hasła (każdy zalogowany user)

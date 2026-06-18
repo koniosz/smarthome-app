@@ -8,6 +8,7 @@ export interface AuthUser {
   email: string
   display_name: string
   role: 'admin' | 'employee'
+  can_view_warehouse?: boolean
 }
 
 declare global {

@@ -196,6 +196,7 @@ model User {
   email         String   @unique
   display_name  String
   role          String   @default("employee")
+  can_view_warehouse Boolean @default(false)   // admin nadaje dostęp do zakładki Magazyn
   azure_oid     String?  @unique
   password_hash String?
   created_at    String
@@ -205,6 +206,42 @@ model User {
   access_requests AccessRequest[]
 
   @@map("users")
+}
+
+// ─── Magazyn (warehouse) ─────────────────────────────────────────────────────
+model WarehouseItem {
+  id           String   @id
+  name         String
+  sku          String?
+  unit         String   @default("szt.")
+  unit_price   Float    @default(0)
+  quantity     Float    @default(0)
+  min_quantity Float    @default(0)
+  category     String?
+  location     String?
+  notes        String?
+  created_at   String
+  updated_at   String?
+
+  movements    StockMovement[]
+
+  @@map("warehouse_items")
+}
+
+model StockMovement {
+  id                String   @id
+  warehouse_item_id String
+  type              String   // in | out | initial | adjust
+  quantity          Float
+  unit_price        Float    @default(0)
+  reason            String?
+  project_ref       String?  // opcjonalna referencja do projektu (tekst)
+  created_by        String?
+  created_at        String
+
+  item WarehouseItem @relation(fields: [warehouse_item_id], references: [id], onDelete: Cascade)
+
+  @@map("stock_movements")
 }
 
 model ProjectMember {

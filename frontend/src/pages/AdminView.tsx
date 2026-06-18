@@ -24,6 +24,7 @@ interface User {
   email: string
   display_name: string
   role: 'admin' | 'employee'
+  can_view_warehouse?: boolean
   azure_oid: string | null
   created_at: string
 }
@@ -122,6 +123,13 @@ export default function AdminView() {
   async function selectUser(userId: string) {
     setSelectedUserId(userId)
     await loadMemberships(userId)
+  }
+
+  async function toggleWarehouse(userId: string, can_view_warehouse: boolean) {
+    try {
+      await client.put(`/api/users/${userId}`, { can_view_warehouse })
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_view_warehouse } : u))
+    } catch { alert('Nie udało się zapisać uprawnienia.') }
   }
 
   async function changeRole(userId: string, role: 'admin' | 'employee') {
@@ -347,6 +355,14 @@ export default function AdminView() {
                   <div className="text-xs text-gray-400 truncate">{u.email}</div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <label onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 cursor-pointer" title="Dostęp do zakładki Magazyn">
+                    <input
+                      type="checkbox"
+                      checked={!!u.can_view_warehouse}
+                      onChange={e => toggleWarehouse(u.id, e.target.checked)}
+                    />
+                    📦
+                  </label>
                   <select
                     value={u.role}
                     onClick={e => e.stopPropagation()}
