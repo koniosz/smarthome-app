@@ -9,12 +9,13 @@ interface Props {
   onClose: () => void
   onCreated: (item: CostItem) => void
   initialItem?: CostItem   // jeśli podane → tryb edycji
+  wzMode?: boolean         // tryb dodawania dokumentu WZ (numer WZ + kwota sumaryczna)
 }
 
-export default function AddCostModal({ projectId, onClose, onCreated, initialItem }: Props) {
+export default function AddCostModal({ projectId, onClose, onCreated, initialItem, wzMode }: Props) {
   const editing = !!initialItem
   const [form, setForm] = useState({
-    category: (initialItem?.category ?? 'materials') as CostCategory,
+    category: (initialItem?.category ?? (wzMode ? 'wz' : 'materials')) as CostCategory,
     description: initialItem?.description ?? '',
     quantity: String(initialItem?.quantity ?? '1'),
     unit_price: String(initialItem?.unit_price ?? ''),
@@ -31,23 +32,32 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.description.trim()) { setError('Opis jest wymagany'); return }
+    if (wzMode) {
+      if (!form.invoice_number.trim()) { setError('Numer WZ jest wymagany'); return }
+      if (!(parseFloat(form.unit_price) > 0)) { setError('Podaj kwotę sumaryczną z WZ'); return }
+    } else if (!form.description.trim()) { setError('Opis jest wymagany'); return }
     setSaving(true)
     setError('')
     try {
+      // W trybie WZ: zapisujemy numer WZ (invoice_number) + kwotę sumaryczną (jako wartość pozycji)
+      const payload = wzMode ? {
+        category: 'wz' as CostCategory,
+        description: `WZ ${form.invoice_number.trim()}`,
+        quantity: 1,
+        unit_price: parseFloat(form.unit_price) || 0,
+        supplier: form.supplier,
+        invoice_number: form.invoice_number.trim(),
+        date: form.date,
+      } : {
+        ...form,
+        quantity: parseFloat(form.quantity) || 1,
+        unit_price: parseFloat(form.unit_price) || 0,
+      }
       let result: CostItem
       if (editing && initialItem) {
-        result = await costsApi.update(initialItem.id, {
-          ...form,
-          quantity: parseFloat(form.quantity) || 1,
-          unit_price: parseFloat(form.unit_price) || 0,
-        })
+        result = await costsApi.update(initialItem.id, payload)
       } else {
-        result = await costsApi.create(projectId, {
-          ...form,
-          quantity: parseFloat(form.quantity) || 1,
-          unit_price: parseFloat(form.unit_price) || 0,
-        })
+        result = await costsApi.create(projectId, payload)
       }
       if (file) {
         try { result = await attachmentsApi.upload(result.id, file) } catch {}
@@ -64,8 +74,41 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
   const total = (parseFloat(form.quantity) || 0) * (parseFloat(form.unit_price) || 0)
 
   return (
-    <Modal title={editing ? 'Edytuj koszt' : 'Dodaj koszt'} onClose={onClose} wide>
+    <Modal title={wzMode ? 'Dodaj dokument WZ' : (editing ? 'Edytuj koszt' : 'Dodaj koszt')} onClose={onClose} wide>
       <form onSubmit={handleSubmit} className="space-y-4">
+        {wzMode ? (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Numer WZ *</label>
+              <input
+                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                value={form.invoice_number}
+                onChange={e => set('invoice_number', e.target.value)}
+                placeholder="np. 2026/03/009/WZ"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Kwota sumaryczna z WZ (PLN) *</label>
+              <input
+                type="number" min="0" step="0.01"
+                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                value={form.unit_price}
+                onChange={e => set('unit_price', e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data</label>
+              <input
+                type="date"
+                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                value={form.date}
+                onChange={e => set('date', e.target.value)}
+              />
+            </div>
+          </div>
+        ) : (
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Kategoria</label>
@@ -142,6 +185,7 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
             />
           </div>
         </div>
+        )}
 
         {/* File attachment */}
         <div>

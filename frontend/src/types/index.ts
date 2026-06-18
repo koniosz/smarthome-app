@@ -1,6 +1,6 @@
 export type ProjectType = 'installation' | 'developer' | 'service' | 'purchase'
 export type ProjectStatus = 'offer_submitted' | 'negotiation' | 'ordering' | 'installation' | 'closing' | 'cancelled'
-export type CostCategory = 'materials' | 'subcontractor' | 'other' | 'ksef_invoice'
+export type CostCategory = 'materials' | 'subcontractor' | 'other' | 'ksef_invoice' | 'wz'
 export type PaymentType = 'standard' | 'additional_works'
 
 export interface Project {
@@ -279,6 +279,7 @@ export const COST_CATEGORY_LABELS: Record<CostCategory, string> = {
   subcontractor: 'Podwykonawca',
   other: 'Inne',
   ksef_invoice: '📋 KSeF',
+  wz: '📄 WZ (wydanie zewn.)',
 }
 
 export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {

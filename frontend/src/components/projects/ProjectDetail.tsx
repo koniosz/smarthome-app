@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { projectsApi, aiQuotesApi, costsApi, projectDocumentsApi } from '../../api/client'
+import { projectsApi, costsApi, projectDocumentsApi } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import type { ProjectDetail as ProjectDetailType, CostItem, LaborEntry, ClientPayment, AiQuote, CostAuditEntry, ProjectDocument } from '../../types'
 import { SMART_FEATURES, PROJECT_DOC_TYPE_LABELS } from '../../types'
@@ -12,7 +12,6 @@ import AddPaymentModal from '../costs/AddPaymentModal'
 import CostTable from '../costs/CostTable'
 import LaborTable from '../costs/LaborTable'
 import PaymentTable from '../costs/PaymentTable'
-import AIQuoteTab from '../ai-quote/AIQuoteTab'
 import ExtraCostsTab from '../costs/ExtraCostsTab'
 import SurveyPanel from './SurveyPanel'
 import ProjectAccessModal from './ProjectAccessModal'
@@ -139,7 +138,7 @@ function fmtDec(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'ai_quote' | 'extra_costs' | 'documents' | 'history' | 'survey'
+type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'extra_costs' | 'documents' | 'history' | 'survey'
 
 // ── Project Documents Tab ────────────────────────────────────────────────────
 
@@ -530,11 +529,10 @@ export default function ProjectDetail() {
   const [showEdit, setShowEdit] = useState(false)
   const [showAccess, setShowAccess] = useState(false)
   const [showAddCost, setShowAddCost] = useState(false)
+  const [showAddWZ, setShowAddWZ] = useState(false)
   const [showAddLabor, setShowAddLabor] = useState(false)
   const [showAddPayment, setShowAddPayment] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [aiQuotes, setAiQuotes] = useState<AiQuote[]>([])
-  const [aiQuotesLoaded, setAiQuotesLoaded] = useState(false)
   const [auditLog, setAuditLog] = useState<CostAuditEntry[]>([])
   const [auditLoaded, setAuditLoaded] = useState(false)
 
@@ -549,19 +547,13 @@ export default function ProjectDetail() {
   useEffect(() => { load() }, [id])
 
   useEffect(() => {
-    if (tab === 'ai_quote' && id && !aiQuotesLoaded) {
-      aiQuotesApi.list(id).then(data => {
-        setAiQuotes(data)
-        setAiQuotesLoaded(true)
-      })
-    }
     if (tab === 'history' && id && !auditLoaded) {
       costsApi.auditLog(id).then(data => {
         setAuditLog(data)
         setAuditLoaded(true)
       }).catch(() => {})
     }
-  }, [tab, id, aiQuotesLoaded, auditLoaded])
+  }, [tab, id, auditLoaded])
 
   const handleDelete = async () => {
     if (!project) return
@@ -609,7 +601,8 @@ export default function ProjectDetail() {
   else if (marginPct < 10) marginColor = 'text-orange-600 dark:text-orange-400'
   else if (marginPct < 25) marginColor = 'text-yellow-600 dark:text-yellow-400'
 
-  const filterCostItems = (cat: string) => project.cost_items.filter(i => i.category === cat)
+  // Koszty WZ (wydanie zewnętrzne) pokazujemy w zakładce „Materiały" (z etykietą „📄 WZ")
+  const filterCostItems = (cat: string) => project.cost_items.filter(i => i.category === cat || (cat === 'materials' && i.category === 'wz'))
 
   const tabs = [
     { key: 'survey' as Tab, label: '📋 Ankieta klienta' },
@@ -618,7 +611,6 @@ export default function ProjectDetail() {
     { key: 'other' as Tab, label: `Inne (${filterCostItems('other').length})` },
     { key: 'labor' as Tab, label: `Robocizna (${project.labor_entries.length})` },
     ...(isAdmin ? [{ key: 'payments' as Tab, label: `💳 Wpłaty (${payments.length})` }] : []),
-    { key: 'ai_quote' as Tab, label: `🤖 Wycena AI${aiQuotes.length > 0 ? ` (${aiQuotes.length})` : ''}` },
     { key: 'extra_costs' as Tab, label: `📋 Koszty dodatkowe${project.extra_costs_count > 0 ? ` (${project.extra_costs_count})` : ''}` },
     { key: 'documents' as Tab, label: '📁 Dokumenty' },
     { key: 'history' as Tab, label: '🕓 Historia zmian' },
@@ -823,12 +815,20 @@ export default function ProjectDetail() {
               </button>
             )}
             {(tab === 'materials' || tab === 'subcontractor' || tab === 'other') && (
-              <button
-                onClick={() => setShowAddCost(true)}
-                className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors"
-              >
-                + Dodaj koszt
-              </button>
+              <>
+                <button
+                  onClick={() => setShowAddWZ(true)}
+                  className="px-3 py-1.5 text-xs font-medium border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg transition-colors"
+                >
+                  📄 Dodaj WZ
+                </button>
+                <button
+                  onClick={() => setShowAddCost(true)}
+                  className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors"
+                >
+                  + Dodaj koszt
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -837,7 +837,7 @@ export default function ProjectDetail() {
           <SurveyPanel
             projectId={project.id}
             projectName={project.name}
-            onNavigateToAiQuote={() => setTab('ai_quote')}
+            onNavigateToAiQuote={() => navigate('/wycena')}
           />
         )}
         {tab === 'extra_costs' && (
@@ -853,13 +853,6 @@ export default function ProjectDetail() {
         )}
         {tab === 'history' && (
           <HistoryTab auditLog={auditLog} project={project} />
-        )}
-        {tab === 'ai_quote' && (
-          <AIQuoteTab
-            projectId={project.id}
-            quotes={aiQuotes}
-            onQuotesChanged={setAiQuotes}
-          />
         )}
         {tab === 'labor' && (
           <LaborTable
@@ -905,6 +898,16 @@ export default function ProjectDetail() {
         <AddCostModal
           projectId={project.id}
           onClose={() => setShowAddCost(false)}
+          onCreated={(item: CostItem) => {
+            setProject(p => p ? { ...p, cost_items: [item, ...p.cost_items] } : p)
+          }}
+        />
+      )}
+      {showAddWZ && (
+        <AddCostModal
+          wzMode
+          projectId={project.id}
+          onClose={() => setShowAddWZ(false)}
           onCreated={(item: CostItem) => {
             setProject(p => p ? { ...p, cost_items: [item, ...p.cost_items] } : p)
           }}
