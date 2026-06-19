@@ -7,6 +7,7 @@ import { SMART_FEATURES, PROJECT_DOC_TYPE_LABELS } from '../../types'
 import { StatusBadge, TypeBadge } from '../ui/StatusBadge'
 import AddProjectModal from './AddProjectModal'
 import AddCostModal from '../costs/AddCostModal'
+import HandoverTab from '../handover/HandoverTab'
 import AddLaborModal from '../costs/AddLaborModal'
 import AddPaymentModal from '../costs/AddPaymentModal'
 import CostTable from '../costs/CostTable'
@@ -138,7 +139,7 @@ function fmtDec(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'extra_costs' | 'documents' | 'history' | 'survey'
+type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'extra_costs' | 'documents' | 'history' | 'survey' | 'handover'
 
 // ── Project Documents Tab ────────────────────────────────────────────────────
 
@@ -612,6 +613,7 @@ export default function ProjectDetail() {
     { key: 'labor' as Tab, label: `Robocizna (${project.labor_entries.length})` },
     ...(isAdmin ? [{ key: 'payments' as Tab, label: `💳 Wpłaty (${payments.length})` }] : []),
     { key: 'extra_costs' as Tab, label: `📋 Koszty dodatkowe${project.extra_costs_count > 0 ? ` (${project.extra_costs_count})` : ''}` },
+    { key: 'handover' as Tab, label: '✍️ Protokół odbioru' },
     { key: 'documents' as Tab, label: '📁 Dokumenty' },
     { key: 'history' as Tab, label: '🕓 Historia zmian' },
   ]
@@ -853,6 +855,9 @@ export default function ProjectDetail() {
         )}
         {tab === 'history' && (
           <HistoryTab auditLog={auditLog} project={project} />
+        )}
+        {tab === 'handover' && (
+          <HandoverTab projectId={project.id} project={project} />
         )}
         {tab === 'labor' && (
           <LaborTable

@@ -17,6 +17,7 @@ import ManualCostsPage from './pages/ManualCostsPage'
 import KosztyPage from './pages/KosztyPage'
 import WycenaPage from './pages/WycenaPage'
 import MagazynPage from './pages/MagazynPage'
+import HandoverPrintView from './pages/HandoverPrintView'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import SurveyPage from './pages/SurveyPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
@@ -72,6 +73,16 @@ function AppContent() {
       <ProtectedRoute>
         <Routes>
           <Route path="/projects/:id/ai-quotes/:quoteId/print" element={<AIQuotePrintView />} />
+        </Routes>
+      </ProtectedRoute>
+    )
+  }
+
+  if (location.pathname.includes('/handover/') && location.pathname.endsWith('/print')) {
+    return (
+      <ProtectedRoute>
+        <Routes>
+          <Route path="/projects/:id/handover/:protocolId/print" element={<HandoverPrintView />} />
         </Routes>
       </ProtectedRoute>
     )

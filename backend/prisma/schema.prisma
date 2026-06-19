@@ -38,8 +38,33 @@ model Project {
   documents           ProjectDocument[]
   surveys             ClientSurvey[]
   tasks               Task[]
+  handover_protocols  HandoverProtocol[]
 
   @@map("projects")
+}
+
+// Protokół odbioru wykonanych prac — klient akceptuje przez link z maila (podpis), powstaje dokument do druku.
+model HandoverProtocol {
+  id             String   @id
+  project_id     String
+  number         String   // np. PO/2026/06/001
+  title          String?
+  scope          String?  // opis wykonanych prac
+  status         String   @default("draft")  // draft | sent | accepted
+  token          String?
+  client_email   String?
+  client_name    String?
+  client_comment String?
+  signature      String?  // podpis wpisany na klawiaturze
+  sent_at        String?
+  accepted_at    String?
+  created_by     String?
+  created_at     String
+  updated_at     String?
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@map("handover_protocols")
 }
 
 model Task {

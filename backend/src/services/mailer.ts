@@ -417,6 +417,83 @@ export function approvalDecisionHtml(
 </html>`
 }
 
+// ─── Protokół odbioru prac ────────────────────────────────────────────────────
+export async function sendHandoverProtocolEmail(opts: {
+  to: string; projectName: string; number: string; companyName?: string; signUrl: string; scope?: string
+}): Promise<void> {
+  const { transport, from, fromName } = await buildTransport()
+  const company = opts.companyName || process.env.COMPANY_NAME || fromName
+  const html = `
+  <div style="font-family:'Segoe UI',Arial,sans-serif;max-width:560px;margin:0 auto">
+    <div style="background:linear-gradient(135deg,#2563eb,#1d4ed8);padding:32px 28px;border-radius:14px 14px 0 0;text-align:center">
+      <div style="font-size:48px;line-height:1">✍️</div>
+      <h1 style="margin:8px 0 0;color:#fff;font-size:22px">Protokół odbioru prac</h1>
+    </div>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 14px 14px;padding:28px">
+      <p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 8px">Dzień dobry,</p>
+      <p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 16px">
+        ${company} przedstawia protokół odbioru wykonanych prac dla projektu <strong>${opts.projectName}</strong> (nr <strong>${opts.number}</strong>).
+        Prosimy o potwierdzenie odbioru — wystarczy kliknąć poniższy przycisk, w razie potrzeby dopisać uwagi i podpisać się.
+      </p>
+      ${opts.scope ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:0 0 16px"><p style="margin:0 0 4px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase">Zakres prac</p><p style="margin:0;color:#374151;font-size:14px;line-height:1.5;white-space:pre-line">${opts.scope}</p></div>` : ''}
+      <div style="text-align:center;margin:8px 0 4px">
+        <a href="${opts.signUrl}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;font-weight:700;font-size:16px;padding:15px 32px;border-radius:12px">Otwórz protokół i potwierdź odbiór</a>
+      </div>
+    </div>
+  </div>`
+  await transport.sendMail({ from: `"${fromName}" <${from}>`, to: opts.to, subject: `Protokół odbioru ${opts.number} — ${opts.projectName}`, html })
+}
+
+export function handoverSignPageHtml(p: { projectName: string; number: string; scope?: string | null; companyName?: string; clientName?: string | null; postUrl: string }) {
+  return `<!DOCTYPE html>
+<html lang="pl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Protokół odbioru ${p.number}</title></head>
+<body style="margin:0;background:#f9fafb;font-family:'Segoe UI',Arial,sans-serif">
+  <div style="max-width:560px;margin:0 auto;padding:24px 16px">
+    <div style="background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.1);overflow:hidden">
+      <div style="background:linear-gradient(135deg,#2563eb,#1d4ed8);padding:32px 28px;text-align:center">
+        <div style="font-size:48px;line-height:1">✍️</div>
+        <h1 style="margin:8px 0 0;color:#fff;font-size:21px">Protokół odbioru prac</h1>
+        <p style="margin:4px 0 0;color:#dbeafe;font-size:13px">${p.number}</p>
+      </div>
+      <div style="padding:28px">
+        <p style="margin:0 0 4px;color:#6b7280;font-size:14px">Projekt: <strong style="color:#374151">${p.projectName}</strong></p>
+        ${p.companyName ? `<p style="margin:0 0 14px;color:#6b7280;font-size:14px">Wykonawca: <strong style="color:#374151">${p.companyName}</strong></p>` : '<div style="margin-bottom:14px"></div>'}
+        ${p.scope ? `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin:0 0 18px"><p style="margin:0 0 4px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase">Zakres prac</p><p style="margin:0;color:#374151;font-size:14px;line-height:1.5;white-space:pre-line">${p.scope}</p></div>` : ''}
+        <form method="POST" action="${p.postUrl}">
+          <label style="display:flex;gap:10px;align-items:flex-start;font-size:15px;color:#374151;margin:0 0 18px;cursor:pointer">
+            <input type="checkbox" name="confirm" required style="margin-top:3px;width:18px;height:18px">
+            <span><strong>Potwierdzam odbiór wykonanych prac</strong> i akceptuję ich realizację bez zastrzeżeń (chyba że wpisano poniżej).</span>
+          </label>
+          <label style="display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">Uwagi <span style="font-weight:400;color:#9ca3af">(opcjonalnie)</span></label>
+          <textarea name="comment" rows="3" placeholder="Ewentualne uwagi do odbioru…" style="width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;font-family:inherit;color:#374151;resize:vertical;margin-bottom:16px"></textarea>
+          <label style="display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:8px">Podpis — imię i nazwisko *</label>
+          <input type="text" name="signature" required placeholder="np. Jan Kowalski" style="width:100%;box-sizing:border-box;padding:12px 14px;border:1px solid #d1d5db;border-radius:10px;font-size:18px;font-family:'Segoe Script','Brush Script MT',cursive;color:#1e3a8a;margin-bottom:22px">
+          <button type="submit" style="width:100%;background:#2563eb;color:#fff;border:none;border-radius:12px;padding:16px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit">✅ Potwierdzam odbiór i podpisuję</button>
+        </form>
+      </div>
+      <div style="background:#f9fafb;padding:14px 28px;border-top:1px solid #e5e7eb;text-align:center"><p style="margin:0;font-size:12px;color:#9ca3af">Potwierdzenie ma charakter elektroniczny — zapisujemy datę i godzinę akceptacji.</p></div>
+    </div>
+  </div>
+</body></html>`
+}
+
+export function handoverConfirmationHtml(projectName: string, number: string, clientName: string) {
+  return `<!DOCTYPE html>
+<html lang="pl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Odbiór potwierdzony</title></head>
+<body style="margin:0;background:#f9fafb;font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center">
+  <div style="max-width:480px;margin:40px auto;background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.1);overflow:hidden">
+    <div style="background:linear-gradient(135deg,#16a34a,#15803d);padding:44px 40px;text-align:center">
+      <div style="font-size:72px;line-height:1">✅</div>
+      <h1 style="margin:12px 0 0;color:#fff;font-size:24px">Odbiór potwierdzony</h1>
+    </div>
+    <div style="padding:36px 40px;text-align:center">
+      <p style="margin:0 0 8px;color:#374151;font-size:16px;line-height:1.6">Dziękujemy! Protokół odbioru <strong>${number}</strong> dla projektu <strong>${projectName}</strong> został potwierdzony${clientName ? ` przez <strong>${clientName}</strong>` : ''}.</p>
+      <p style="margin:0;color:#6b7280;font-size:14px">Wykonawca otrzymał powiadomienie. Możesz zamknąć tę stronę.</p>
+    </div>
+  </div>
+</body></html>`
+}
+
 // ─── Przypomnienia o wygasających badaniach lekarskich i BHP ─────────────────
 
 export interface EmployeeExpiryItem {

@@ -23,6 +23,7 @@ import productCatalogRouter from './routes/product-catalog'
 import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, rejectExtraCost, submitRejectExtraCost, approveSmsByJwt, submitSmsDecision, listAllExtraCosts } from './routes/extra-costs'
 import quotesRouter from './routes/quotes'
 import warehouseRouter from './routes/warehouse'
+import handoverRouter, { handoverSignPage, handoverSubmitSign } from './routes/handover'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -62,6 +63,9 @@ app.post('/api/extra-costs/reject/:token',      submitRejectExtraCost)
 // GET pokazuje stronę decyzji (Akceptuj / Nie akceptuję), POST wykonuje decyzję.
 app.get('/api/extra-costs/approve-sms/:jwtToken', approveSmsByJwt)
 app.post('/api/extra-costs/approve-sms/:jwtToken', submitSmsDecision)
+// Protokół odbioru — publiczna strona podpisu klienta (bez JWT)
+app.get('/api/handover/sign/:token', handoverSignPage)
+app.post('/api/handover/sign/:token', handoverSubmitSign)
 
 // Publiczne serwowanie załączników (pliki mają losowe nazwy — bezpieczeństwo przez obscurity)
 // MUSI być przed requireAuth, bo przeglądarka otwierając link w nowej karcie nie wysyła JWT
@@ -114,6 +118,7 @@ app.use('/api/ai-quote-examples', aiQuoteExamplesRouter)
 
 // Extra Costs (koszty dodatkowe)
 app.use('/api/projects/:projectId/extra-costs', extraCostsRouter)
+app.use('/api/projects/:projectId/handover', handoverRouter)
 app.get('/api/extra-costs', listAllExtraCosts)
 app.put('/api/extra-costs/:id', updateExtraCost)
 app.delete('/api/extra-costs/:id', deleteExtraCost)

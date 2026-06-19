@@ -178,6 +178,17 @@ export const db = {
     insert: (item: any) => prisma.warehouseDocLine.create({ data: item }),
   },
 
+  handover_protocols: {
+    forProject: (projectId: string) =>
+      prisma.handoverProtocol.findMany({ where: { project_id: projectId }, orderBy: { created_at: 'desc' } }),
+    find: (id: string) => prisma.handoverProtocol.findUnique({ where: { id } }),
+    findByToken: (token: string) => prisma.handoverProtocol.findFirst({ where: { token } }),
+    countForPrefix: (prefix: string) => prisma.handoverProtocol.count({ where: { number: { startsWith: prefix } } }),
+    insert: (item: any) => prisma.handoverProtocol.create({ data: item }),
+    update: (id: string, patch: any) => prisma.handoverProtocol.update({ where: { id }, data: patch }),
+    delete: (id: string) => prisma.handoverProtocol.delete({ where: { id } }),
+  },
+
   ai_quotes: {
     forProject: (projectId: string) =>
       prisma.aiQuote.findMany({

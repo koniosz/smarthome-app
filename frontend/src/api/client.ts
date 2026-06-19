@@ -309,6 +309,32 @@ export interface WarehouseDoc {
   lines?: WarehouseDocLine[]
 }
 
+// ─── Protokoły odbioru ──────────────────────────────────────────────────────────
+export interface HandoverProtocol {
+  id: string
+  project_id: string
+  number: string
+  title: string | null
+  scope: string | null
+  status: 'draft' | 'sent' | 'accepted'
+  client_email: string | null
+  client_name: string | null
+  client_comment: string | null
+  signature: string | null
+  sent_at: string | null
+  accepted_at: string | null
+  created_at: string
+}
+export const handoverApi = {
+  list: (projectId: string) => api.get<HandoverProtocol[]>(`/projects/${projectId}/handover`).then(r => r.data),
+  create: (projectId: string, data: { title?: string; scope?: string; client_email?: string }) =>
+    api.post<HandoverProtocol>(`/projects/${projectId}/handover`, data).then(r => r.data),
+  send: (projectId: string, id: string, client_email: string) =>
+    api.post<HandoverProtocol>(`/projects/${projectId}/handover/${id}/send`, { client_email }).then(r => r.data),
+  delete: (projectId: string, id: string) =>
+    api.delete(`/projects/${projectId}/handover/${id}`).then(r => r.data),
+}
+
 // Polling helper — odpytuje /jobs/:id co 3s max 5 minut
 async function pollJob(url: string, maxMs = 5 * 60 * 1000): Promise<any> {
   const started = Date.now()
