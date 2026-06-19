@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { projectsApi, handoverApi } from '../api/client'
 import type { HandoverProtocol } from '../api/client'
@@ -26,6 +26,27 @@ export default function HandoverPrintView() {
   const [project, setProject] = useState<Project | null>(null)
   const [proto, setProto] = useState<HandoverProtocol | null>(null)
   const [loading, setLoading] = useState(true)
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  const generatePdf = async () => {
+    if (!contentRef.current || !proto) return
+    setPdfBusy(true)
+    try {
+      const html2pdf = (await import('html2pdf.js')).default
+      await html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: `Protokol_odbioru_${proto.number.replace(/\//g, '-')}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      }).from(contentRef.current).save()
+    } catch {
+      alert('Nie udało się wygenerować PDF.')
+    } finally {
+      setPdfBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (!id || !protocolId) return
@@ -45,11 +66,12 @@ export default function HandoverPrintView() {
     <div style={{ background: '#fff', minHeight: '100vh' }}>
       <style>{`@media print { .no-print { display:none !important } body { margin:0 } } @page { margin: 18mm }`}</style>
 
-      <div className="no-print" style={{ position: 'sticky', top: 0, background: '#f8fafc', borderBottom: '1px solid #e5e7eb', padding: '10px 16px', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-        <button onClick={() => window.print()} style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>🖨 Drukuj / Zapisz PDF</button>
+      <div className="no-print" style={{ position: 'sticky', top: 0, background: '#f8fafc', borderBottom: '1px solid #e5e7eb', padding: '10px 16px', display: 'flex', gap: 10, justifyContent: 'flex-end', zIndex: 10 }}>
+        <button onClick={generatePdf} disabled={pdfBusy} style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 14, fontWeight: 600, cursor: pdfBusy ? 'default' : 'pointer', opacity: pdfBusy ? 0.6 : 1 }}>{pdfBusy ? 'Generuję PDF…' : '📄 Pobierz PDF'}</button>
+        <button onClick={() => window.print()} style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>🖨 Drukuj</button>
       </div>
 
-      <div style={{ maxWidth: 760, margin: '0 auto', padding: '32px 28px', fontFamily: "'Segoe UI', Arial, sans-serif", color: '#111827', fontSize: 14, lineHeight: 1.55 }}>
+      <div ref={contentRef} style={{ maxWidth: 760, margin: '0 auto', padding: '32px 28px', fontFamily: "'Segoe UI', Arial, sans-serif", color: '#111827', fontSize: 14, lineHeight: 1.55 }}>
         {/* Nagłówek */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, paddingBottom: 16, borderBottom: '2px solid #111827' }}>
           <div>
