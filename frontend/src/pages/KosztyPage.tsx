@@ -226,6 +226,11 @@ function AddCostModal({ projects, onClose, onSaved }: ModalProps) {
                 onFocus={e => { e.target.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.12)'; e.target.style.borderColor = '#2563eb' }}
                 onBlur={e => { e.target.style.boxShadow = 'none'; e.target.style.borderColor = '#e2e8f0' }}
               />
+              {Number(amount) > 0 && (
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                  Brutto (VAT 23%): <strong>{fmtAmount(Number(amount) * 1.23)} PLN</strong>
+                </div>
+              )}
             </div>
           </div>
 
@@ -481,7 +486,7 @@ export default function KosztyPage() {
               borderBottom: '1px solid #f1f5f9',
               gap: 8,
             }}>
-              {['Koszt', 'Projekt', 'Data', 'Kwota netto', 'Status', 'Akcje'].map((col, i) => (
+              {['Koszt', 'Projekt', 'Data', 'Kwota netto / brutto', 'Status', 'Akcje'].map((col, i) => (
                 <div key={col} style={{
                   fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
                   letterSpacing: '0.05em', color: '#94a3b8',
@@ -528,9 +533,10 @@ export default function KosztyPage() {
                     {fmtDate(cost.date)}
                   </div>
 
-                  {/* Kwota netto */}
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {fmtAmount(cost.total_price)}
+                  {/* Kwota netto / brutto */}
+                  <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{fmtAmount(cost.total_price)} <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>netto</span></div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>{fmtAmount(cost.total_price * 1.23)} <span style={{ fontSize: 11, color: '#94a3b8' }}>brutto</span></div>
                   </div>
 
                   {/* Status */}

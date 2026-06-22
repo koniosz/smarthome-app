@@ -533,7 +533,7 @@ export default function DashboardView() {
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
-                      {fmt(inv.gross_amount)} {inv.currency}
+                      {fmt(inv.gross_amount)} {inv.currency} <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>brutto</span>
                     </div>
                   </div>
                 </div>

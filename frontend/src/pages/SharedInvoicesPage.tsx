@@ -103,7 +103,8 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginTop: 4, flexWrap: 'wrap', fontSize: 12, color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>
             <span>Nr: {invoice.invoice_number || '—'}</span>
             <span>Data: {invoice.invoice_date || '—'}</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{fmt(invoice.gross_amount)} {invoice.currency}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{fmt(invoice.gross_amount)} {invoice.currency} <span style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>brutto</span></span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>{fmt(invoice.net_amount)} {invoice.currency} <span style={{ fontSize: 11, color: '#94a3b8' }}>netto</span></span>
           </div>
           <InvoiceLineItems invoiceId={invoice.id} load={() => ksefApi.sharedLineItems(invoice.id)} />
         </div>

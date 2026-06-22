@@ -813,10 +813,10 @@ function FullInvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
         </td>
         <td style={{ padding: '10px 12px', textAlign: 'right' }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
-            {fmt(invoice.gross_amount)} {invoice.currency}
+            {fmt(invoice.gross_amount)} {invoice.currency} <span style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8' }}>brutto</span>
           </div>
           <div style={{ fontSize: 11, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>
-            Netto: {fmt(invoice.net_amount)} / VAT: {fmt(invoice.vat_amount)}
+            Netto: {fmt(invoice.net_amount)} · VAT: {fmt(invoice.vat_amount)}
           </div>
         </td>
         <td style={{ padding: '10px 12px', fontSize: 13, color: '#64748b', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>

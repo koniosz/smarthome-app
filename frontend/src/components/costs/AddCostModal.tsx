@@ -89,7 +89,7 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Kwota sumaryczna z WZ (PLN) *</label>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Kwota sumaryczna z WZ — netto (PLN) *</label>
               <input
                 type="number" min="0" step="0.01"
                 className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
@@ -155,7 +155,7 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Cena jednostkowa (PLN)</label>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Cena jednostkowa — netto (PLN)</label>
             <input
               type="number" min="0" step="0.01"
               className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
@@ -221,9 +221,10 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
 
         {total > 0 && (
           <div className="bg-gray-50 dark:bg-gray-800 rounded-lg px-4 py-2 flex justify-between items-center">
-            <span className="text-sm text-gray-600 dark:text-gray-400">Łącznie:</span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">Łącznie netto / brutto (VAT 23%):</span>
             <span className="text-base font-bold text-violet-700 dark:text-violet-400">
               {new Intl.NumberFormat('pl-PL').format(total)} PLN
+              <span className="text-xs font-normal text-gray-500 dark:text-gray-400"> / {new Intl.NumberFormat('pl-PL').format(Math.round(total * 1.23))} brutto</span>
             </span>
           </div>
         )}

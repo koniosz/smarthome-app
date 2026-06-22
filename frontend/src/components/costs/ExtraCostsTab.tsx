@@ -189,7 +189,8 @@ function AddEditModal({
           {/* Total preview */}
           {grandTotal > 0 && (
             <div className="text-right text-sm font-medium text-gray-700 dark:text-gray-300">
-              Razem: <span className="text-violet-600 dark:text-violet-400">{fmt(grandTotal)} PLN</span>
+              Razem netto: <span className="text-violet-600 dark:text-violet-400">{fmt(grandTotal)} PLN</span>
+              <span className="text-xs font-normal text-gray-400"> · brutto (VAT 23%): {fmt(grandTotal * 1.23)} PLN</span>
             </div>
           )}
 
@@ -436,8 +437,8 @@ function SendToClientModal({
                           <th className="px-3 py-2.5 text-left font-medium">Data</th>
                           <th className="px-3 py-2.5 text-left font-medium">Opis</th>
                           <th className="px-3 py-2.5 text-right font-medium">Ilość</th>
-                          <th className="px-3 py-2.5 text-right font-medium">Cena jedn.</th>
-                          <th className="px-3 py-2.5 text-right font-medium">Razem</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Cena jedn. netto</th>
+                          <th className="px-3 py-2.5 text-right font-medium">Razem netto / brutto</th>
                           <th className="px-3 py-2.5 text-center font-medium w-24">Typ</th>
                         </tr>
                       </thead>
@@ -481,6 +482,7 @@ function SendToClientModal({
                               </td>
                               <td className="px-3 py-2.5 text-right font-medium text-gray-800 dark:text-gray-200">
                                 {fmt(item.total_price)} PLN
+                                <div className="text-xs font-normal text-gray-400">{fmt(item.total_price * 1.23)} brutto</div>
                               </td>
                               <td className="px-3 py-2.5 text-center">
                                 {item.is_out_of_scope
@@ -495,10 +497,11 @@ function SendToClientModal({
                       <tfoot>
                         <tr className="bg-gray-50 dark:bg-gray-800/60 border-t-2 border-gray-200 dark:border-gray-700">
                           <td colSpan={5} className="px-3 py-3 text-sm font-semibold text-gray-700 dark:text-gray-300 text-right">
-                            Suma zaznaczonych:
+                            Suma zaznaczonych (netto / brutto):
                           </td>
                           <td className="px-3 py-3 text-right text-sm font-bold text-violet-700 dark:text-violet-300">
                             {fmt(total)} PLN
+                            <div className="text-xs font-normal text-gray-400">{fmt(total * 1.23)} brutto</div>
                           </td>
                           <td />
                         </tr>

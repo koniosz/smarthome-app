@@ -750,10 +750,11 @@ export default function ProjectDetail() {
         {/* Total + margin */}
         <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between flex-wrap gap-4">
           <div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">Łączne koszty</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Łączne koszty (netto)</div>
             <div className={`text-2xl font-bold ${isOverBudget ? 'text-red-600 dark:text-red-400' : 'text-gray-800 dark:text-gray-100'}`}>
               {fmtDec(costTotal)} PLN
             </div>
+            <div className="text-xs text-gray-400">{fmtDec(costTotal * 1.23)} PLN brutto (VAT 23%)</div>
           </div>
 
           {isAdmin && paymentsTotal > 0 && (

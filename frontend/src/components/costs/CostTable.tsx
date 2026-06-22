@@ -238,8 +238,8 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated, onMo
             <th className="text-left py-2 pr-3">Kategoria</th>
             <th className="text-left py-2 pr-3">Opis</th>
             <th className="text-right py-2 pr-3">Ilość</th>
-            <th className="text-right py-2 pr-3">Cena j.</th>
-            <th className="text-right py-2 pr-3">Razem</th>
+            <th className="text-right py-2 pr-3">Cena j. netto</th>
+            <th className="text-right py-2 pr-3">Razem netto / brutto</th>
             <th className="text-center py-2 pr-3">Fak.</th>
             <th className="text-center py-2">Akcje</th>
           </tr>
@@ -259,7 +259,10 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated, onMo
               </td>
               <td className="py-2 pr-3 text-right text-gray-600 dark:text-gray-400">{item.quantity}</td>
               <td className="py-2 pr-3 text-right text-gray-600 dark:text-gray-400">{fmt(item.unit_price)}</td>
-              <td className="py-2 pr-3 text-right font-medium text-gray-800 dark:text-gray-100">{fmt(item.total_price)}</td>
+              <td className="py-2 pr-3 text-right font-medium text-gray-800 dark:text-gray-100">
+                {fmt(item.total_price)}
+                <div className="text-xs font-normal text-gray-400">{fmt(item.total_price * 1.23)} brutto</div>
+              </td>
               <td className="py-2 pr-3 text-center">
                 {item.category !== 'ksef_invoice' && (
                   <AttachmentCell item={item} onUpdated={handleUpdated} />
@@ -325,8 +328,11 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated, onMo
         </tbody>
         <tfoot>
           <tr className="border-t-2 border-gray-200 dark:border-gray-700">
-            <td colSpan={5} className="pt-2 pr-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Suma:</td>
-            <td className="pt-2 pr-3 text-right font-bold text-gray-800 dark:text-gray-100">{fmt(total)}</td>
+            <td colSpan={5} className="pt-2 pr-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Suma netto / brutto:</td>
+            <td className="pt-2 pr-3 text-right font-bold text-gray-800 dark:text-gray-100">
+              {fmt(total)}
+              <div className="text-xs font-normal text-gray-400">{fmt(total * 1.23)} brutto</div>
+            </td>
             <td colSpan={2}></td>
           </tr>
         </tfoot>

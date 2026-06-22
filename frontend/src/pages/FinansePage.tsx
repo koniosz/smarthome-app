@@ -497,7 +497,7 @@ export default function FinansePage() {
                         <td className="px-3 py-2 text-gray-500 tabular-nums">{inv.invoice_number ?? inv.ksef_number ?? '—'}</td>
                         <td className="px-3 py-2 text-gray-500 tabular-nums">{inv.invoice_date?.slice(0, 10) ?? '—'}</td>
                         <td className="px-5 py-2 text-right font-semibold text-gray-800 dark:text-gray-200 tabular-nums">
-                          {fmt(inv.net_amount)} {inv.currency}
+                          {fmt(inv.net_amount)} {inv.currency} <span className="text-[11px] font-normal text-gray-400">netto</span>
                         </td>
                       </tr>
                     ))}
