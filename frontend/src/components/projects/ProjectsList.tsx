@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, ChevronRight } from 'lucide-react'
-import { projectsApi, accessRequestsApi } from '../../api/client'
+import { projectsApi, accessRequestsApi, dashboardApi } from '../../api/client'
+import type { DashboardStats } from '../../types'
 import { useAuth } from '../../auth/AuthContext'
 import type { Project, ProjectType, ProjectStatus } from '../../types'
 import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '../../types'
@@ -48,6 +49,8 @@ export default function ProjectsList() {
   const [sortBy, setSortBy] = useState<'created_at' | 'name_asc' | 'name_desc' | 'margin_pct' | 'budget_amount'>('created_at')
   const [requestingAccess, setRequestingAccess] = useState<Record<string, boolean>>({})
   const [query, setQuery] = useState('')
+  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [showStats, setShowStats] = useState(false)   // podsumowanie finansowe ukryte — pokaż po kliknięciu
   const navigate = useNavigate()
 
   const load = () => {
@@ -58,6 +61,7 @@ export default function ProjectsList() {
   }
 
   useEffect(() => { load() }, [])
+  useEffect(() => { dashboardApi.get().then(setStats).catch(() => {}) }, [])
 
   const memberProjects = projects.filter(p => p.user_is_member !== false)
   const nonMemberProjects = isAdmin ? [] : projects.filter(p => p.user_is_member === false)
@@ -154,6 +158,34 @@ export default function ProjectsList() {
           <Plus size={16} />
           Nowy projekt
         </button>
+      </div>
+
+      {/* Podsumowanie finansowe — ukryte, pokazywane po kliknięciu */}
+      <div style={{ marginBottom: 24 }}>
+        <button
+          onClick={() => setShowStats(s => !s)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', fontSize: 14, fontWeight: 600, color: '#334155', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, cursor: 'pointer', width: '100%', justifyContent: 'space-between' }}
+        >
+          <span>📊 Podsumowanie finansowe {showStats ? '' : '(kliknij, aby pokazać)'}</span>
+          <span style={{ color: '#94a3b8' }}>{showStats ? '▲ ukryj' : '▼ pokaż'}</span>
+        </button>
+
+        {showStats && stats && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginTop: 14 }}>
+            {[
+              { label: 'Aktywne projekty', value: String(stats.active_projects), sub: `${stats.total_projects} łącznie`, color: '#0f172a' },
+              { label: 'Wartość ofert', value: `${fmt(stats.total_budget)} PLN`, sub: 'aktywne projekty', color: '#0f172a' },
+              { label: 'Łączne koszty', value: `${fmt(stats.total_costs)} PLN`, sub: 'aktywne projekty', color: '#0f172a' },
+              { label: 'Średnia marża', value: `${stats.average_margin_pct.toFixed(1)}%`, sub: 'aktywnych projektów', color: stats.average_margin_pct < 0 ? '#dc2626' : '#16a34a' },
+            ].map(c => (
+              <div key={c.label} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '18px 20px' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#475569', marginBottom: 10 }}>{c.label}</div>
+                <div style={{ fontSize: 26, fontWeight: 800, color: c.color, lineHeight: 1.1 }}>{c.value}</div>
+                <div style={{ fontSize: 13, color: '#64748b', marginTop: 6 }}>{c.sub}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Filters Row */}
