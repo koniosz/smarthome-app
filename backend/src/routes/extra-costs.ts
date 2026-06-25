@@ -164,7 +164,7 @@ router.post('/send-email', async (req: Request, res: Response) => {
 // POST /api/projects/:projectId/extra-costs
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { description, quantity, unit_price, date, is_out_of_scope, notes } = req.body
+    const { description, quantity, unit_price, vat_rate, date, is_out_of_scope, notes } = req.body
     if (!description) { res.status(400).json({ error: 'Opis jest wymagany' }); return }
 
     const qty = Number(quantity) || 1
@@ -176,6 +176,7 @@ router.post('/', async (req: Request, res: Response) => {
       quantity: qty,
       unit_price: unitPrice,
       total_price: qty * unitPrice,
+      vat_rate: vat_rate !== undefined ? Number(vat_rate) : 23,
       date: date || new Date().toISOString().slice(0, 10),
       is_out_of_scope: Boolean(is_out_of_scope),
       status: 'pending',
@@ -196,7 +197,7 @@ export async function updateExtraCost(req: Request, res: Response): Promise<void
     const existing = await db.extra_costs.find(req.params.id)
     if (!existing) { res.status(404).json({ error: 'Nie znaleziono' }); return }
 
-    const { description, quantity, unit_price, date, is_out_of_scope, status, notes } = req.body
+    const { description, quantity, unit_price, vat_rate, date, is_out_of_scope, status, notes } = req.body
 
     // Koszt zaakceptowany przez klienta jest zablokowany — nie wolno zmieniać
     // kwoty/opisu/zakresu (klient zaakceptował konkretną wartość). Dozwolone są
@@ -223,6 +224,7 @@ export async function updateExtraCost(req: Request, res: Response): Promise<void
     if (quantity !== undefined || unit_price !== undefined) {
       patch.total_price = (patch.quantity ?? existing.quantity) * (patch.unit_price ?? existing.unit_price)
     }
+    if (vat_rate !== undefined) patch.vat_rate = Number(vat_rate)
     if (date !== undefined) patch.date = date
     if (is_out_of_scope !== undefined) patch.is_out_of_scope = Boolean(is_out_of_scope)
     if (status !== undefined) patch.status = status

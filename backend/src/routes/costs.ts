@@ -34,7 +34,7 @@ router.get('/audit-log', async (req: Request, res: Response) => {
 // POST /api/projects/:projectId/costs
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { category, description, quantity, unit_price, supplier, invoice_number, date } = req.body
+    const { category, description, quantity, unit_price, vat_rate, supplier, invoice_number, date } = req.body
 
     if (!description) { res.status(400).json({ error: 'Opis jest wymagany' }); return }
     if (!await db.projects.find(req.params.projectId)) {
@@ -51,6 +51,7 @@ router.post('/', async (req: Request, res: Response) => {
       quantity: qty,
       unit_price: price,
       total_price: qty * price,
+      vat_rate: vat_rate !== undefined ? Number(vat_rate) : 23,
       supplier: supplier || '',
       invoice_number: invoice_number || '',
       date: date || new Date().toISOString().slice(0, 10),
@@ -85,7 +86,7 @@ export const updateCost = async (req: Request, res: Response) => {
     const existing = await db.cost_items.find(req.params.id)
     if (!existing) { res.status(404).json({ error: 'Pozycja nie znaleziona' }); return }
 
-    const { category, description, quantity, unit_price, supplier, invoice_number, date } = req.body
+    const { category, description, quantity, unit_price, vat_rate, supplier, invoice_number, date } = req.body
     const qty = quantity ?? existing.quantity
     const price = unit_price ?? existing.unit_price
 
@@ -95,6 +96,7 @@ export const updateCost = async (req: Request, res: Response) => {
       quantity: qty,
       unit_price: price,
       total_price: qty * price,
+      vat_rate: vat_rate !== undefined ? Number(vat_rate) : (existing.vat_rate ?? 23),
       supplier: supplier ?? existing.supplier,
       invoice_number: invoice_number ?? existing.invoice_number,
       date: date ?? existing.date,

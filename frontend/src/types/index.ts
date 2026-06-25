@@ -94,6 +94,7 @@ export interface CostItem {
   quantity: number
   unit_price: number
   total_price: number
+  vat_rate?: number
   supplier: string
   invoice_number: string
   date: string
@@ -236,6 +237,7 @@ export interface ExtraCost {
   quantity: number
   unit_price: number
   total_price: number
+  vat_rate?: number
   date: string
   is_out_of_scope: boolean   // koszt ponadprogramowy
   status: ExtraCostStatus

@@ -19,6 +19,7 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
     description: initialItem?.description ?? '',
     quantity: String(initialItem?.quantity ?? '1'),
     unit_price: String(initialItem?.unit_price ?? ''),
+    vat_rate: String(initialItem?.vat_rate ?? 23),
     supplier: initialItem?.supplier ?? '',
     invoice_number: initialItem?.invoice_number ?? '',
     date: initialItem?.date ?? new Date().toISOString().slice(0, 10),
@@ -45,6 +46,7 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
         description: `WZ ${form.invoice_number.trim()}`,
         quantity: 1,
         unit_price: parseFloat(form.unit_price) || 0,
+        vat_rate: Number(form.vat_rate) || 0,
         supplier: form.supplier,
         invoice_number: form.invoice_number.trim(),
         date: form.date,
@@ -52,6 +54,7 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
         ...form,
         quantity: parseFloat(form.quantity) || 1,
         unit_price: parseFloat(form.unit_price) || 0,
+        vat_rate: Number(form.vat_rate) || 0,
       }
       let result: CostItem
       if (editing && initialItem) {
@@ -97,6 +100,16 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
                 onChange={e => set('unit_price', e.target.value)}
                 placeholder="0.00"
               />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Stawka VAT</label>
+              <select
+                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                value={form.vat_rate}
+                onChange={e => set('vat_rate', e.target.value)}
+              >
+                {[23, 8, 5, 0].map(r => <option key={r} value={r}>{r}%</option>)}
+              </select>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data</label>
@@ -166,6 +179,17 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
           </div>
 
           <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Stawka VAT</label>
+            <select
+              className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              value={form.vat_rate}
+              onChange={e => set('vat_rate', e.target.value)}
+            >
+              {[23, 8, 5, 0].map(r => <option key={r} value={r}>{r}%</option>)}
+            </select>
+          </div>
+
+          <div>
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Dostawca</label>
             <input
               className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
@@ -221,10 +245,10 @@ export default function AddCostModal({ projectId, onClose, onCreated, initialIte
 
         {total > 0 && (
           <div className="bg-gray-50 dark:bg-gray-800 rounded-lg px-4 py-2 flex justify-between items-center">
-            <span className="text-sm text-gray-600 dark:text-gray-400">Łącznie netto / brutto (VAT 23%):</span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">Łącznie netto / brutto (VAT {Number(form.vat_rate) || 0}%):</span>
             <span className="text-base font-bold text-violet-700 dark:text-violet-400">
               {new Intl.NumberFormat('pl-PL').format(total)} PLN
-              <span className="text-xs font-normal text-gray-500 dark:text-gray-400"> / {new Intl.NumberFormat('pl-PL').format(Math.round(total * 1.23))} brutto</span>
+              <span className="text-xs font-normal text-gray-500 dark:text-gray-400"> / {new Intl.NumberFormat('pl-PL').format(Math.round(total * (1 + (Number(form.vat_rate) || 0) / 100)))} brutto</span>
             </span>
           </div>
         )}

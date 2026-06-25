@@ -36,6 +36,7 @@ interface Position {
 interface FormData {
   positions: Position[]
   date: string
+  vat_rate: string
   is_out_of_scope: boolean
   notes: string
 }
@@ -45,6 +46,7 @@ const EMPTY_POSITION: Position = { description: '', quantity: '1', unit_price: '
 const EMPTY_FORM: FormData = {
   positions: [{ ...EMPTY_POSITION }],
   date: new Date().toISOString().slice(0, 10),
+  vat_rate: '23',
   is_out_of_scope: false, notes: '',
 }
 
@@ -67,6 +69,7 @@ function AddEditModal({
             unit_price: String(initial.unit_price),
           }],
           date: initial.date,
+          vat_rate: String(initial.vat_rate ?? 23),
           is_out_of_scope: initial.is_out_of_scope,
           notes: initial.notes,
         }
@@ -173,7 +176,7 @@ function AddEditModal({
             )}
           </div>
 
-          {/* Date */}
+          {/* Date + VAT */}
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1.5">Data</label>
@@ -184,13 +187,23 @@ function AddEditModal({
                 onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
               />
             </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 dark:text-gray-400 block mb-1.5">Stawka VAT</label>
+              <select
+                className="w-full border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                value={form.vat_rate}
+                onChange={e => setForm(f => ({ ...f, vat_rate: e.target.value }))}
+              >
+                {[23, 8, 5, 0].map(r => <option key={r} value={r}>{r}%</option>)}
+              </select>
+            </div>
           </div>
 
           {/* Total preview */}
           {grandTotal > 0 && (
             <div className="text-right text-sm font-medium text-gray-700 dark:text-gray-300">
               Razem netto: <span className="text-violet-600 dark:text-violet-400">{fmt(grandTotal)} PLN</span>
-              <span className="text-xs font-normal text-gray-400"> · brutto (VAT 23%): {fmt(grandTotal * 1.23)} PLN</span>
+              <span className="text-xs font-normal text-gray-400"> · brutto (VAT {Number(form.vat_rate) || 0}%): {fmt(grandTotal * (1 + (Number(form.vat_rate) || 0) / 100))} PLN</span>
             </div>
           )}
 
@@ -284,6 +297,7 @@ function SendToClientModal({
 
   const selectedItems = items.filter(i => selected.has(i.id))
   const total = selectedItems.reduce((s, i) => s + i.total_price, 0)
+  const totalGross = selectedItems.reduce((s, i) => s + i.total_price * (1 + (i.vat_rate ?? 23) / 100), 0)
 
   const handlePrint = () => { window.print() }
 
@@ -482,7 +496,7 @@ function SendToClientModal({
                               </td>
                               <td className="px-3 py-2.5 text-right font-medium text-gray-800 dark:text-gray-200">
                                 {fmt(item.total_price)} PLN
-                                <div className="text-xs font-normal text-gray-400">{fmt(item.total_price * 1.23)} brutto</div>
+                                <div className="text-xs font-normal text-gray-400">{fmt(item.total_price * (1 + (item.vat_rate ?? 23) / 100))} brutto · VAT {item.vat_rate ?? 23}%</div>
                               </td>
                               <td className="px-3 py-2.5 text-center">
                                 {item.is_out_of_scope
@@ -501,7 +515,7 @@ function SendToClientModal({
                           </td>
                           <td className="px-3 py-3 text-right text-sm font-bold text-violet-700 dark:text-violet-300">
                             {fmt(total)} PLN
-                            <div className="text-xs font-normal text-gray-400">{fmt(total * 1.23)} brutto</div>
+                            <div className="text-xs font-normal text-gray-400">{fmt(totalGross)} brutto</div>
                           </td>
                           <td />
                         </tr>
@@ -591,6 +605,7 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact, o
         description: p.description,
         quantity: Number(p.quantity),
         unit_price: Number(p.unit_price),
+        vat_rate: Number(form.vat_rate),
         date: form.date,
         is_out_of_scope: form.is_out_of_scope,
         notes: form.notes,
@@ -608,6 +623,7 @@ export default function ExtraCostsTab({ projectId, projectName, clientContact, o
       description: p.description,
       quantity: Number(p.quantity),
       unit_price: Number(p.unit_price),
+      vat_rate: Number(form.vat_rate),
       date: form.date,
       is_out_of_scope: form.is_out_of_scope,
       notes: form.notes,

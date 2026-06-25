@@ -113,6 +113,7 @@ model CostItem {
   quantity            Float    @default(1)
   unit_price          Float    @default(0)
   total_price         Float    @default(0)
+  vat_rate            Float    @default(23)   // stawka VAT % (0/5/8/23)
   supplier            String   @default("")
   invoice_number      String   @default("")
   date                String
@@ -376,6 +377,7 @@ model ExtraCost {
   quantity        Float    @default(1)
   unit_price      Float    @default(0)
   total_price     Float    @default(0)
+  vat_rate        Float    @default(23)   // stawka VAT % (0/5/8/23)
   date            String
   is_out_of_scope Boolean  @default(false)
   status          String   @default("pending")

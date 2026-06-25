@@ -228,6 +228,7 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated, onMo
   }
 
   const total = localItems.reduce((s, i) => s + i.total_price, 0)
+  const totalGross = localItems.reduce((s, i) => s + i.total_price * (1 + (i.vat_rate ?? 23) / 100), 0)
 
   return (
     <div>
@@ -261,7 +262,7 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated, onMo
               <td className="py-2 pr-3 text-right text-gray-600 dark:text-gray-400">{fmt(item.unit_price)}</td>
               <td className="py-2 pr-3 text-right font-medium text-gray-800 dark:text-gray-100">
                 {fmt(item.total_price)}
-                <div className="text-xs font-normal text-gray-400">{fmt(item.total_price * 1.23)} brutto</div>
+                <div className="text-xs font-normal text-gray-400">{fmt(item.total_price * (1 + (item.vat_rate ?? 23) / 100))} brutto · VAT {item.vat_rate ?? 23}%</div>
               </td>
               <td className="py-2 pr-3 text-center">
                 {item.category !== 'ksef_invoice' && (
@@ -331,7 +332,7 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated, onMo
             <td colSpan={5} className="pt-2 pr-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Suma netto / brutto:</td>
             <td className="pt-2 pr-3 text-right font-bold text-gray-800 dark:text-gray-100">
               {fmt(total)}
-              <div className="text-xs font-normal text-gray-400">{fmt(total * 1.23)} brutto</div>
+              <div className="text-xs font-normal text-gray-400">{fmt(totalGross)} brutto</div>
             </td>
             <td colSpan={2}></td>
           </tr>

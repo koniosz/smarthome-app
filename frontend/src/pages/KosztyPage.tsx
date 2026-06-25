@@ -100,6 +100,7 @@ function AddCostModal({ projects, onClose, onSaved }: ModalProps) {
   const [description, setDescription] = useState('')
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
   const [amount, setAmount] = useState('')
+  const [vatRate, setVatRate] = useState('23')
   const [notes, setNotes] = useState('')
   const [nameError, setNameError] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -118,6 +119,7 @@ function AddCostModal({ projects, onClose, onSaved }: ModalProps) {
         description: description.trim(),
         total_price: numAmount,
         unit_price: numAmount,
+        vat_rate: Number(vatRate),
         quantity: 1,
         notes,
         status: asDraft ? 'pending' : 'sent',
@@ -226,11 +228,16 @@ function AddCostModal({ projects, onClose, onSaved }: ModalProps) {
                 onFocus={e => { e.target.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.12)'; e.target.style.borderColor = '#2563eb' }}
                 onBlur={e => { e.target.style.boxShadow = 'none'; e.target.style.borderColor = '#e2e8f0' }}
               />
-              {Number(amount) > 0 && (
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                  Brutto (VAT 23%): <strong>{fmtAmount(Number(amount) * 1.23)} PLN</strong>
-                </div>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <label style={{ fontSize: 13, color: '#475569' }}>Stawka VAT:</label>
+                <select value={vatRate} onChange={e => setVatRate(e.target.value)}
+                  style={{ padding: '6px 10px', borderRadius: 8, fontSize: 14, border: '1px solid #e2e8f0', fontFamily: 'inherit', color: '#0f172a' }}>
+                  {[23, 8, 5, 0].map(r => <option key={r} value={r}>{r}%</option>)}
+                </select>
+                {Number(amount) > 0 && (
+                  <span style={{ fontSize: 12, color: '#64748b' }}>Brutto: <strong>{fmtAmount(Number(amount) * (1 + Number(vatRate) / 100))} PLN</strong></span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -536,7 +543,7 @@ export default function KosztyPage() {
                   {/* Kwota netto / brutto */}
                   <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{fmtAmount(cost.total_price)} <span style={{ fontSize: 11, fontWeight: 400, color: '#94a3b8' }}>netto</span></div>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>{fmtAmount(cost.total_price * 1.23)} <span style={{ fontSize: 11, color: '#94a3b8' }}>brutto</span></div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>{fmtAmount(cost.total_price * (1 + (cost.vat_rate ?? 23) / 100))} <span style={{ fontSize: 11, color: '#94a3b8' }}>brutto · VAT {cost.vat_rate ?? 23}%</span></div>
                   </div>
 
                   {/* Status */}
