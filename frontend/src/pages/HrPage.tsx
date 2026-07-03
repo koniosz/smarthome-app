@@ -324,11 +324,11 @@ function EwidencjaTable({ ew, onEditDay, adminEdit }: { ew: HrEwidencja; onEditD
 
 // ═══ Administracja HR ═══
 function AdminHR() {
-  const [sub, setSub] = useState<'wnioski' | 'salda' | 'ewidencja'>('wnioski')
+  const [sub, setSub] = useState<'wnioski' | 'salda' | 'ewidencja' | 'grafik'>('wnioski')
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
-        {([['wnioski', 'Wnioski urlopowe'], ['salda', 'Salda urlopowe'], ['ewidencja', 'Ewidencja czasu pracy']] as const).map(([k, v]) => (
+      <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit flex-wrap">
+        {([['wnioski', 'Wnioski urlopowe'], ['salda', 'Salda urlopowe'], ['ewidencja', 'Ewidencja czasu pracy'], ['grafik', 'Grafik (auto)']] as const).map(([k, v]) => (
           <button key={k} onClick={() => setSub(k)}
             className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors ${sub === k ? 'bg-white dark:bg-gray-900 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}>
             {v}
@@ -338,6 +338,87 @@ function AdminHR() {
       {sub === 'wnioski' && <AdminWnioski />}
       {sub === 'salda' && <AdminSalda />}
       {sub === 'ewidencja' && <AdminEwidencja />}
+      {sub === 'grafik' && <AdminGrafik />}
+    </div>
+  )
+}
+
+// ═══ Grafik — auto-wypełnianie ewidencji stałymi godzinami ═══
+function AdminGrafik() {
+  const [rows, setRows] = useState<Employee[]>([])
+  const [loading, setLoading] = useState(true)
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Record<string, { enabled: boolean; start: string; end: string; brk: string }>>({})
+
+  const load = () => {
+    setLoading(true)
+    hrApi.adminOverview().then(d => {
+      const emps = d.rows.map(r => r.employee)
+      setRows(emps)
+      setDraft(Object.fromEntries(emps.map(e => [e.id, {
+        enabled: !!e.auto_time_enabled,
+        start: e.work_start || '08:00',
+        end: e.work_end || '16:00',
+        brk: String(e.work_break_minutes ?? 0),
+      }])))
+    }).catch(() => setRows([])).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [])
+
+  const set = (id: string, patch: Partial<{ enabled: boolean; start: string; end: string; brk: string }>) =>
+    setDraft(p => ({ ...p, [id]: { ...p[id], ...patch } }))
+
+  const save = async (e: Employee) => {
+    const d = draft[e.id]; if (!d) return
+    setSavingId(e.id)
+    try {
+      await hrApi.setSchedule(e.id, { auto_time_enabled: d.enabled, work_start: d.start, work_end: d.end, work_break_minutes: Number(d.brk) || 0 })
+      load()
+    } catch (err: any) { alert(err?.response?.data?.error || 'Błąd zapisu.') } finally { setSavingId(null) }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500 dark:text-gray-400 max-w-2xl">
+        Pracownikom z włączonym grafikiem system <strong>codziennie automatycznie uzupełnia ewidencję</strong> stałymi godzinami —
+        tylko dni robocze (bez świąt), bez zatwierdzonych urlopów i bez dni już zarejestrowanych. Wpisy pozostają edytowalne (korekty w zakładce Ewidencja).
+      </p>
+      {loading ? <div className="text-center py-8 text-gray-400">Ładowanie…</div> : (
+        <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">Pracownik</th>
+                <th className="text-center px-3 py-2 font-medium">Auto</th>
+                <th className="text-center px-3 py-2 font-medium">Od</th>
+                <th className="text-center px-3 py-2 font-medium">Do</th>
+                <th className="text-center px-3 py-2 font-medium">Przerwa (min)</th>
+                <th className="w-24"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(e => {
+                const d = draft[e.id]; if (!d) return null
+                return (
+                  <tr key={e.id} className="border-t border-gray-100 dark:border-gray-800">
+                    <td className="px-3 py-2 font-medium text-gray-800 dark:text-gray-100">{e.name}<div className="text-xs font-normal text-gray-400">{e.position || ''}</div></td>
+                    <td className="px-3 py-2 text-center"><input type="checkbox" checked={d.enabled} onChange={ev => set(e.id, { enabled: ev.target.checked })} className="w-4 h-4" /></td>
+                    <td className="px-3 py-2 text-center"><input type="time" className="px-2 py-1 text-sm border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100" value={d.start} onChange={ev => set(e.id, { start: ev.target.value })} /></td>
+                    <td className="px-3 py-2 text-center"><input type="time" className="px-2 py-1 text-sm border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100" value={d.end} onChange={ev => set(e.id, { end: ev.target.value })} /></td>
+                    <td className="px-3 py-2 text-center"><input type="number" min="0" className="w-20 px-2 py-1 text-sm border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 text-center" value={d.brk} onChange={ev => set(e.id, { brk: ev.target.value })} /></td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => save(e)} disabled={savingId === e.id}
+                        className="px-3 py-1.5 text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50">
+                        {savingId === e.id ? '…' : 'Zapisz'}
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -537,6 +618,16 @@ function AdminEwidencja() {
         <input type="month" className={`${inputCls} w-44`} value={month} onChange={e => setMonth(e.target.value)} />
         <button onClick={printCard} disabled={!ew}
           className="px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-50">🖨 Drukuj kartę (PIP)</button>
+        <button
+          onClick={async () => {
+            if (!employeeId) return
+            try { const r = await hrApi.fillSchedule(employeeId, month); alert(`Uzupełniono ${r.created} dni z grafiku (${r.from} – ${r.to}).`); load() }
+            catch (e: any) { alert(e?.response?.data?.error || 'Błąd uzupełniania.') }
+          }}
+          disabled={!employeeId}
+          className="px-3 py-2 text-sm font-medium border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg disabled:opacity-50">
+          ⚙️ Uzupełnij z grafiku
+        </button>
       </div>
       {loading ? <div className="text-center py-8 text-gray-400">Ładowanie…</div>
         : ew ? <EwidencjaTable ew={ew} adminEdit={d => setEditDay(d)} /> : <div className="text-center py-8 text-gray-400 text-sm">Wybierz pracownika.</div>}

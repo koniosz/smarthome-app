@@ -178,6 +178,12 @@ model Employee {
   bhp_last_date          String?   // data ostatniego szkolenia BHP
   bhp_date               String?   // data następnych badań BHP / ważność
 
+  // Auto-wypełnianie ewidencji z grafiku (stałe godziny pracy)
+  auto_time_enabled  Boolean @default(false)
+  work_start         String  @default("08:00")
+  work_end           String  @default("16:00")
+  work_break_minutes Float   @default(0)
+
   assets      EmployeeAsset[]
   documents   EmployeeDocument[]
   tasks       Task[]

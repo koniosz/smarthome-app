@@ -421,6 +421,10 @@ export const hrApi = {
     api.post<HrWorkTimeEntry>(`/hr/admin/work-time/${employeeId}`, data).then(r => r.data),
   adminEwidencja: (employeeId: string, month: string) =>
     api.get<HrEwidencja>(`/hr/admin/ewidencja/${employeeId}`, { params: { month } }).then(r => r.data),
+  setSchedule: (employeeId: string, data: { auto_time_enabled?: boolean; work_start?: string; work_end?: string; work_break_minutes?: number }) =>
+    api.put<Employee>(`/hr/admin/schedule/${employeeId}`, data).then(r => r.data),
+  fillSchedule: (employeeId: string, month: string) =>
+    api.post<{ created: number; from: string; to: string }>(`/hr/admin/fill-schedule/${employeeId}`, { month }).then(r => r.data),
 }
 
 export const handoverApi = {

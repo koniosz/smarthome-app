@@ -219,6 +219,11 @@ export const db = {
         where: { employee_id: employeeId, date: { startsWith: monthPrefix } },
         orderBy: { date: 'asc' },
       }),
+    forEmployeeRange: (employeeId: string, from: string, to: string) =>
+      prisma.workTimeEntry.findMany({
+        where: { employee_id: employeeId, date: { gte: from, lte: to } },
+        orderBy: { date: 'asc' },
+      }),
     find: (id: string) => prisma.workTimeEntry.findUnique({ where: { id } }),
     upsertForDay: (employeeId: string, date: string, patch: any, createDefaults: any) =>
       prisma.workTimeEntry.upsert({

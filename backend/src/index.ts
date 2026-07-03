@@ -24,7 +24,7 @@ import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, r
 import quotesRouter from './routes/quotes'
 import warehouseRouter from './routes/warehouse'
 import handoverRouter, { handoverSignPage, handoverSubmitSign } from './routes/handover'
-import hrRouter from './routes/hr'
+import hrRouter, { fillScheduleEntries } from './routes/hr'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -212,6 +212,13 @@ setTimeout(async () => {
   setInterval(sendDailyPaymentReminder, 24 * 60 * 60 * 1000)
 }, 3 * 60 * 1000)
 console.log('[Płatności] Dzienna wysyłka przypomnień włączona')
+
+// ── HR: auto-wypełnianie ewidencji z grafiku (pracownicy z auto_time_enabled) ──
+setTimeout(async () => {
+  await fillScheduleEntries(7)
+  setInterval(() => fillScheduleEntries(7), 24 * 60 * 60 * 1000)
+}, 4 * 60 * 1000)
+console.log('[HR grafik] Dzienne auto-uzupełnianie ewidencji włączone')
 
 // ── KSeF — automatyczna synchronizacja 3x dziennie (co 8 godzin) ────────────
 // KSeF API limit: 20 requestów/godzinę. Pełna sync robi ~2 req (krótki zakres)

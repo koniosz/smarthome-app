@@ -375,4 +375,104 @@ router.post('/admin/link-user/:employeeId', requireAdmin, async (req: Request, r
   }
 })
 
+// ═══ Auto-wypełnianie ewidencji z grafiku (opcja: stałe godziny pracy) ═══
+// Tworzy wpisy TYLKO dla dni roboczych bez święta, bez zatwierdzonego urlopu
+// i bez istniejącego wpisu; wyłącznie dni zakończone (do wczoraj włącznie).
+// Wpisy oznaczane created_by='auto-grafik' — pozostają w pełni edytowalne (korekty).
+
+async function fillScheduleForEmployee(emp: any, from: string, to: string): Promise<number> {
+  // ogranicz do okresu zatrudnienia
+  const effFrom = emp.start_date && emp.start_date > from ? emp.start_date : from
+  const effTo = emp.end_date && emp.end_date < to ? emp.end_date : to
+  if (effFrom > effTo) return 0
+
+  const [existing, leaves] = await Promise.all([
+    db.work_time_entries.forEmployeeRange(emp.id, effFrom, effTo),
+    db.leave_requests.approvedInRange(emp.id, effFrom, effTo),
+  ])
+  const existingDates = new Set((existing as any[]).map(e => e.date))
+  const holidayCache = new Map<number, Set<string>>()
+  const brk = Number(emp.work_break_minutes) || 0
+  const hours = computeHours(emp.work_start, emp.work_end, brk)
+  if (hours <= 0) return 0
+
+  let created = 0
+  const start = new Date(effFrom + 'T00:00:00Z')
+  const end = new Date(effTo + 'T00:00:00Z')
+  for (let d = new Date(start); d <= end; d = addDaysUTC(d, 1)) {
+    const dow = d.getUTCDay()
+    if (dow === 0 || dow === 6) continue
+    const date = isoDate(d)
+    const y = d.getUTCFullYear()
+    if (!holidayCache.has(y)) holidayCache.set(y, polishHolidays(y))
+    if (holidayCache.get(y)!.has(date)) continue
+    if (existingDates.has(date)) continue
+    if ((leaves as any[]).some(l => l.date_from <= date && l.date_to >= date)) continue
+    await db.work_time_entries.upsertForDay(emp.id, date, {
+      start_time: emp.work_start, end_time: emp.work_end, break_minutes: brk,
+      hours_worked: hours, updated_at: now(),
+    }, {
+      id: uuidv4(), night_hours: 0, overtime_hours: 0,
+      duty_start: null, duty_end: null, duty_place: null,
+      notes: null, created_by: 'auto-grafik', created_at: now(),
+    })
+    created++
+  }
+  return created
+}
+
+// Dzienny job (wołany z index.ts): uzupełnia ostatnie `daysBack` dni do wczoraj włącznie.
+export async function fillScheduleEntries(daysBack = 7): Promise<void> {
+  try {
+    const employees: any[] = await db.employees.all()
+    const enabled = employees.filter(e => e.auto_time_enabled)
+    if (enabled.length === 0) return
+    const yesterday = isoDate(addDaysUTC(new Date(), -1))
+    const from = isoDate(addDaysUTC(new Date(), -daysBack))
+    let total = 0
+    for (const emp of enabled) total += await fillScheduleForEmployee(emp, from, yesterday)
+    if (total > 0) console.log(`[HR grafik] Auto-uzupełniono ${total} wpisów ewidencji (${enabled.length} pracowników)`)
+  } catch (e: any) {
+    console.error('[HR grafik] Błąd auto-uzupełniania:', e?.message ?? e)
+  }
+}
+
+// PUT /api/hr/admin/schedule/:employeeId — konfiguracja grafiku pracownika
+router.put('/admin/schedule/:employeeId', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const emp = await db.employees.find(req.params.employeeId)
+    if (!emp) { res.status(404).json({ error: 'Pracownik nie znaleziony' }); return }
+    const patch: any = { updated_at: now() }
+    if (req.body.auto_time_enabled !== undefined) patch.auto_time_enabled = Boolean(req.body.auto_time_enabled)
+    if (req.body.work_start !== undefined) {
+      if (toMin(req.body.work_start) === null) { res.status(400).json({ error: 'Godzina rozpoczęcia w formacie HH:MM' }); return }
+      patch.work_start = req.body.work_start
+    }
+    if (req.body.work_end !== undefined) {
+      if (toMin(req.body.work_end) === null) { res.status(400).json({ error: 'Godzina zakończenia w formacie HH:MM' }); return }
+      patch.work_end = req.body.work_end
+    }
+    if (req.body.work_break_minutes !== undefined) patch.work_break_minutes = Number(req.body.work_break_minutes) || 0
+    await db.employees.update(emp.id, patch)
+    res.json(await db.employees.find(emp.id))
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// POST /api/hr/admin/fill-schedule/:employeeId { month } — uzupełnij miesiąc z grafiku (do wczoraj)
+router.post('/admin/fill-schedule/:employeeId', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const emp: any = await db.employees.find(req.params.employeeId)
+    if (!emp) { res.status(404).json({ error: 'Pracownik nie znaleziony' }); return }
+    const month = String(req.body.month || '')
+    if (!/^\d{4}-\d{2}$/.test(month)) { res.status(400).json({ error: 'Podaj miesiąc RRRR-MM' }); return }
+    const year = Number(month.slice(0, 4)), mm = Number(month.slice(5, 7))
+    const lastDay = `${month}-${String(new Date(year, mm, 0).getDate()).padStart(2, '0')}`
+    const yesterday = isoDate(addDaysUTC(new Date(), -1))
+    const to = lastDay < yesterday ? lastDay : yesterday
+    if (`${month}-01` > to) { res.status(400).json({ error: 'Można uzupełniać tylko dni zakończone (do wczoraj)' }); return }
+    const created = await fillScheduleForEmployee(emp, `${month}-01`, to)
+    res.json({ created, from: `${month}-01`, to })
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
 export default router

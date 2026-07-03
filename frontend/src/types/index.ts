@@ -143,6 +143,11 @@ export interface Employee {
   medical_exam_date?: string | null       // data następnych badań / ważność
   bhp_last_date?: string | null           // data ostatniego szkolenia BHP
   bhp_date?: string | null                // data następnych badań BHP / ważność
+  // Auto-wypełnianie ewidencji z grafiku
+  auto_time_enabled?: boolean
+  work_start?: string
+  work_end?: string
+  work_break_minutes?: number
 }
 
 export interface EmployeeAsset {
