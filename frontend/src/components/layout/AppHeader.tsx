@@ -10,6 +10,7 @@ import {
   Banknote,
   FileBarChart,
   Warehouse,
+  Users,
   Search,
   Bell,
   ChevronDown,
@@ -18,7 +19,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
 import type { AppNotification } from '../../types'
 
-export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'magazyn'
+export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'magazyn' | 'hr'
 
 interface AppHeaderProps {
   darkMode: boolean
@@ -142,6 +143,7 @@ const NAV_ITEMS: { view: NavView; label: string; Icon: typeof Zap }[] = [
   { view: 'faktury',         label: 'Faktury',   Icon: FileText },
   { view: 'koszty',          label: 'Koszty',    Icon: Banknote },
   { view: 'magazyn',         label: 'Magazyn',   Icon: Warehouse },
+  { view: 'hr',              label: 'HR',        Icon: Users },
 ]
 
 // ─── Main AppHeader ───────────────────────────────────────────────────────────

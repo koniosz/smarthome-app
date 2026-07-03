@@ -160,6 +160,7 @@ model ClientPayment {
 
 model Employee {
   id              String  @id
+  user_id         String? @unique   // powiązanie z kontem logowania (User) — dla zakładki HR
   name            String
   hourly_rate     Float   @default(0)
   employment_type String  @default("employment")
@@ -181,8 +182,77 @@ model Employee {
   documents   EmployeeDocument[]
   tasks       Task[]
   task_assignments TaskAssignee[]
+  leave_balances    LeaveBalance[]
+  leave_requests    LeaveRequest[]
+  work_time_entries WorkTimeEntry[]
 
   @@map("employees")
+}
+
+// ─── HR: urlopy + ewidencja czasu pracy (zgodnie z art. 149 KP i rozp. MRPiPS 2018 § 6) ───
+
+// Saldo urlopowe per pracownik/rok — wymiar początkowy ustawia ręcznie admin (art. 154 KP: 20/26 dni)
+model LeaveBalance {
+  id                String @id
+  employee_id       String
+  year              Int
+  entitlement_days  Float  @default(20)  // wymiar roczny (20 lub 26)
+  carried_over_days Float  @default(0)   // urlop zaległy z lat poprzednich (art. 168 KP — do 30.09)
+  adjustment_days   Float  @default(0)   // korekta ręczna admina (+/-)
+  adjustment_note   String?
+  created_at        String
+  updated_at        String?
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@unique([employee_id, year])
+  @@map("leave_balances")
+}
+
+// Wniosek urlopowy / nieobecność (dokumentacja § 6 pkt 1 lit. b i pkt 2 rozporządzenia)
+model LeaveRequest {
+  id            String  @id
+  employee_id   String
+  type          String  // wypoczynkowy|na_zadanie|okolicznosciowy|bezplatny|opieka_dziecko|opiekunczy|macierzynski|rodzicielski|ojcowski|wychowawczy|chorobowe|inna
+  date_from     String
+  date_to       String
+  days_count    Float   // dni robocze
+  status        String  @default("pending") // pending|approved|rejected|cancelled
+  comment       String?
+  admin_comment String?
+  decided_by    String?
+  decided_at    String?
+  created_at    String
+  updated_at    String?
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@map("leave_requests")
+}
+
+// Ewidencja czasu pracy — jeden wpis na dzień (§ 6 pkt 1 lit. a: godziny, pora nocna, nadgodziny, dyżur z miejscem)
+model WorkTimeEntry {
+  id             String  @id
+  employee_id    String
+  date           String  // YYYY-MM-DD
+  start_time     String? // HH:MM
+  end_time       String?
+  break_minutes  Float   @default(0)
+  hours_worked   Float   @default(0)
+  night_hours    Float   @default(0)  // godziny w porze nocnej
+  overtime_hours Float   @default(0)  // godziny nadliczbowe
+  duty_start     String? // dyżur — początek
+  duty_end       String? // dyżur — koniec
+  duty_place     String? // dyżur — miejsce pełnienia
+  notes          String?
+  created_by     String?
+  created_at     String
+  updated_at     String?
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@unique([employee_id, date])
+  @@map("work_time_entries")
 }
 
 model EmployeeAsset {

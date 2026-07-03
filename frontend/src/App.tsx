@@ -17,6 +17,7 @@ import ManualCostsPage from './pages/ManualCostsPage'
 import KosztyPage from './pages/KosztyPage'
 import WycenaPage from './pages/WycenaPage'
 import MagazynPage from './pages/MagazynPage'
+import HrPage from './pages/HrPage'
 import HandoverPrintView from './pages/HandoverPrintView'
 import AIQuotePrintView from './pages/AIQuotePrintView'
 import SurveyPage from './pages/SurveyPage'
@@ -28,6 +29,7 @@ function pathToView(pathname: string): NavView {
   if (pathname.startsWith('/projects')) return 'projects'
   if (pathname.startsWith('/wycena')) return 'wycena'
   if (pathname.startsWith('/magazyn')) return 'magazyn'
+  if (pathname.startsWith('/hr')) return 'hr'
   if (pathname.startsWith('/product-catalog')) return 'product-catalog'
   if (pathname.startsWith('/faktury') || pathname.startsWith('/ksef')) return 'faktury'
   if (pathname.startsWith('/koszty')) return 'koszty'
@@ -125,6 +127,7 @@ function AppContent() {
             <Route path="/koszty" element={<KosztyPage />} />
             <Route path="/wycena" element={<WycenaPage />} />
             <Route path="/magazyn" element={<MagazynPage />} />
+            <Route path="/hr" element={<HrPage />} />
           </Routes>
         </main>
       </div>

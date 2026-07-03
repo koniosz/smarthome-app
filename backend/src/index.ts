@@ -24,6 +24,7 @@ import extraCostsRouter, { updateExtraCost, deleteExtraCost, approveExtraCost, r
 import quotesRouter from './routes/quotes'
 import warehouseRouter from './routes/warehouse'
 import handoverRouter, { handoverSignPage, handoverSubmitSign } from './routes/handover'
+import hrRouter from './routes/hr'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -92,6 +93,7 @@ app.use('/api/tasks', tasksRouter)
 app.use('/api/projects', projectsRouter)
 app.use('/api/quotes', quotesRouter)           // wyceny samodzielne (bez projektu)
 app.use('/api/warehouse', warehouseRouter)     // magazyn (dostęp: admin lub can_view_warehouse)
+app.use('/api/hr', hrRouter)                   // HR: urlopy + ewidencja czasu pracy
 app.use('/api/projects/:projectId/costs', costsRouter)
 app.use('/api/projects/:projectId/labor', laborRouter)
 app.use('/api/projects/:projectId/payments', paymentsRouter)

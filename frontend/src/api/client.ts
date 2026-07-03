@@ -325,6 +325,104 @@ export interface HandoverProtocol {
   accepted_at: string | null
   created_at: string
 }
+// ─── HR: urlopy + ewidencja czasu pracy ─────────────────────────────────────────
+export type LeaveType = 'wypoczynkowy' | 'na_zadanie' | 'okolicznosciowy' | 'bezplatny' | 'opieka_dziecko' | 'opiekunczy' | 'macierzynski' | 'rodzicielski' | 'ojcowski' | 'wychowawczy' | 'chorobowe' | 'inna'
+export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
+  wypoczynkowy: 'Wypoczynkowy',
+  na_zadanie: 'Na żądanie (art. 167²)',
+  okolicznosciowy: 'Okolicznościowy',
+  bezplatny: 'Bezpłatny (art. 174)',
+  opieka_dziecko: 'Opieka nad dzieckiem (art. 188)',
+  opiekunczy: 'Opiekuńczy (art. 173¹)',
+  macierzynski: 'Macierzyński',
+  rodzicielski: 'Rodzicielski',
+  ojcowski: 'Ojcowski',
+  wychowawczy: 'Wychowawczy',
+  chorobowe: 'Chorobowe (L4)',
+  inna: 'Inna nieobecność',
+}
+export interface HrLeaveBalance {
+  year: number
+  entitlement_days: number
+  carried_over_days: number
+  adjustment_days: number
+  adjustment_note: string | null
+  total_days: number
+  used_days: number
+  remaining_days: number
+  on_demand_used: number
+  on_demand_limit: number
+}
+export interface HrLeaveRequest {
+  id: string
+  employee_id: string
+  type: LeaveType
+  date_from: string
+  date_to: string
+  days_count: number
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled'
+  comment: string | null
+  admin_comment: string | null
+  decided_at: string | null
+  created_at: string
+  employee?: { id: string; name: string }
+}
+export interface HrWorkTimeEntry {
+  id: string
+  employee_id: string
+  date: string
+  start_time: string | null
+  end_time: string | null
+  break_minutes: number
+  hours_worked: number
+  night_hours: number
+  overtime_hours: number
+  duty_start: string | null
+  duty_end: string | null
+  duty_place: string | null
+  notes: string | null
+}
+export interface HrEwidencja {
+  employee: Employee
+  month: string
+  days: Array<{
+    date: string
+    day_of_week: number
+    is_weekend: boolean
+    is_holiday: boolean
+    entry: HrWorkTimeEntry | null
+    leave: { id: string; type: LeaveType } | null
+  }>
+  sums: {
+    hours_worked: number
+    night_hours: number
+    overtime_hours: number
+    days_worked: number
+    leave_days_by_type: Record<string, number>
+  }
+}
+export const hrApi = {
+  me: () => api.get<{ employee: Employee | null; balance?: HrLeaveBalance; requests?: HrLeaveRequest[] }>('/hr/me').then(r => r.data),
+  createLeave: (data: { type: LeaveType; date_from: string; date_to: string; comment?: string }) =>
+    api.post<HrLeaveRequest>('/hr/me/leave-requests', data).then(r => r.data),
+  cancelLeave: (id: string) => api.post<HrLeaveRequest>(`/hr/me/leave-requests/${id}/cancel`, {}).then(r => r.data),
+  myWorkTime: (month: string) => api.get<{ entries: HrWorkTimeEntry[] }>('/hr/me/work-time', { params: { month } }).then(r => r.data),
+  logWorkTime: (data: { date: string; start_time?: string; end_time?: string; break_minutes?: number; notes?: string }) =>
+    api.post<HrWorkTimeEntry>('/hr/me/work-time', data).then(r => r.data),
+  myEwidencja: (month: string) => api.get<HrEwidencja | null>('/hr/me/ewidencja', { params: { month } }).then(r => r.data),
+  adminOverview: (year?: number) =>
+    api.get<{ year: number; rows: Array<{ employee: Employee; balance: HrLeaveBalance; pending_count: number }> }>('/hr/admin/overview', { params: { year } }).then(r => r.data),
+  adminRequests: (status?: string) => api.get<HrLeaveRequest[]>('/hr/admin/leave-requests', { params: { status } }).then(r => r.data),
+  decide: (id: string, decision: 'approved' | 'rejected', admin_comment?: string) =>
+    api.post<HrLeaveRequest>(`/hr/admin/leave-requests/${id}/decide`, { decision, admin_comment }).then(r => r.data),
+  setBalance: (employeeId: string, year: number, data: { entitlement_days?: number; carried_over_days?: number; adjustment_days?: number; adjustment_note?: string }) =>
+    api.put<HrLeaveBalance>(`/hr/admin/balance/${employeeId}/${year}`, data).then(r => r.data),
+  adminUpsertWorkTime: (employeeId: string, data: Partial<HrWorkTimeEntry> & { date: string }) =>
+    api.post<HrWorkTimeEntry>(`/hr/admin/work-time/${employeeId}`, data).then(r => r.data),
+  adminEwidencja: (employeeId: string, month: string) =>
+    api.get<HrEwidencja>(`/hr/admin/ewidencja/${employeeId}`, { params: { month } }).then(r => r.data),
+}
+
 export const handoverApi = {
   list: (projectId: string) => api.get<HandoverProtocol[]>(`/projects/${projectId}/handover`).then(r => r.data),
   create: (projectId: string, data: { title?: string; scope?: string; client_email?: string }) =>

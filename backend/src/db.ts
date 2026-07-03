@@ -69,6 +69,10 @@ export const db = {
       prisma.employee.findMany({ orderBy: { name: 'asc' } }),
     find: (id: string) =>
       prisma.employee.findUnique({ where: { id } }),
+    findByUserId: (userId: string) =>
+      prisma.employee.findUnique({ where: { user_id: userId } }),
+    findByEmail: (email: string) =>
+      prisma.employee.findFirst({ where: { email } }),
     insert: (item: any) =>
       prisma.employee.create({ data: item }),
     update: (id: string, patch: any) =>
@@ -176,6 +180,53 @@ export const db = {
   },
   warehouse_doc_lines: {
     insert: (item: any) => prisma.warehouseDocLine.create({ data: item }),
+  },
+
+  leave_balances: {
+    forEmployeeYear: (employeeId: string, year: number) =>
+      prisma.leaveBalance.findUnique({ where: { employee_id_year: { employee_id: employeeId, year } } }),
+    forYear: (year: number) =>
+      prisma.leaveBalance.findMany({ where: { year } }),
+    upsert: (employeeId: string, year: number, patch: any, createDefaults: any) =>
+      prisma.leaveBalance.upsert({
+        where: { employee_id_year: { employee_id: employeeId, year } },
+        update: patch,
+        create: { ...createDefaults, ...patch, employee_id: employeeId, year },
+      }),
+  },
+
+  leave_requests: {
+    forEmployee: (employeeId: string) =>
+      prisma.leaveRequest.findMany({ where: { employee_id: employeeId }, orderBy: { created_at: 'desc' } }),
+    all: (status?: string) =>
+      prisma.leaveRequest.findMany({
+        where: status ? { status } : undefined,
+        include: { employee: { select: { id: true, name: true } } },
+        orderBy: { created_at: 'desc' },
+      }),
+    approvedInRange: (employeeId: string, from: string, to: string) =>
+      prisma.leaveRequest.findMany({
+        where: { employee_id: employeeId, status: 'approved', date_from: { lte: to }, date_to: { gte: from } },
+      }),
+    find: (id: string) => prisma.leaveRequest.findUnique({ where: { id } }),
+    insert: (item: any) => prisma.leaveRequest.create({ data: item }),
+    update: (id: string, patch: any) => prisma.leaveRequest.update({ where: { id }, data: patch }),
+  },
+
+  work_time_entries: {
+    forEmployeeMonth: (employeeId: string, monthPrefix: string) =>
+      prisma.workTimeEntry.findMany({
+        where: { employee_id: employeeId, date: { startsWith: monthPrefix } },
+        orderBy: { date: 'asc' },
+      }),
+    find: (id: string) => prisma.workTimeEntry.findUnique({ where: { id } }),
+    upsertForDay: (employeeId: string, date: string, patch: any, createDefaults: any) =>
+      prisma.workTimeEntry.upsert({
+        where: { employee_id_date: { employee_id: employeeId, date } },
+        update: patch,
+        create: { ...createDefaults, ...patch, employee_id: employeeId, date },
+      }),
+    delete: (id: string) => prisma.workTimeEntry.delete({ where: { id } }),
   },
 
   handover_protocols: {
