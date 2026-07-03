@@ -160,7 +160,7 @@ model ClientPayment {
 
 model Employee {
   id              String  @id
-  user_id         String? @unique   // powiązanie z kontem logowania (User) — dla zakładki HR
+  user_id         String?           // powiązanie z kontem logowania (User) — dla zakładki HR; unikalność pilnowana w kodzie (unique na istniejącej tabeli blokuje nieinteraktywny `prisma db push` przy deployu)
   name            String
   hourly_rate     Float   @default(0)
   employment_type String  @default("employment")

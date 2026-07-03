@@ -70,7 +70,7 @@ export const db = {
     find: (id: string) =>
       prisma.employee.findUnique({ where: { id } }),
     findByUserId: (userId: string) =>
-      prisma.employee.findUnique({ where: { user_id: userId } }),
+      prisma.employee.findFirst({ where: { user_id: userId } }),
     findByEmail: (email: string) =>
       prisma.employee.findFirst({ where: { email } }),
     insert: (item: any) =>

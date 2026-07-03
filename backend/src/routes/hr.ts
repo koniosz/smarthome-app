@@ -360,10 +360,17 @@ router.post('/admin/link-user/:employeeId', requireAdmin, async (req: Request, r
   try {
     const emp = await db.employees.find(req.params.employeeId)
     if (!emp) { res.status(404).json({ error: 'Pracownik nie znaleziony' }); return }
-    await db.employees.update(emp.id, { user_id: req.body.user_id || null, updated_at: now() })
+    const userId = req.body.user_id || null
+    if (userId) {
+      // unikalność powiązania pilnowana w kodzie (brak constraintu w DB)
+      const existing: any = await db.employees.findByUserId(userId)
+      if (existing && existing.id !== emp.id) {
+        res.status(409).json({ error: `To konto jest już powiązane z pracownikiem: ${existing.name}` }); return
+      }
+    }
+    await db.employees.update(emp.id, { user_id: userId, updated_at: now() })
     res.json(await db.employees.find(emp.id))
-  } catch (e: any) {
-    if (e?.code === 'P2002') { res.status(409).json({ error: 'To konto jest już powiązane z innym pracownikiem' }); return }
+  } catch {
     res.status(500).json({ error: 'Błąd serwera' })
   }
 })
