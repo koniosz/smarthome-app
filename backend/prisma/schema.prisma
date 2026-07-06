@@ -313,6 +313,7 @@ model User {
 // ─── Magazyn (warehouse) ─────────────────────────────────────────────────────
 model WarehouseItem {
   id           String   @id
+  warehouse_id String?  // null = Magazyn główny
   name         String
   sku          String?
   unit         String   @default("szt.")
@@ -325,7 +326,9 @@ model WarehouseItem {
   created_at   String
   updated_at   String?
 
+  warehouse    WarehouseLocation? @relation(fields: [warehouse_id], references: [id], onDelete: SetNull)
   movements    StockMovement[]
+  reservations StockReservation[]
 
   @@map("warehouse_items")
 }
@@ -346,15 +349,47 @@ model StockMovement {
   @@map("stock_movements")
 }
 
-// Dokumenty magazynowe: PZ (przyjęcie zewnętrzne) i WZ (wydanie zewnętrzne)
+// Magazyny (lokalizacje) — pod dokumenty MM i stany per magazyn
+model WarehouseLocation {
+  id         String @id
+  name       String
+  created_at String
+
+  items WarehouseItem[]
+
+  @@map("warehouse_locations")
+}
+
+// Rezerwacja towaru na okres (1–7 dni); dostępne = stan − aktywne rezerwacje
+model StockReservation {
+  id                String  @id
+  warehouse_item_id String
+  quantity          Float
+  date_from         String  // YYYY-MM-DD
+  date_to           String  // YYYY-MM-DD (max 7 dni od date_from)
+  reason            String?
+  project_ref       String?
+  reserved_by       String?
+  status            String  @default("active") // active | released
+  created_at        String
+  updated_at        String?
+
+  item WarehouseItem @relation(fields: [warehouse_item_id], references: [id], onDelete: Cascade)
+
+  @@map("stock_reservations")
+}
+
+// Dokumenty magazynowe: PZ (przyjęcie), WZ (wydanie), MM (przesunięcie międzymagazynowe)
 model WarehouseDoc {
   id           String   @id
-  type         String   // WZ | PZ
+  type         String   // WZ | PZ | MM
   number       String   // np. 2026/06/001/WZ
   date         String
   contractor   String?  // kontrahent: dostawca (PZ) / odbiorca (WZ)
   project_id   String?  // WZ przypisany do projektu
   cost_item_id String?  // utworzona pozycja kosztowa w projekcie
+  source_warehouse_id String?  // MM: magazyn źródłowy
+  target_warehouse_id String?  // MM: magazyn docelowy (PZ: magazyn przyjęcia)
   total_net    Float    @default(0)
   notes        String?
   created_by   String?

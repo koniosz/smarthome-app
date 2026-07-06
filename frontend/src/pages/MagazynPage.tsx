@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Modal from '../components/ui/Modal'
 import { warehouseApi, productCatalogApi, projectsApi } from '../api/client'
-import type { WarehouseItem, StockMovement, WarehouseDoc, WarehouseDocLineInput } from '../api/client'
+import type { WarehouseItem, StockMovement, WarehouseDoc, WarehouseDocLineInput, WarehouseLocationEntry, StockReservation } from '../api/client'
 import type { ProductCatalogItem, Project } from '../types'
 import { useAuth } from '../auth/AuthContext'
 
@@ -16,25 +16,29 @@ export default function MagazynPage() {
   const { user } = useAuth()
   const canSee = user?.role === 'admin' || !!user?.can_view_warehouse
 
-  const [view, setView] = useState<'stany' | 'dokumenty'>('stany')
+  const [view, setView] = useState<'stany' | 'dokumenty' | 'rezerwacje'>('stany')
   const [items, setItems] = useState<WarehouseItem[]>([])
   const [docs, setDocs] = useState<WarehouseDoc[]>([])
+  const [warehouses, setWarehouses] = useState<WarehouseLocationEntry[]>([])
+  const [reservations, setReservations] = useState<StockReservation[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [whFilter, setWhFilter] = useState<string>('all')
   const [showItem, setShowItem] = useState(false)
   const [editItem, setEditItem] = useState<WarehouseItem | null>(null)
   const [moveItem, setMoveItem] = useState<WarehouseItem | null>(null)
   const [histItem, setHistItem] = useState<WarehouseItem | null>(null)
-  const [docType, setDocType] = useState<'WZ' | 'PZ' | null>(null)
+  const [reserveItem, setReserveItem] = useState<WarehouseItem | null>(null)
+  const [docType, setDocType] = useState<'WZ' | 'PZ' | 'MM' | null>(null)
   const [assignDoc, setAssignDoc] = useState<WarehouseDoc | null>(null)
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = () => {
     setLoading(true)
-    Promise.all([warehouseApi.list(), warehouseApi.docsList()])
-      .then(([its, ds]) => { setItems(its); setDocs(ds) })
-      .catch(() => { setItems([]); setDocs([]) })
+    Promise.all([warehouseApi.list(), warehouseApi.docsList(), warehouseApi.warehousesList(), warehouseApi.reservationsList()])
+      .then(([its, ds, whs, rs]) => { setItems(its); setDocs(ds); setWarehouses(whs); setReservations(rs) })
+      .catch(() => { setItems([]); setDocs([]); setWarehouses([]); setReservations([]) })
       .finally(() => setLoading(false))
   }
   useEffect(() => { if (canSee) load() }, [canSee])
@@ -43,10 +47,20 @@ export default function MagazynPage() {
     return <div className="p-10 text-center text-gray-500 dark:text-gray-400">Brak dostępu do magazynu. Skontaktuj się z administratorem.</div>
   }
 
+  const whName = (id?: string | null) => id ? (warehouses.find(w => w.id === id)?.name ?? '?') : 'Główny'
   const q = search.trim().toLowerCase()
-  const filtered = items.filter(i => !q || `${i.name} ${i.sku ?? ''} ${i.category ?? ''} ${i.location ?? ''}`.toLowerCase().includes(q))
+  const filtered = items
+    .filter(i => whFilter === 'all' || String(i.warehouse_id || '') === (whFilter === 'main' ? '' : whFilter))
+    .filter(i => !q || `${i.name} ${i.sku ?? ''} ${i.category ?? ''} ${i.location ?? ''}`.toLowerCase().includes(q))
   const totalValue = items.reduce((s, i) => s + i.quantity * i.unit_price, 0)
   const lowStock = items.filter(i => i.min_quantity > 0 && i.quantity <= i.min_quantity)
+  const activeReservations = reservations.filter(r => r.effective_status === 'active')
+
+  const addWarehouse = async () => {
+    const name = window.prompt('Nazwa nowego magazynu (np. Bus 1, Magazyn B):')?.trim()
+    if (!name) return
+    try { await warehouseApi.warehouseCreate(name); load() } catch { alert('Nie udało się dodać magazynu.') }
+  }
 
   const onImport = async (file: File) => {
     setImporting(true)
@@ -65,20 +79,25 @@ export default function MagazynPage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Magazyn</h1>
           {view === 'stany'
-            ? <p className="text-sm text-gray-500 dark:text-gray-400">{items.length} pozycji · wartość {fmt(totalValue)} PLN{lowStock.length ? ` · ⚠️ ${lowStock.length} poniżej minimum` : ''}</p>
-            : <p className="text-sm text-gray-500 dark:text-gray-400">{docs.length} dokumentów WZ/PZ</p>}
+            ? <p className="text-sm text-gray-500 dark:text-gray-400">{items.length} pozycji · wartość {fmt(totalValue)} PLN{lowStock.length ? ` · ⚠️ ${lowStock.length} poniżej minimum` : ''}{activeReservations.length ? ` · 🔒 ${activeReservations.length} rezerwacji` : ''}</p>
+            : view === 'dokumenty'
+            ? <p className="text-sm text-gray-500 dark:text-gray-400">{docs.length} dokumentów WZ/PZ/MM</p>
+            : <p className="text-sm text-gray-500 dark:text-gray-400">{activeReservations.length} aktywnych rezerwacji</p>}
         </div>
         <div className="flex items-center gap-2">
-          {view === 'stany' ? (
+          {view === 'stany' && (
             <>
               <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onImport(f) }} />
+              <button onClick={addWarehouse} className="px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">🏬 + Magazyn</button>
               <button onClick={() => fileRef.current?.click()} disabled={importing} className="px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg disabled:opacity-50">{importing ? 'Importuję…' : '📊 Import Excel'}</button>
               <button onClick={() => { setEditItem(null); setShowItem(true) }} className="px-4 py-2 text-sm font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">+ Dodaj pozycję</button>
             </>
-          ) : (
+          )}
+          {view === 'dokumenty' && (
             <>
               <button onClick={() => setDocType('PZ')} className="px-3 py-2 text-sm font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg">+ Nowy PZ</button>
               <button onClick={() => setDocType('WZ')} className="px-3 py-2 text-sm font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg">+ Nowy WZ</button>
+              <button onClick={() => setDocType('MM')} className="px-3 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg">+ Nowy MM</button>
             </>
           )}
         </div>
@@ -86,36 +105,49 @@ export default function MagazynPage() {
 
       {/* Toggle */}
       <div className="flex gap-1 mb-4 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
-        {(['stany', 'dokumenty'] as const).map(v => (
+        {(['stany', 'dokumenty', 'rezerwacje'] as const).map(v => (
           <button key={v} onClick={() => setView(v)} className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${view === v ? 'bg-white dark:bg-gray-900 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}>
-            {v === 'stany' ? 'Stany magazynowe' : 'Dokumenty WZ/PZ'}
+            {v === 'stany' ? 'Stany magazynowe' : v === 'dokumenty' ? 'Dokumenty WZ/PZ/MM' : `Rezerwacje${activeReservations.length ? ` (${activeReservations.length})` : ''}`}
           </button>
         ))}
       </div>
 
       {loading ? <div className="text-center py-16 text-gray-400">Ładowanie…</div> : view === 'stany' ? (
         <>
-          <input className={`${inputCls} mb-4 max-w-md`} placeholder="Szukaj: nazwa, SKU, kategoria, lokalizacja…" value={search} onChange={e => setSearch(e.target.value)} />
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <input className={`${inputCls} max-w-md`} placeholder="Szukaj: nazwa, SKU, kategoria, lokalizacja…" value={search} onChange={e => setSearch(e.target.value)} />
+            <select className={`${inputCls} w-48`} value={whFilter} onChange={e => setWhFilter(e.target.value)}>
+              <option value="all">Wszystkie magazyny</option>
+              <option value="main">Główny</option>
+              {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </div>
           {filtered.length === 0 ? (
             <div className="text-center py-16 text-gray-400"><div className="text-4xl mb-3">📦</div><p className="text-sm">{items.length === 0 ? 'Magazyn pusty. Dodaj pozycję lub zaimportuj stan z Excela.' : 'Brak pozycji.'}</p></div>
           ) : (
             <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
-                  <tr><th className="text-left px-3 py-2 font-medium">Nazwa</th><th className="text-left px-3 py-2 font-medium">SKU</th><th className="text-left px-3 py-2 font-medium">Kat./Lok.</th><th className="text-right px-3 py-2 font-medium">Stan</th><th className="text-right px-3 py-2 font-medium">Cena</th><th className="text-right px-3 py-2 font-medium">Wartość</th><th className="text-right px-3 py-2 font-medium">Akcje</th></tr>
+                  <tr><th className="text-left px-3 py-2 font-medium">Nazwa</th><th className="text-left px-3 py-2 font-medium">SKU</th><th className="text-left px-3 py-2 font-medium">Magazyn</th><th className="text-right px-3 py-2 font-medium">Stan</th><th className="text-right px-3 py-2 font-medium">Dostępne</th><th className="text-right px-3 py-2 font-medium">Cena</th><th className="text-right px-3 py-2 font-medium">Wartość</th><th className="text-right px-3 py-2 font-medium">Akcje</th></tr>
                 </thead>
                 <tbody>
                   {filtered.map(it => {
                     const low = it.min_quantity > 0 && it.quantity <= it.min_quantity
+                    const reservedQ = it.reserved_qty ?? 0
+                    const avail = it.available_qty ?? it.quantity
                     return (
                       <tr key={it.id} className="border-t border-gray-100 dark:border-gray-800">
-                        <td className="px-3 py-2 font-medium text-gray-800 dark:text-gray-100">{it.name}</td>
+                        <td className="px-3 py-2 font-medium text-gray-800 dark:text-gray-100">{it.name}{it.category ? <div className="text-xs font-normal text-gray-400">{it.category}</div> : null}</td>
                         <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{it.sku || '—'}</td>
-                        <td className="px-3 py-2 text-gray-500 dark:text-gray-400 text-xs">{[it.category, it.location].filter(Boolean).join(' · ') || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500 dark:text-gray-400 text-xs">{whName(it.warehouse_id)}</td>
                         <td className={`px-3 py-2 text-right font-semibold ${low ? 'text-red-600 dark:text-red-400' : 'text-gray-800 dark:text-gray-100'}`}>{low && '⚠️ '}{fmt(it.quantity)} {it.unit}</td>
+                        <td className={`px-3 py-2 text-right ${reservedQ > 0 ? 'font-semibold text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                          {fmt(avail)}{reservedQ > 0 ? <div className="text-xs font-normal text-gray-400">🔒 {fmt(reservedQ)} zarez.</div> : null}
+                        </td>
                         <td className="px-3 py-2 text-right text-gray-600 dark:text-gray-300">{fmt(it.unit_price)}</td>
                         <td className="px-3 py-2 text-right font-medium text-gray-700 dark:text-gray-200">{fmt(it.quantity * it.unit_price)}</td>
                         <td className="px-3 py-2"><div className="flex items-center justify-end gap-1">
+                          <button onClick={() => setReserveItem(it)} className="px-2 py-1 text-xs bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100">Rezerwuj</button>
                           <button onClick={() => setMoveItem(it)} className="px-2 py-1 text-xs bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 rounded hover:bg-violet-100">Ruch</button>
                           <button onClick={() => setHistItem(it)} className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">Historia</button>
                           <button onClick={() => { setEditItem(it); setShowItem(true) }} className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 rounded">✏️</button>
@@ -129,22 +161,30 @@ export default function MagazynPage() {
             </div>
           )}
         </>
+      ) : view === 'dokumenty' ? (
+        <DocsTable docs={docs} onAssign={setAssignDoc} whName={whName} />
       ) : (
-        <DocsTable docs={docs} onAssign={setAssignDoc} />
+        <ReservationsTable reservations={reservations} onReleased={load} />
       )}
 
-      {showItem && <ItemModal item={editItem} onClose={() => setShowItem(false)} onSaved={() => { setShowItem(false); load() }} />}
+      {showItem && <ItemModal item={editItem} warehouses={warehouses} onClose={() => setShowItem(false)} onSaved={() => { setShowItem(false); load() }} />}
       {moveItem && <MoveModal item={moveItem} onClose={() => setMoveItem(null)} onSaved={() => { setMoveItem(null); load() }} />}
       {histItem && <HistoryModal item={histItem} onClose={() => setHistItem(null)} />}
-      {docType && <DocBuilderModal type={docType} items={items} onClose={() => setDocType(null)} onSaved={() => { setDocType(null); load() }} />}
+      {reserveItem && <ReserveModal item={reserveItem} onClose={() => setReserveItem(null)} onSaved={() => { setReserveItem(null); load() }} />}
+      {docType && <DocBuilderModal type={docType} items={items} warehouses={warehouses} onClose={() => setDocType(null)} onSaved={() => { setDocType(null); load() }} />}
       {assignDoc && <AssignProjectModal doc={assignDoc} onClose={() => setAssignDoc(null)} onSaved={() => { setAssignDoc(null); load() }} />}
     </div>
   )
 }
 
 // ── Dokumenty: tabela ──
-function DocsTable({ docs, onAssign }: { docs: WarehouseDoc[]; onAssign: (d: WarehouseDoc) => void }) {
-  if (docs.length === 0) return <div className="text-center py-16 text-gray-400"><div className="text-4xl mb-3">📄</div><p className="text-sm">Brak dokumentów. Utwórz PZ (przyjęcie) lub WZ (wydanie).</p></div>
+const DOC_BADGE: Record<string, string> = {
+  WZ: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  PZ: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
+  MM: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+}
+function DocsTable({ docs, onAssign, whName }: { docs: WarehouseDoc[]; onAssign: (d: WarehouseDoc) => void; whName: (id?: string | null) => string }) {
+  if (docs.length === 0) return <div className="text-center py-16 text-gray-400"><div className="text-4xl mb-3">📄</div><p className="text-sm">Brak dokumentów. Utwórz PZ (przyjęcie), WZ (wydanie) lub MM (przesunięcie).</p></div>
   return (
     <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
       <table className="w-full text-sm">
@@ -154,10 +194,10 @@ function DocsTable({ docs, onAssign }: { docs: WarehouseDoc[]; onAssign: (d: War
         <tbody>
           {docs.map(d => (
             <tr key={d.id} className="border-t border-gray-100 dark:border-gray-800">
-              <td className="px-3 py-2"><span className={`text-xs font-semibold px-2 py-0.5 rounded ${d.type === 'WZ' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'}`}>{d.type}</span></td>
+              <td className="px-3 py-2"><span className={`text-xs font-semibold px-2 py-0.5 rounded ${DOC_BADGE[d.type] ?? DOC_BADGE.PZ}`}>{d.type}</span></td>
               <td className="px-3 py-2 font-medium text-gray-800 dark:text-gray-100">{d.number}</td>
               <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{fmtDate(d.date)}</td>
-              <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{d.contractor || '—'}</td>
+              <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{d.type === 'MM' ? `${whName(d.source_warehouse_id)} → ${whName(d.target_warehouse_id)}` : (d.contractor || '—')}</td>
               <td className="px-3 py-2 text-right font-medium text-gray-700 dark:text-gray-200">{fmt(d.total_net)} PLN</td>
               <td className="px-3 py-2 text-gray-500 dark:text-gray-400 text-xs">{d.project_id ? '✓ przypisany' : '—'}</td>
               <td className="px-3 py-2 text-right">
@@ -212,12 +252,13 @@ function CatalogSearch({ warehouseItems, onlyWarehouse, onPick }: {
 }
 
 // ── Dodaj / edytuj pozycję (z wyszukiwaniem w katalogu) ──
-function ItemModal({ item, onClose, onSaved }: { item: WarehouseItem | null; onClose: () => void; onSaved: () => void }) {
+function ItemModal({ item, warehouses, onClose, onSaved }: { item: WarehouseItem | null; warehouses: WarehouseLocationEntry[]; onClose: () => void; onSaved: () => void }) {
   const editing = !!item
   const [f, setF] = useState({
     name: item?.name ?? '', sku: item?.sku ?? '', unit: item?.unit ?? 'szt.',
     unit_price: String(item?.unit_price ?? ''), quantity: String(item?.quantity ?? '0'),
     min_quantity: String(item?.min_quantity ?? '0'), category: item?.category ?? '', location: item?.location ?? '',
+    warehouse_id: item?.warehouse_id ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -227,7 +268,7 @@ function ItemModal({ item, onClose, onSaved }: { item: WarehouseItem | null; onC
     if (!f.name.trim()) { setErr('Nazwa jest wymagana'); return }
     setSaving(true); setErr('')
     try {
-      const payload = { name: f.name.trim(), sku: f.sku.trim() || null, unit: f.unit.trim() || 'szt.', unit_price: parseFloat(f.unit_price) || 0, min_quantity: parseFloat(f.min_quantity) || 0, category: f.category.trim() || null, location: f.location.trim() || null }
+      const payload = { name: f.name.trim(), sku: f.sku.trim() || null, unit: f.unit.trim() || 'szt.', unit_price: parseFloat(f.unit_price) || 0, min_quantity: parseFloat(f.min_quantity) || 0, category: f.category.trim() || null, location: f.location.trim() || null, warehouse_id: f.warehouse_id || null }
       if (editing && item) await warehouseApi.update(item.id, payload)
       else await warehouseApi.create({ ...payload, quantity: parseFloat(f.quantity) || 0 })
       onSaved()
@@ -250,7 +291,13 @@ function ItemModal({ item, onClose, onSaved }: { item: WarehouseItem | null; onC
           {!editing && <div><label className={lblCls}>Stan początkowy</label><input type="number" min="0" step="0.01" className={inputCls} value={f.quantity} onChange={e => set('quantity', e.target.value)} /></div>}
           <div><label className={lblCls}>Stan minimalny</label><input type="number" min="0" step="0.01" className={inputCls} value={f.min_quantity} onChange={e => set('min_quantity', e.target.value)} /></div>
           <div><label className={lblCls}>Kategoria</label><input className={inputCls} value={f.category} onChange={e => set('category', e.target.value)} /></div>
-          <div className={editing ? '' : 'col-span-2'}><label className={lblCls}>Lokalizacja</label><input className={inputCls} value={f.location} onChange={e => set('location', e.target.value)} /></div>
+          <div><label className={lblCls}>Lokalizacja (opis)</label><input className={inputCls} value={f.location} onChange={e => set('location', e.target.value)} /></div>
+          <div className="col-span-2"><label className={lblCls}>Magazyn</label>
+            <select className={inputCls} value={f.warehouse_id} onChange={e => set('warehouse_id', e.target.value)}>
+              <option value="">Główny</option>
+              {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </div>
         </div>
         {err && <div className="text-sm text-red-500">{err}</div>}
         <div className="flex justify-end gap-3">
@@ -262,10 +309,12 @@ function ItemModal({ item, onClose, onSaved }: { item: WarehouseItem | null; onC
   )
 }
 
-// ── Budowanie dokumentu WZ/PZ ──
-function DocBuilderModal({ type, items, onClose, onSaved }: { type: 'WZ' | 'PZ'; items: WarehouseItem[]; onClose: () => void; onSaved: () => void }) {
+// ── Budowanie dokumentu WZ/PZ/MM ──
+function DocBuilderModal({ type, items, warehouses, onClose, onSaved }: { type: 'WZ' | 'PZ' | 'MM'; items: WarehouseItem[]; warehouses: WarehouseLocationEntry[]; onClose: () => void; onSaved: () => void }) {
   const [contractor, setContractor] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [sourceWh, setSourceWh] = useState('')
+  const [targetWh, setTargetWh] = useState('')
   const [lines, setLines] = useState<WarehouseDocLineInput[]>([])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -278,24 +327,49 @@ function DocBuilderModal({ type, items, onClose, onSaved }: { type: 'WZ' | 'PZ';
   const setLine = (i: number, patch: Partial<WarehouseDocLineInput>) => setLines(prev => prev.map((l, idx) => idx === i ? { ...l, ...patch } : l))
   const total = lines.reduce((s, l) => s + (l.quantity || 0) * (l.unit_price || 0), 0)
 
+  // MM: pozycje tylko z magazynu źródłowego
+  const searchItems = type === 'MM' ? items.filter(i => String(i.warehouse_id || '') === sourceWh) : items
+
   const save = async () => {
     if (lines.length === 0) { setErr('Dodaj przynajmniej jedną pozycję'); return }
+    if (type === 'MM' && sourceWh === targetWh) { setErr('Magazyn źródłowy i docelowy muszą być różne'); return }
     setSaving(true); setErr('')
     try {
-      await warehouseApi.docCreate({ type, date, contractor: contractor.trim() || undefined, lines: lines.map(l => ({ ...l, quantity: Number(l.quantity) || 0, unit_price: Number(l.unit_price) || 0 })) })
+      await warehouseApi.docCreate({
+        type, date, contractor: contractor.trim() || undefined,
+        source_warehouse_id: type === 'MM' ? (sourceWh || null) : undefined,
+        target_warehouse_id: (type === 'MM' || type === 'PZ') ? (targetWh || null) : undefined,
+        lines: lines.map(l => ({ ...l, quantity: Number(l.quantity) || 0, unit_price: Number(l.unit_price) || 0 })),
+      })
       onSaved()
     } catch (e: any) { setErr(e?.response?.data?.error || 'Błąd zapisu dokumentu.') } finally { setSaving(false) }
   }
 
+  const whSelect = (value: string, onChange: (v: string) => void) => (
+    <select className={inputCls} value={value} onChange={e => onChange(e.target.value)}>
+      <option value="">Główny</option>
+      {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+    </select>
+  )
+
   return (
-    <Modal title={type === 'WZ' ? 'Nowy dokument WZ (wydanie)' : 'Nowy dokument PZ (przyjęcie)'} onClose={onClose} wide>
+    <Modal title={type === 'WZ' ? 'Nowy dokument WZ (wydanie)' : type === 'PZ' ? 'Nowy dokument PZ (przyjęcie)' : 'Nowy dokument MM (przesunięcie międzymagazynowe)'} onClose={onClose} wide>
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div><label className={lblCls}>{type === 'WZ' ? 'Odbiorca' : 'Dostawca'}</label><input className={inputCls} value={contractor} onChange={e => setContractor(e.target.value)} placeholder="kontrahent" /></div>
-          <div><label className={lblCls}>Data</label><input type="date" className={inputCls} value={date} onChange={e => setDate(e.target.value)} /></div>
-        </div>
-        <div><label className={lblCls}>Dodaj pozycję {type === 'WZ' ? '(z magazynu)' : '(z katalogu lub magazynu)'}</label>
-          <CatalogSearch warehouseItems={items} onlyWarehouse={type === 'WZ'} onPick={addLine} />
+        {type === 'MM' ? (
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className={lblCls}>Z magazynu</label>{whSelect(sourceWh, v => { setSourceWh(v); setLines([]) })}</div>
+            <div><label className={lblCls}>Do magazynu</label>{whSelect(targetWh, setTargetWh)}</div>
+            <div><label className={lblCls}>Data</label><input type="date" className={inputCls} value={date} onChange={e => setDate(e.target.value)} /></div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className={lblCls}>{type === 'WZ' ? 'Odbiorca' : 'Dostawca'}</label><input className={inputCls} value={contractor} onChange={e => setContractor(e.target.value)} placeholder="kontrahent" /></div>
+            {type === 'PZ' && <div><label className={lblCls}>Magazyn przyjęcia</label>{whSelect(targetWh, setTargetWh)}</div>}
+            <div><label className={lblCls}>Data</label><input type="date" className={inputCls} value={date} onChange={e => setDate(e.target.value)} /></div>
+          </div>
+        )}
+        <div><label className={lblCls}>Dodaj pozycję {type === 'PZ' ? '(z katalogu lub magazynu)' : type === 'MM' ? '(z magazynu źródłowego)' : '(z magazynu)'}</label>
+          <CatalogSearch warehouseItems={searchItems} onlyWarehouse={type !== 'PZ'} onPick={addLine} />
         </div>
         {lines.length > 0 && (
           <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
@@ -421,5 +495,90 @@ function HistoryModal({ item, onClose }: { item: WarehouseItem; onClose: () => v
           </div>
         )}
     </Modal>
+  )
+}
+
+// ── Rezerwacja towaru (1–7 dni) ──
+function ReserveModal({ item, onClose, onSaved }: { item: WarehouseItem; onClose: () => void; onSaved: () => void }) {
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const [qty, setQty] = useState('')
+  const [from, setFrom] = useState(todayIso)
+  const [to, setTo] = useState(todayIso)
+  const [reason, setReason] = useState('')
+  const [projectRef, setProjectRef] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const avail = item.available_qty ?? item.quantity
+
+  const save = async () => {
+    const q = parseFloat(qty)
+    if (!(q > 0)) { setErr('Podaj ilość większą od zera'); return }
+    setSaving(true); setErr('')
+    try {
+      await warehouseApi.reserve(item.id, { quantity: q, date_from: from, date_to: to, reason: reason.trim() || undefined, project_ref: projectRef.trim() || undefined })
+      onSaved()
+    } catch (e: any) { setErr(e?.response?.data?.error || 'Błąd rezerwacji.') } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title={`Rezerwacja — ${item.name}`} onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-500 dark:text-gray-400">Dostępne do rezerwacji: <strong>{fmt(avail)} {item.unit}</strong> (stan {fmt(item.quantity)}{(item.reserved_qty ?? 0) > 0 ? `, zarezerwowane ${fmt(item.reserved_qty!)}` : ''})</p>
+        <div><label className={lblCls}>Ilość ({item.unit}) *</label><input type="number" min="0" step="0.01" className={inputCls} value={qty} onChange={e => setQty(e.target.value)} autoFocus /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={lblCls}>Od</label><input type="date" className={inputCls} value={from} onChange={e => setFrom(e.target.value)} /></div>
+          <div><label className={lblCls}>Do (max 7 dni)</label><input type="date" className={inputCls} value={to} onChange={e => setTo(e.target.value)} /></div>
+        </div>
+        <div><label className={lblCls}>Powód</label><input className={inputCls} value={reason} onChange={e => setReason(e.target.value)} placeholder="np. montaż zaplanowany na piątek" /></div>
+        <div><label className={lblCls}>Projekt (opcjonalnie)</label><input className={inputCls} value={projectRef} onChange={e => setProjectRef(e.target.value)} placeholder="np. Apartament Kowalski" /></div>
+        {err && <div className="text-sm text-red-500">{err}</div>}
+        <div className="flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">Anuluj</button>
+          <button onClick={save} disabled={saving} className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50">{saving ? 'Rezerwuję…' : '🔒 Zarezerwuj'}</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// ── Lista rezerwacji ──
+const RES_BADGE: Record<string, { label: string; cls: string }> = {
+  active: { label: '🔒 Aktywna', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
+  released: { label: 'Zwolniona', cls: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400' },
+  expired: { label: 'Wygasła', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
+}
+function ReservationsTable({ reservations, onReleased }: { reservations: StockReservation[]; onReleased: () => void }) {
+  if (reservations.length === 0) return <div className="text-center py-16 text-gray-400"><div className="text-4xl mb-3">🔒</div><p className="text-sm">Brak rezerwacji. Zarezerwuj towar przyciskiem „Rezerwuj" przy pozycji.</p></div>
+  const release = async (r: StockReservation) => {
+    if (!window.confirm('Zwolnić rezerwację?')) return
+    try { await warehouseApi.releaseReservation(r.id); onReleased() } catch (e: any) { alert(e?.response?.data?.error || 'Błąd.') }
+  }
+  return (
+    <div className="overflow-x-auto border border-gray-200 dark:border-gray-800 rounded-xl">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
+          <tr><th className="text-left px-3 py-2 font-medium">Pozycja</th><th className="text-right px-3 py-2 font-medium">Ilość</th><th className="text-left px-3 py-2 font-medium">Okres</th><th className="text-left px-3 py-2 font-medium">Powód / projekt</th><th className="text-left px-3 py-2 font-medium">Status</th><th className="w-20"></th></tr>
+        </thead>
+        <tbody>
+          {reservations.map(r => {
+            const st = RES_BADGE[r.effective_status ?? r.status] ?? RES_BADGE.active
+            return (
+              <tr key={r.id} className="border-t border-gray-100 dark:border-gray-800">
+                <td className="px-3 py-2 font-medium text-gray-800 dark:text-gray-100">{r.item?.name ?? '—'}{r.item?.sku ? <span className="text-xs font-normal text-gray-400"> · {r.item.sku}</span> : null}</td>
+                <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{fmt(r.quantity)} {r.item?.unit ?? ''}</td>
+                <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{fmtDate(r.date_from)} – {fmtDate(r.date_to)}</td>
+                <td className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{[r.reason, r.project_ref].filter(Boolean).join(' · ') || '—'}</td>
+                <td className="px-3 py-2"><span className={`text-xs font-medium px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span></td>
+                <td className="px-3 py-2 text-right">
+                  {(r.effective_status ?? r.status) === 'active' && (
+                    <button onClick={() => release(r)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">Zwolnij</button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
   )
 }

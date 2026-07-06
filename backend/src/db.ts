@@ -161,6 +161,31 @@ export const db = {
     delete: (id: string) => prisma.warehouseItem.delete({ where: { id } }),
   },
 
+  warehouse_locations: {
+    all: () => prisma.warehouseLocation.findMany({ orderBy: { name: 'asc' } }),
+    find: (id: string) => prisma.warehouseLocation.findUnique({ where: { id } }),
+    insert: (item: any) => prisma.warehouseLocation.create({ data: item }),
+    delete: (id: string) => prisma.warehouseLocation.delete({ where: { id } }),
+  },
+
+  stock_reservations: {
+    // aktywne rezerwacje obowiązujące w dniu `asOf` lub później
+    activeAll: (asOf: string) =>
+      prisma.stockReservation.findMany({
+        where: { status: 'active', date_to: { gte: asOf } },
+        include: { item: { select: { id: true, name: true, sku: true, unit: true } } },
+        orderBy: { date_from: 'asc' },
+      }),
+    recent: (limit = 100) =>
+      prisma.stockReservation.findMany({
+        include: { item: { select: { id: true, name: true, sku: true, unit: true } } },
+        orderBy: { created_at: 'desc' }, take: limit,
+      }),
+    find: (id: string) => prisma.stockReservation.findUnique({ where: { id } }),
+    insert: (item: any) => prisma.stockReservation.create({ data: item }),
+    update: (id: string, patch: any) => prisma.stockReservation.update({ where: { id }, data: patch }),
+  },
+
   stock_movements: {
     forItem: (warehouseItemId: string) =>
       prisma.stockMovement.findMany({ where: { warehouse_item_id: warehouseItemId }, orderBy: { created_at: 'desc' } }),

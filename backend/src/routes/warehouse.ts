@@ -22,20 +22,72 @@ async function requireWarehouse(req: Request, res: Response, next: NextFunction)
 }
 router.use(requireWarehouse)
 
-// ── GET / — lista pozycji ──
+// ── Dostępność: stan − aktywne rezerwacje (obowiązujące dziś lub później) ──
+const today = () => new Date().toISOString().slice(0, 10)
+async function reservedQtyMap(): Promise<Map<string, number>> {
+  const active: any[] = await db.stock_reservations.activeAll(today())
+  const map = new Map<string, number>()
+  for (const r of active) map.set(r.warehouse_item_id, (map.get(r.warehouse_item_id) || 0) + r.quantity)
+  return map
+}
+
+// ── GET / — lista pozycji (ze stanem zarezerwowanym i dostępnym) ──
 router.get('/', async (_req: Request, res: Response) => {
-  try { res.json(await db.warehouse_items.all()) }
+  try {
+    const [items, reserved] = await Promise.all([db.warehouse_items.all(), reservedQtyMap()])
+    res.json((items as any[]).map(i => ({
+      ...i,
+      reserved_qty: reserved.get(i.id) || 0,
+      available_qty: i.quantity - (reserved.get(i.id) || 0),
+    })))
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// ── Magazyny (lokalizacje) ──
+router.get('/warehouses', async (_req: Request, res: Response) => {
+  try { res.json(await db.warehouse_locations.all()) }
   catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+router.post('/warehouses', async (req: Request, res: Response) => {
+  try {
+    const name = String(req.body.name || '').trim()
+    if (!name) { res.status(400).json({ error: 'Nazwa magazynu jest wymagana' }); return }
+    const item = { id: uuidv4(), name, created_at: now() }
+    await db.warehouse_locations.insert(item)
+    res.status(201).json(item)
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// ── Rezerwacje towaru (1–7 dni) ──
+router.get('/reservations', async (_req: Request, res: Response) => {
+  try {
+    const list: any[] = await db.stock_reservations.recent(150)
+    const t = today()
+    res.json(list.map(r => ({
+      ...r,
+      effective_status: r.status === 'active' && r.date_to < t ? 'expired' : r.status,
+    })))
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+router.post('/reservations/:id/release', async (req: Request, res: Response) => {
+  try {
+    const r: any = await db.stock_reservations.find(req.params.id)
+    if (!r) { res.status(404).json({ error: 'Rezerwacja nie znaleziona' }); return }
+    if (r.status !== 'active') { res.status(400).json({ error: 'Rezerwacja nie jest aktywna' }); return }
+    await db.stock_reservations.update(r.id, { status: 'released', updated_at: now() })
+    res.json(await db.stock_reservations.find(r.id))
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
 // ── POST / — dodaj pozycję ──
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { name, sku, unit, unit_price, quantity, min_quantity, category, location, notes } = req.body
+    const { name, sku, unit, unit_price, quantity, min_quantity, category, location, notes, warehouse_id } = req.body
     if (!name || !String(name).trim()) { res.status(400).json({ error: 'Nazwa jest wymagana' }); return }
     const qty = Number(quantity) || 0
     const item = {
       id: uuidv4(),
+      warehouse_id: warehouse_id || null,
       name: String(name).trim(),
       sku: sku ? String(sku).trim() : null,
       unit: unit ? String(unit).trim() : 'szt.',
@@ -71,6 +123,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     }
     if (req.body.unit_price !== undefined) patch.unit_price = Number(req.body.unit_price) || 0
     if (req.body.min_quantity !== undefined) patch.min_quantity = Number(req.body.min_quantity) || 0
+    if (req.body.warehouse_id !== undefined) patch.warehouse_id = req.body.warehouse_id || null
     await db.warehouse_items.update(req.params.id, patch)
     res.json(await db.warehouse_items.find(req.params.id))
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
@@ -100,8 +153,12 @@ router.post('/:id/move', async (req: Request, res: Response) => {
     const type = req.body.type === 'out' ? 'out' : 'in'
     const qty = Number(req.body.quantity) || 0
     if (qty <= 0) { res.status(400).json({ error: 'Podaj ilość większą od zera' }); return }
-    if (type === 'out' && qty > item.quantity) {
-      res.status(400).json({ error: `Niewystarczający stan (dostępne: ${item.quantity} ${item.unit})` }); return
+    if (type === 'out') {
+      const reserved = (await reservedQtyMap()).get(item.id) || 0
+      const available = item.quantity - reserved
+      if (qty > available) {
+        res.status(400).json({ error: `Niewystarczający stan dostępny: ${available} ${item.unit} (stan ${item.quantity}, zarezerwowane ${reserved})` }); return
+      }
     }
     const newQty = type === 'in' ? item.quantity + qty : item.quantity - qty
     await db.warehouse_items.update(item.id, { quantity: newQty, updated_at: now() })
@@ -113,6 +170,41 @@ router.post('/:id/move', async (req: Request, res: Response) => {
       created_by: (req as any).user?.id || null, created_at: now(),
     })
     res.json(await db.warehouse_items.find(item.id))
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// ── POST /:id/reserve — rezerwacja towaru na okres (max 7 dni) ──
+router.post('/:id/reserve', async (req: Request, res: Response) => {
+  try {
+    const item: any = await db.warehouse_items.find(req.params.id)
+    if (!item) { res.status(404).json({ error: 'Pozycja nie znaleziona' }); return }
+    const qty = Number(req.body.quantity) || 0
+    if (qty <= 0) { res.status(400).json({ error: 'Podaj ilość większą od zera' }); return }
+    const from = String(req.body.date_from || today())
+    const to = String(req.body.date_to || from)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      res.status(400).json({ error: 'Daty w formacie RRRR-MM-DD' }); return
+    }
+    const spanDays = Math.round((new Date(to + 'T00:00:00Z').getTime() - new Date(from + 'T00:00:00Z').getTime()) / 86400000) + 1
+    if (spanDays < 1) { res.status(400).json({ error: 'Data „do" nie może być przed datą „od"' }); return }
+    if (spanDays > 7) { res.status(400).json({ error: 'Rezerwacja może trwać maksymalnie 7 dni' }); return }
+    if (to < today()) { res.status(400).json({ error: 'Rezerwacja nie może kończyć się w przeszłości' }); return }
+
+    const reserved = (await reservedQtyMap()).get(item.id) || 0
+    const available = item.quantity - reserved
+    if (qty > available) {
+      res.status(400).json({ error: `Dostępne do rezerwacji: ${available} ${item.unit} (stan ${item.quantity}, już zarezerwowane ${reserved})` }); return
+    }
+    const r = {
+      id: uuidv4(), warehouse_item_id: item.id, quantity: qty,
+      date_from: from, date_to: to,
+      reason: req.body.reason ? String(req.body.reason).trim() : null,
+      project_ref: req.body.project_ref ? String(req.body.project_ref).trim() : null,
+      reserved_by: (req as any).user?.id || null,
+      status: 'active', created_at: now(), updated_at: now(),
+    }
+    await db.stock_reservations.insert(r)
+    res.status(201).json(r)
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
@@ -208,16 +300,26 @@ router.get('/docs/:id', async (req: Request, res: Response) => {
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
-// POST /api/warehouse/docs — utwórz WZ/PZ, zaktualizuj stany + ruchy
+// POST /api/warehouse/docs — utwórz WZ/PZ/MM, zaktualizuj stany + ruchy
+// WZ respektuje rezerwacje (wydanie tylko do stanu dostępnego).
+// MM: przesunięcie międzymagazynowe — zdejmuje ze źródła, dodaje w magazynie docelowym (dopasowanie po SKU/nazwie).
 router.post('/docs', async (req: Request, res: Response) => {
   try {
-    const type = req.body.type === 'WZ' ? 'WZ' : 'PZ'
+    const type = ['WZ', 'PZ', 'MM'].includes(req.body.type) ? req.body.type : 'PZ'
     const rawLines: any[] = Array.isArray(req.body.lines) ? req.body.lines : []
     const date = (req.body.date && String(req.body.date)) || now().slice(0, 10)
     const ts = now()
     const userId = (req as any).user?.id || null
+    const sourceWh = req.body.source_warehouse_id || null   // MM
+    const targetWh = req.body.target_warehouse_id || null   // MM / PZ (magazyn przyjęcia)
+
+    if (type === 'MM' && String(sourceWh || '') === String(targetWh || '')) {
+      res.status(400).json({ error: 'MM: magazyn źródłowy i docelowy muszą być różne' }); return
+    }
 
     const allItems: any[] = await db.warehouse_items.all()
+    const reserved = await reservedQtyMap()
+
     // walidacja + rozwiązanie pozycji
     const resolved: { raw: any; qty: number; price: number; item: any | null }[] = []
     for (const l of rawLines) {
@@ -226,9 +328,17 @@ router.post('/docs', async (req: Request, res: Response) => {
       const price = Number(l.unit_price) || 0
       let item = l.warehouse_item_id ? allItems.find(i => i.id === l.warehouse_item_id) : null
       if (!item && l.sku) item = allItems.find(i => i.sku && i.sku === String(l.sku).trim())
-      if (type === 'WZ') {
-        if (!item) { res.status(400).json({ error: `Pozycja „${l.name}" nie istnieje w magazynie — WZ wydaje tylko istniejący towar` }); return }
-        if (qty > item.quantity) { res.status(400).json({ error: `Niewystarczający stan: ${item.name} (dostępne ${item.quantity} ${item.unit})` }); return }
+
+      if (type === 'WZ' || type === 'MM') {
+        const label = type === 'MM' ? 'MM przesuwa' : 'WZ wydaje'
+        if (!item) { res.status(400).json({ error: `Pozycja „${l.name}" nie istnieje w magazynie — ${label} tylko istniejący towar` }); return }
+        if (type === 'MM' && String(item.warehouse_id || '') !== String(sourceWh || '')) {
+          res.status(400).json({ error: `Pozycja „${item.name}" nie znajduje się w magazynie źródłowym` }); return
+        }
+        const avail = item.quantity - (reserved.get(item.id) || 0)
+        if (qty > avail) {
+          res.status(400).json({ error: `Niewystarczający stan dostępny: ${item.name} — ${avail} ${item.unit} (stan ${item.quantity}, zarezerwowane ${reserved.get(item.id) || 0})` }); return
+        }
       }
       resolved.push({ raw: l, qty, price, item })
     }
@@ -245,7 +355,10 @@ router.post('/docs', async (req: Request, res: Response) => {
     await db.warehouse_docs.insert({
       id: docId, type, number, date,
       contractor: req.body.contractor ? String(req.body.contractor).trim() : null,
-      project_id: null, cost_item_id: null, total_net: total,
+      project_id: null, cost_item_id: null,
+      source_warehouse_id: type === 'MM' ? sourceWh : null,
+      target_warehouse_id: (type === 'MM' || type === 'PZ') ? targetWh : null,
+      total_net: total,
       notes: req.body.notes ? String(req.body.notes).trim() : null,
       created_by: userId, created_at: ts,
     })
@@ -255,7 +368,7 @@ router.post('/docs', async (req: Request, res: Response) => {
       if (type === 'PZ') {
         if (!item) {
           item = {
-            id: uuidv4(), name: String(r.raw.name || 'Pozycja').trim(), sku: r.raw.sku ? String(r.raw.sku).trim() : null,
+            id: uuidv4(), warehouse_id: targetWh, name: String(r.raw.name || 'Pozycja').trim(), sku: r.raw.sku ? String(r.raw.sku).trim() : null,
             unit: r.raw.unit ? String(r.raw.unit).trim() : 'szt.', unit_price: r.price, quantity: 0, min_quantity: 0,
             category: null, location: null, notes: null, created_at: ts, updated_at: ts,
           }
@@ -263,15 +376,49 @@ router.post('/docs', async (req: Request, res: Response) => {
         }
         await db.warehouse_items.update(item.id, { quantity: item.quantity + r.qty, updated_at: ts })
         item.quantity += r.qty
-      } else {
+        await db.stock_movements.insert({
+          id: uuidv4(), warehouse_item_id: item.id, type: 'in',
+          quantity: r.qty, unit_price: r.price, reason: `${type} ${number}`, project_ref: null,
+          created_by: userId, created_at: ts,
+        })
+      } else if (type === 'WZ') {
         await db.warehouse_items.update(item.id, { quantity: item.quantity - r.qty, updated_at: ts })
         item.quantity -= r.qty
+        await db.stock_movements.insert({
+          id: uuidv4(), warehouse_item_id: item.id, type: 'out',
+          quantity: r.qty, unit_price: r.price, reason: `${type} ${number}`, project_ref: null,
+          created_by: userId, created_at: ts,
+        })
+      } else {
+        // MM: zdejmij ze źródła
+        await db.warehouse_items.update(item.id, { quantity: item.quantity - r.qty, updated_at: ts })
+        await db.stock_movements.insert({
+          id: uuidv4(), warehouse_item_id: item.id, type: 'out',
+          quantity: r.qty, unit_price: r.price, reason: `MM ${number} → magazyn docelowy`, project_ref: null,
+          created_by: userId, created_at: ts,
+        })
+        // dodaj w magazynie docelowym (dopasowanie po SKU, potem po nazwie)
+        let target = allItems.find(i =>
+          String(i.warehouse_id || '') === String(targetWh || '') && (
+            (item.sku && i.sku && i.sku === item.sku) || (!item.sku && i.name === item.name)
+          ))
+        if (!target) {
+          target = {
+            id: uuidv4(), warehouse_id: targetWh, name: item.name, sku: item.sku,
+            unit: item.unit, unit_price: item.unit_price, quantity: 0, min_quantity: 0,
+            category: item.category, location: null, notes: null, created_at: ts, updated_at: ts,
+          }
+          await db.warehouse_items.insert(target)
+          allItems.push(target)
+        }
+        await db.warehouse_items.update(target.id, { quantity: target.quantity + r.qty, updated_at: ts })
+        target.quantity += r.qty
+        await db.stock_movements.insert({
+          id: uuidv4(), warehouse_item_id: target.id, type: 'in',
+          quantity: r.qty, unit_price: r.price, reason: `MM ${number} ← magazyn źródłowy`, project_ref: null,
+          created_by: userId, created_at: ts,
+        })
       }
-      await db.stock_movements.insert({
-        id: uuidv4(), warehouse_item_id: item.id, type: type === 'PZ' ? 'in' : 'out',
-        quantity: r.qty, unit_price: r.price, reason: `${type} ${number}`, project_ref: null,
-        created_by: userId, created_at: ts,
-      })
       await db.warehouse_doc_lines.insert({
         id: uuidv4(), doc_id: docId, warehouse_item_id: item.id,
         name: String(r.raw.name || item.name).trim(), sku: r.raw.sku ? String(r.raw.sku).trim() : (item.sku || null),
