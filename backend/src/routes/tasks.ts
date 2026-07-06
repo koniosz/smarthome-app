@@ -81,33 +81,67 @@ router.get('/', async (_req: Request, res: Response) => {
 })
 
 // GET /api/tasks/outlook-events?from=YYYY-MM-DD&to=YYYY-MM-DD
-// Wydarzenia z kalendarzy Outlook pracowników (kierunek Outlook → aplikacja),
-// pokazywane w kalendarzu jako warstwa tylko do odczytu.
+// Warstwa wydarzeń kalendarza (tylko do odczytu): wydarzenia z Outlooka pracowników
+// oraz ZATWIERDZONE urlopy/nieobecności z modułu HR (id z prefiksem 'leave:').
+const LEAVE_CAL_LABELS: Record<string, string> = {
+  wypoczynkowy: 'Urlop wypoczynkowy', na_zadanie: 'Urlop na żądanie', okolicznosciowy: 'Urlop okolicznościowy',
+  bezplatny: 'Urlop bezpłatny', opieka_dziecko: 'Opieka nad dzieckiem', opiekunczy: 'Urlop opiekuńczy',
+  macierzynski: 'Urlop macierzyński', rodzicielski: 'Urlop rodzicielski', ojcowski: 'Urlop ojcowski',
+  wychowawczy: 'Urlop wychowawczy', chorobowe: 'Chorobowe (L4)', inna: 'Nieobecność',
+}
 router.get('/outlook-events', async (req: Request, res: Response) => {
   try {
-    if (!graphConfigured()) { res.json({ events: [] }); return }
     const from = String(req.query.from ?? '').slice(0, 10)
     const to   = String(req.query.to ?? '').slice(0, 10)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       res.status(400).json({ error: 'Wymagane: from, to (YYYY-MM-DD)' }); return
     }
-    const employees = (await db.employees.all()).filter((e: any) => e.email)
-    const perEmployee = await Promise.all(
-      employees.map(async (e: any) => {
-        const evs = await listCalendarEvents(e.email, from, to)
-        return evs.map(ev => ({
-          id: `${e.id}:${ev.id}`,
-          employee_id: e.id,
-          employee_name: e.name,
-          subject: ev.subject,
-          date: ev.date,
-          start_time: ev.startTime,
-          end_time: ev.endTime,
-          is_all_day: ev.isAllDay,
-        }))
-      }),
-    )
-    res.json({ events: perEmployee.flat() })
+
+    // Zatwierdzone urlopy → wydarzenia całodniowe per dzień (niezależnie od konfiguracji Outlooka)
+    const leaveEvents: any[] = []
+    try {
+      const leaves: any[] = await db.leave_requests.approvedOverlapping(from, to)
+      for (const l of leaves) {
+        const start = l.date_from > from ? l.date_from : from
+        const end = l.date_to < to ? l.date_to : to
+        for (let d = new Date(start + 'T00:00:00Z'); d <= new Date(end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
+          const date = d.toISOString().slice(0, 10)
+          leaveEvents.push({
+            id: `leave:${l.id}:${date}`,
+            employee_id: l.employee_id,
+            employee_name: l.employee?.name ?? '',
+            subject: `🏖 ${LEAVE_CAL_LABELS[l.type] ?? 'Nieobecność'} — ${l.employee?.name ?? ''}`,
+            date,
+            start_time: '',
+            end_time: '',
+            is_all_day: true,
+          })
+        }
+      }
+    } catch { /* moduł HR opcjonalny — nie blokuj warstwy Outlook */ }
+
+    let outlookEvents: any[] = []
+    if (graphConfigured()) {
+      const employees = (await db.employees.all()).filter((e: any) => e.email)
+      const perEmployee = await Promise.all(
+        employees.map(async (e: any) => {
+          const evs = await listCalendarEvents(e.email, from, to)
+          return evs.map(ev => ({
+            id: `${e.id}:${ev.id}`,
+            employee_id: e.id,
+            employee_name: e.name,
+            subject: ev.subject,
+            date: ev.date,
+            start_time: ev.startTime,
+            end_time: ev.endTime,
+            is_all_day: ev.isAllDay,
+          }))
+        }),
+      )
+      outlookEvents = perEmployee.flat()
+    }
+
+    res.json({ events: [...leaveEvents, ...outlookEvents] })
   } catch (e) {
     res.json({ events: [] })
   }

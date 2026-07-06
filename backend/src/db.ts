@@ -208,6 +208,11 @@ export const db = {
       prisma.leaveRequest.findMany({
         where: { employee_id: employeeId, status: 'approved', date_from: { lte: to }, date_to: { gte: from } },
       }),
+    approvedOverlapping: (from: string, to: string) =>
+      prisma.leaveRequest.findMany({
+        where: { status: 'approved', date_from: { lte: to }, date_to: { gte: from } },
+        include: { employee: { select: { id: true, name: true } } },
+      }),
     find: (id: string) => prisma.leaveRequest.findUnique({ where: { id } }),
     insert: (item: any) => prisma.leaveRequest.create({ data: item }),
     update: (id: string, patch: any) => prisma.leaveRequest.update({ where: { id }, data: patch }),

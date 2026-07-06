@@ -786,15 +786,20 @@ export default function CalendarTasksSection({
                           {t.time ? `${t.time} ` : ''}{t.title}
                         </div>
                       ))}
-                      {shownOutlook.map(ev => (
-                        <div key={ev.id} title={`Outlook · ${ev.employee_name}: ${ev.subject}`} style={{
-                          fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 5,
-                          background: '#eef2ff', color: '#4f46e5', border: '1px dashed #c7d2fe',
-                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                        }}>
-                          {ev.start_time ? `${ev.start_time} ` : ''}{ev.subject}
-                        </div>
-                      ))}
+                      {shownOutlook.map(ev => {
+                        const isLeave = ev.id.startsWith('leave:')
+                        return (
+                          <div key={ev.id} title={`${isLeave ? 'Urlop' : 'Outlook'} · ${ev.employee_name}: ${ev.subject}`} style={{
+                            fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 5,
+                            background: isLeave ? '#f0fdf4' : '#eef2ff',
+                            color: isLeave ? '#15803d' : '#4f46e5',
+                            border: isLeave ? '1px solid #bbf7d0' : '1px dashed #c7d2fe',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          }}>
+                            {ev.start_time ? `${ev.start_time} ` : ''}{ev.subject}
+                          </div>
+                        )
+                      })}
                       {moreCount > 0 && (
                         <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, paddingLeft: 2 }}>
                           +{moreCount} więcej
@@ -853,19 +858,24 @@ export default function CalendarTasksSection({
                         {t.time ? `${t.time} ` : ''}{t.title}
                       </div>
                     ))}
-                    {dayOutlook.map(ev => (
-                      <div
-                        key={ev.id}
-                        title={`Outlook · ${ev.employee_name}: ${ev.subject}`}
-                        style={{
-                          fontSize: 11, fontWeight: 600, padding: '3px 6px', borderRadius: 5,
-                          background: '#eef2ff', color: '#4f46e5', border: '1px dashed #c7d2fe',
-                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                        }}
-                      >
-                        {ev.start_time ? `${ev.start_time} ` : ''}{ev.subject}
-                      </div>
-                    ))}
+                    {dayOutlook.map(ev => {
+                      const isLeave = ev.id.startsWith('leave:')
+                      return (
+                        <div
+                          key={ev.id}
+                          title={`${isLeave ? 'Urlop' : 'Outlook'} · ${ev.employee_name}: ${ev.subject}`}
+                          style={{
+                            fontSize: 11, fontWeight: 600, padding: '3px 6px', borderRadius: 5,
+                            background: isLeave ? '#f0fdf4' : '#eef2ff',
+                            color: isLeave ? '#15803d' : '#4f46e5',
+                            border: isLeave ? '1px solid #bbf7d0' : '1px dashed #c7d2fe',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {ev.start_time ? `${ev.start_time} ` : ''}{ev.subject}
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -918,20 +928,23 @@ export default function CalendarTasksSection({
               ))
             )}
 
-            {/* Wydarzenia z Outlooka (tylko do odczytu) */}
-            {(outlookByDate.get(selectedDate) ?? []).map(ev => (
-              <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ width: 18, display: 'inline-flex', justifyContent: 'center', flexShrink: 0, fontSize: 12 }}>📅</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#6366f1', fontVariantNumeric: 'tabular-nums', width: 88 }}>
-                  {ev.is_all_day ? 'cały dzień' : (ev.end_time ? `${ev.start_time}–${ev.end_time}` : ev.start_time)}
-                </span>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#6366f1', flexShrink: 0 }} />
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#4338ca' }}>{ev.subject}</span>
-                <span style={{ fontSize: 12, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {ev.employee_name} · Outlook
-                </span>
-              </div>
-            ))}
+            {/* Wydarzenia z Outlooka + zatwierdzone urlopy (tylko do odczytu) */}
+            {(outlookByDate.get(selectedDate) ?? []).map(ev => {
+              const isLeave = ev.id.startsWith('leave:')
+              return (
+                <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #f1f5f9' }}>
+                  <span style={{ width: 18, display: 'inline-flex', justifyContent: 'center', flexShrink: 0, fontSize: 12 }}>{isLeave ? '🏖' : '📅'}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: isLeave ? '#16a34a' : '#6366f1', fontVariantNumeric: 'tabular-nums', width: 88 }}>
+                    {ev.is_all_day ? 'cały dzień' : (ev.end_time ? `${ev.start_time}–${ev.end_time}` : ev.start_time)}
+                  </span>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: isLeave ? '#16a34a' : '#6366f1', flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, fontWeight: 600, color: isLeave ? '#15803d' : '#4338ca' }}>{ev.subject}</span>
+                  <span style={{ fontSize: 12, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ev.employee_name} · {isLeave ? 'Urlop (HR)' : 'Outlook'}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </div>
 
