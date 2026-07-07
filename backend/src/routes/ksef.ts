@@ -268,6 +268,21 @@ router.get('/shared/:id/line-items', requireAuth, async (req: Request, res: Resp
   }
 })
 
+// GET /api/ksef/cost-item/:costItemId/line-items — pozycje faktury dla kosztu projektu
+// (koszt kategorii 'ksef_invoice' → alokacja → faktura; wszyscy pracownicy widzą koszty projektów)
+router.get('/cost-item/:costItemId/line-items', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const costItem = await prisma.costItem.findUnique({ where: { id: req.params.costItemId }, select: { ksef_allocation_id: true } })
+    if (!costItem?.ksef_allocation_id) { res.json({ items: [] }); return }
+    const alloc = await prisma.ksefInvoiceAllocation.findUnique({ where: { id: costItem.ksef_allocation_id }, select: { invoice_id: true } })
+    if (!alloc) { res.json({ items: [] }); return }
+    const { getInvoiceLineItems } = await import('../services/ksef-lineitems')
+    res.json({ items: await getInvoiceLineItems(alloc.invoice_id) })
+  } catch (err: any) {
+    res.json({ items: [], error: err?.message ?? 'Błąd' })
+  }
+})
+
 // PATCH /api/ksef/invoices/:id/assign
 router.patch('/invoices/:id/assign', requireAdmin, async (req: Request, res: Response) => {
   try {

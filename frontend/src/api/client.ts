@@ -718,6 +718,9 @@ export const ksefApi = {
   sharedLineItems: (id: string) =>
     api.get<{ items: import('../types').KsefLineItem[] }>(`/ksef/shared/${id}/line-items`).then(r => r.data.items),
 
+  costLineItems: (costItemId: string) =>
+    api.get<{ items: import('../types').KsefLineItem[] }>(`/ksef/cost-item/${costItemId}/line-items`).then(r => r.data.items),
+
   assignShared: (id: string, body: { project_id?: string | null; company_cost?: boolean; notes?: string }) =>
     api.patch<import('../types').KsefInvoice>(`/ksef/shared/${id}/assign`, body).then(r => r.data),
 

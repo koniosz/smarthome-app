@@ -1,11 +1,53 @@
 import { useRef, useState } from 'react'
-import type { CostItem } from '../../types'
+import type { CostItem, KsefLineItem } from '../../types'
 import { COST_CATEGORY_LABELS } from '../../types'
-import { costsApi, attachmentsApi, extraCostsApi } from '../../api/client'
+import { costsApi, attachmentsApi, extraCostsApi, ksefApi } from '../../api/client'
 import AddCostModal from './AddCostModal'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
+}
+
+// Rozwijane pozycje faktury KSeF pod kosztem projektu (kategoria 'ksef_invoice')
+function KsefCostLines({ costItemId }: { costItemId: string }) {
+  const [open, setOpen] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [lines, setLines] = useState<KsefLineItem[]>([])
+
+  const toggle = async () => {
+    const next = !open
+    setOpen(next)
+    if (next && !loaded) {
+      setLoading(true)
+      try { setLines(await ksefApi.costLineItems(costItemId)) } catch { setLines([]) }
+      finally { setLoaded(true); setLoading(false) }
+    }
+  }
+
+  return (
+    <div className="mt-1">
+      <button onClick={toggle} className="text-xs text-violet-600 dark:text-violet-400 hover:underline">
+        {open ? '▾ Ukryj pozycje faktury' : '▸ Pokaż pozycje faktury'}
+      </button>
+      {open && (
+        loading ? <div className="text-xs text-gray-400 mt-1">Ładowanie pozycji…</div>
+        : lines.length === 0 ? <div className="text-xs text-gray-400 mt-1">Brak pozycji do wyświetlenia (faktura bez zapisanego XML).</div>
+        : (
+          <div className="mt-1.5 border-l-2 border-violet-200 dark:border-violet-800 pl-3 space-y-1">
+            {lines.map((li, i) => (
+              <div key={i} className="flex items-baseline gap-2 text-xs">
+                <span className="text-gray-400 w-5 shrink-0 tabular-nums">{li.nr || i + 1}.</span>
+                <span className="text-gray-700 dark:text-gray-300 flex-1">{li.name}</span>
+                <span className="text-gray-400 whitespace-nowrap">{li.qty || '1'} {li.unit || 'szt.'} × {li.unitPrice || '—'}</span>
+                <span className="font-medium text-gray-700 dark:text-gray-200 whitespace-nowrap tabular-nums">{li.netValue || '—'} <span className="font-normal text-gray-400">netto</span></span>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  )
 }
 
 interface Props {
@@ -257,6 +299,7 @@ export default function CostTable({ items, projectId, onDeleted, onUpdated, onMo
               <td className="py-2 pr-3 text-gray-800 dark:text-gray-100">
                 <div>{item.description}</div>
                 {item.supplier && <div className="text-xs text-gray-400">{item.supplier}{item.invoice_number ? ` · ${item.invoice_number}` : ''}</div>}
+                {item.category === 'ksef_invoice' && <KsefCostLines costItemId={item.id} />}
               </td>
               <td className="py-2 pr-3 text-right text-gray-600 dark:text-gray-400">{item.quantity}</td>
               <td className="py-2 pr-3 text-right text-gray-600 dark:text-gray-400">{fmt(item.unit_price)}</td>
