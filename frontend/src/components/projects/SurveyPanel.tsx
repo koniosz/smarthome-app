@@ -27,24 +27,14 @@ function fmtDate(iso: string | null) {
   return new Date(iso).toLocaleDateString('pl-PL', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-// ── Response viewer ────────────────────────────────────────────────────────────
+// ── Response viewer (ankieta v4; klucze legacy obsługiwane fallbackiem) ─────────
 
-const SYSTEM_LABELS: Record<string, string> = {
-  lighting: '💡 Inteligentne oświetlenie',
-  hvac: '🌡️ Ogrzewanie i klimatyzacja',
-  blinds: '🪟 Rolety i żaluzje',
-  alarm: '🚨 System alarmowy',
-  access: '🔐 Kontrola dostępu',
-  cctv: '📷 Monitoring CCTV',
-  audio: '🔊 Multiroom Audio',
-  av: '🎬 Home Cinema / AV',
-  garden: '🌿 Ogród i zewnętrze',
-  ev: '⚡ Ładowarka EV',
-  pv: '☀️ Fotowoltaika / energia',
-  voice: '🎙️ Sterowanie głosowe',
-  spa: '🏊 Strefa SPA',
-  ai_monitoring: '🤖 AI Concierge',
+import { SYSTEM_LABELS as SPEC_SYSTEM_LABELS, DETAIL_FIELD_LABELS, SURVEY_FIELD_LABELS } from '../../surveySpec'
+
+const LEGACY_SYSTEM_LABELS: Record<string, string> = {
+  hvac: '🌡️ Ogrzewanie i klimatyzacja', access: '🔐 Kontrola dostępu', voice: '🎙️ Sterowanie głosowe', ai_monitoring: '🤖 AI Concierge',
 }
+const SYSTEM_LABELS: Record<string, string> = { ...LEGACY_SYSTEM_LABELS, ...SPEC_SYSTEM_LABELS }
 
 interface ResponseGroup {
   title: string
@@ -56,11 +46,12 @@ const RESPONSE_GROUPS: ResponseGroup[] = [
     title: '🏠 Twój dom',
     fields: [
       { key: 'building_type', label: 'Typ budynku' },
-      { key: 'is_new_build', label: 'Stan budynku' },
+      { key: 'building_state', label: 'Stan budynku' },
+      { key: 'is_new_build', label: 'Stan budynku' },        // legacy
       { key: 'area_m2', label: 'Powierzchnia (m²)' },
       { key: 'floors_count', label: 'Liczba kondygnacji' },
-      { key: 'rooms_count', label: 'Liczba pokoi' },
-      { key: 'location', label: 'Lokalizacja' },
+      { key: 'rooms_count', label: 'Liczba pokoi / stref' },
+      { key: 'location', label: 'Miasto / region' },
       { key: 'completion_date', label: 'Termin realizacji' },
     ],
   },
@@ -69,34 +60,39 @@ const RESPONSE_GROUPS: ResponseGroup[] = [
     fields: [{ key: 'systems', label: 'Systemy Smart Home' }],
   },
   {
-    title: '🎛️ Preferencje',
+    title: '🎯 Priorytety i oczekiwania',
     fields: [
-      { key: 'control_preference', label: 'Sposób sterowania' },
-      { key: 'brand_preference', label: 'Preferowane marki' },
-      { key: 'automation_level', label: 'Poziom automatyzacji' },
-      { key: 'priority_system', label: 'Priorytet' },
-      { key: 'integration_existing', label: 'Istniejące systemy' },
+      { key: 'control_methods', label: SURVEY_FIELD_LABELS.control_methods },
+      { key: 'control_preference', label: 'Sposób sterowania' },   // legacy
+      { key: 'automation_level', label: SURVEY_FIELD_LABELS.automation_level },
+      { key: 'existing_systems', label: SURVEY_FIELD_LABELS.existing_systems },
+      { key: 'integration_existing', label: 'Istniejące systemy' }, // legacy
+      { key: 'priorities', label: SURVEY_FIELD_LABELS.priorities },
+      { key: 'priority_system', label: 'Priorytet' },              // legacy
+      { key: 'phasing', label: SURVEY_FIELD_LABELS.phasing },
+      { key: 'timeline_urgency', label: SURVEY_FIELD_LABELS.timeline_urgency },
+      { key: 'budget_range', label: 'Budżet (legacy)' },           // legacy
     ],
   },
   {
-    title: '💰 Budżet i harmonogram',
+    title: '📝 Opis projektu',
     fields: [
-      { key: 'budget_range', label: 'Budżet' },
-      { key: 'phasing', label: 'Podejście do realizacji' },
-      { key: 'timeline_urgency', label: 'Pilność' },
-    ],
-  },
-  {
-    title: '📎 Szczegóły',
-    fields: [
-      { key: 'dream_description', label: 'Wymarzony smart home' },
-      { key: 'previous_experience', label: 'Doświadczenie' },
-      { key: 'additional_notes', label: 'Dodatkowe uwagi' },
+      { key: 'project_description', label: SURVEY_FIELD_LABELS.project_description },
+      { key: 'dream_description', label: 'Wymarzony smart home' }, // legacy
+      { key: 'previous_experience', label: 'Doświadczenie' },      // legacy
+      { key: 'additional_notes', label: 'Dodatkowe uwagi' },       // legacy
     ],
   },
 ]
 
+function displayValue(val: any): string {
+  if (typeof val === 'boolean') return val ? 'Tak' : 'Nie'
+  if (Array.isArray(val)) return val.join(', ')
+  return String(val)
+}
+
 function ResponseViewer({ responses }: { responses: Record<string, any> }) {
+  const details: Record<string, Record<string, any>> = responses.details ?? {}
   return (
     <div className="space-y-5">
       {RESPONSE_GROUPS.map(group => (
@@ -105,20 +101,13 @@ function ResponseViewer({ responses }: { responses: Record<string, any> }) {
           <div className="space-y-2">
             {group.fields.map(field => {
               const val = responses[field.key]
-              if (val === undefined || val === null || val === '') return null
-
-              let display: string
-              if (field.key === 'systems' && Array.isArray(val)) {
-                display = val.map((k: string) => SYSTEM_LABELS[k] ?? k).join(', ')
-              } else if (Array.isArray(val)) {
-                display = val.join(', ')
-              } else {
-                display = String(val)
-              }
-
+              if (val === undefined || val === null || val === '' || (Array.isArray(val) && val.length === 0)) return null
+              const display = field.key === 'systems' && Array.isArray(val)
+                ? val.map((k: string) => SYSTEM_LABELS[k] ?? k).join(', ')
+                : displayValue(val)
               return (
                 <div key={field.key} className="flex gap-3">
-                  <span className="shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400 w-36">{field.label}:</span>
+                  <span className="shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400 w-40">{field.label}:</span>
                   <span className="text-sm text-gray-800 dark:text-gray-100 flex-1">{display}</span>
                 </div>
               )
@@ -126,6 +115,33 @@ function ResponseViewer({ responses }: { responses: Record<string, any> }) {
           </div>
         </div>
       ))}
+
+      {/* Pytania dedykowane (krok 3) — per wybrany system */}
+      {Object.keys(details).length > 0 && (
+        <div>
+          <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">🔧 Szczegóły systemów</h4>
+          <div className="space-y-3">
+            {Object.entries(details).map(([sysKey, answers]) => {
+              const fieldLabels = DETAIL_FIELD_LABELS[sysKey] ?? {}
+              const entries = Object.entries(answers ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0))
+              if (entries.length === 0) return null
+              return (
+                <div key={sysKey} className="border border-gray-100 dark:border-gray-800 rounded-lg p-3">
+                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-1.5">{SYSTEM_LABELS[sysKey] ?? sysKey}</div>
+                  <div className="space-y-1">
+                    {entries.map(([k, v]) => (
+                      <div key={k} className="flex gap-3">
+                        <span className="shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400 w-40">{fieldLabels[k] ?? k}:</span>
+                        <span className="text-sm text-gray-800 dark:text-gray-100 flex-1">{displayValue(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

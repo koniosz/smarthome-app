@@ -957,108 +957,104 @@ router.post('/from-survey/:surveyId', async (req: Request, res: Response) => {
     } else {
       // No attachments — use text block with client description
       const responses: Record<string, any> = (survey as any).responses ?? {}
-      const descText = responses.dream_description || responses.additional_notes || 'Brak opisu'
+      const descText = responses.project_description || responses.dream_description || responses.additional_notes || 'Brak opisu'
       fileBlocks.push({
         type: 'text',
         text: `Brak załączonych rzutów. Klient opisał swoje oczekiwania:\n${descText}`,
       })
     }
 
-    // 4. Build userNotes string from survey responses
+    // 4. Build userNotes string from survey responses (ankieta v4; wartości to polskie
+    //    etykiety, legacy klucze mapowane fallbackiem)
     const responses: Record<string, any> = (survey as any).responses ?? {}
 
-    const BUILDING_TYPE_MAP: Record<string, string> = {
-      detached: 'Dom wolnostojący',
-      semi_detached: 'Bliźniak',
-      apartment: 'Mieszkanie',
-      townhouse: 'Szeregowiec',
-      commercial: 'Lokal komercyjny',
+    // Legacy maps (stare ankiety zapisywały klucze zamiast etykiet) — mapVal przepuszcza nowe wartości bez zmian
+    const LEGACY_MAPS: Record<string, Record<string, string>> = {
+      building_type: { detached: 'Dom wolnostojący', semi_detached: 'Bliźniak', apartment: 'Mieszkanie', townhouse: 'Szeregowiec', commercial: 'Lokal komercyjny' },
+      building_state: { new: 'Nowy budynek (w budowie)', renovation: 'Remont / modernizacja', existing: 'Istniejący budynek' },
+      control: { app: 'Aplikacja mobilna', voice: 'Sterowanie głosowe', panel: 'Panele dotykowe', remote: 'Pilot', all: 'Kombinacja wszystkich' },
+      automation: { basic: 'Podstawowa automatyka', comfort: 'Komfort (sceny, harmonogramy)', full: 'Pełna automatyzacja (dom "myśli" za mnie)' },
+      phasing: { all_at_once: 'Pełna realizacja od razu', phases: 'Etapami', mvp: 'MVP — tylko kluczowe systemy' },
+      timeline: { asap: 'Jak najszybciej', '6months': 'W ciągu 6 miesięcy', '1year': 'W ciągu roku', flexible: 'Elastycznie' },
     }
-    const IS_NEW_BUILD_MAP: Record<string, string> = {
-      new: 'Nowy budynek (w budowie)',
-      renovation: 'Remont / modernizacja',
-      existing: 'Istniejący budynek',
-    }
-    const CONTROL_MAP: Record<string, string> = {
-      app: 'Aplikacja mobilna',
-      voice: 'Sterowanie głosowe',
-      panel: 'Panele dotykowe',
-      remote: 'Pilot',
-      all: 'Kombinacja wszystkich',
-    }
-    const AUTOMATION_MAP: Record<string, string> = {
-      basic: 'Podstawowa automatyka (oświetlenie, temp)',
-      comfort: 'Komfort (sceny, harmonogramy)',
-      full: 'Pełna automatyzacja (dom "myśli" za mnie)',
-    }
-    const PRIORITY_MAP: Record<string, string> = {
-      security: 'Bezpieczeństwo i ochrona',
-      comfort: 'Komfort i wygoda',
-      energy: 'Oszczędność energii',
-      prestige: 'Prestiż i design',
-    }
-    const BUDGET_MAP: Record<string, string> = {
-      under_30k: 'do 30 000 PLN',
-      '30k_70k': '30 000–70 000 PLN',
-      '70k_150k': '70 000–150 000 PLN',
-      '150k_300k': '100 000–200 000 PLN',
-      over_300k: 'powyżej 300 000 PLN',
-    }
-    const PHASING_MAP: Record<string, string> = {
-      all_at_once: 'Pełna realizacja od razu',
-      phases: 'Etapami',
-      mvp: 'MVP — tylko kluczowe systemy',
-    }
-    const TIMELINE_MAP: Record<string, string> = {
-      asap: 'Jak najszybciej',
-      '6months': 'W ciągu 6 miesięcy',
-      '1year': 'W ciągu roku',
-      flexible: 'Elastycznie',
-    }
+    const mapVal = (map: Record<string, string>, v: any) => map[String(v)] ?? String(v)
+
     const SYSTEM_NAME_MAP: Record<string, string> = {
-      lighting: 'Inteligentne oświetlenie',
-      hvac: 'Ogrzewanie i klimatyzacja',
-      blinds: 'Rolety i żaluzje',
-      alarm: 'Alarm',
-      access: 'Kontrola dostępu',
-      cctv: 'Monitoring CCTV',
-      audio: 'Multiroom Audio',
-      av: 'Home Cinema / AV',
-      garden: 'Ogród i zewnętrze',
-      ev: 'Ładowarka EV',
-      pv: 'Fotowoltaika',
-      voice: 'Sterowanie głosowe',
-      spa: 'Strefa SPA (basen, jacuzzi, sauna)',
-      ai_monitoring: 'AI Concierge (lokalny, prywatny)',
+      lighting: 'Oświetlenie', heating: 'Ogrzewanie', cooling: 'Klimatyzacja', ventilation: 'Rekuperacja / wentylacja',
+      blinds: 'Rolety / żaluzje / markizy', pergola: 'Pergole / zadaszenia tarasowe',
+      alarm: 'System alarmowy', gates: 'Bramy', intercom: 'Wideodomofon', cctv: 'Monitoring CCTV',
+      network: 'Sieć i WiFi', audio: 'Multiroom Audio', av: 'Kino domowe / AV',
+      pv: 'Fotowoltaika i zarządzanie energią', ev: 'Ładowarka EV',
+      garden: 'Instalacje ogrodowe', spa: 'Basen / SPA / sauna',
+      // legacy
+      hvac: 'Ogrzewanie i klimatyzacja', access: 'Kontrola dostępu', voice: 'Sterowanie głosowe', ai_monitoring: 'AI Concierge',
     }
+    const DETAIL_LABELS: Record<string, Record<string, string>> = {
+      lighting: { control_types: 'Rodzaj sterowania', circuits_count: 'Liczba obwodów/stref', daylight_automation: 'Automatyka wg słońca' },
+      heating: { install_types: 'Typ instalacji', heat_source: 'Źródło ciepła', zones_count: 'Liczba stref grzewczych' },
+      cooling: { unit_type: 'Typ', rooms_count: 'Liczba pomieszczeń', brand: 'Model/producent' },
+      ventilation: { air_quality_sensors: 'Czujniki jakości powietrza (CO2/wilgotność)', auto_control: 'Automatyczne sterowanie' },
+      blinds: { types: 'Typ', openings_count: 'Liczba okien/otworów', weather_sensors: 'Czujniki wiatru/słońca' },
+      pergola: { types: 'Typ', count_dimensions: 'Liczba sztuk i wymiary', rain_wind_sensor: 'Czujnik deszczu/wiatru', heat_light_integration: 'Integracja z oświetleniem/ogrzewaniem zewn.' },
+      alarm: { project: 'Projekt systemu' },
+      gates: { garage: 'Brama garażowa', entry: 'Brama wjazdowa' },
+      intercom: { panels_count: 'Panele zewnętrzne', monitors_count: 'Monitory wewnętrzne', phone_integration: 'Integracja z telefonem', lock_integration: 'Integracja z zamkiem/bramą' },
+      cctv: { project: 'Projekt systemu' },
+      network: { project: 'Projekt systemu' },
+      audio: { zones_count: 'Liczba stref audio', sources: 'Główne źródła', central_integration: 'Integracja z centralnym sterowaniem' },
+      av: { room_type: 'Pomieszczenie', display: 'TV/Projektor', audio_config: 'Konfiguracja audio', universal_remote: 'Uniwersalny pilot/panel' },
+      garden: { garden_lighting: 'Oświetlenie ogrodowe', irrigation: 'Nawadnianie — integracja', irrigation_brand: 'Sterownik nawadniania' },
+      pv: { smart_integration: 'Integracja ze smart home', energy_charts: 'Wykresy produkcji/zużycia' },
+      ev: { smart_integration: 'Integracja ze smart home', energy_charts: 'Wykresy produkcji/zużycia' },
+      spa: { types: 'Rodzaj', automation: 'Zakres automatyzacji' },
+    }
+    const fmtDetailVal = (v: any): string =>
+      typeof v === 'boolean' ? (v ? 'tak' : 'nie') : Array.isArray(v) ? v.join(', ') : String(v)
 
     const systems: string[] = Array.isArray(responses.systems) ? responses.systems : []
     const systemsDisplay = systems.map((s: string) => SYSTEM_NAME_MAP[s] ?? s).join(', ') || 'Nie podano'
 
+    // Szczegóły per system (krok 3 ankiety v4) — kluczowe dane do wyceny
+    const details: Record<string, Record<string, any>> = responses.details ?? {}
+    const detailLines: string[] = []
+    for (const [sysKey, answers] of Object.entries(details)) {
+      const entries = Object.entries(answers ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0))
+      if (entries.length === 0) continue
+      const labels = DETAIL_LABELS[sysKey] ?? {}
+      detailLines.push(`• ${SYSTEM_NAME_MAP[sysKey] ?? sysKey}: ${entries.map(([k, v]) => `${labels[k] ?? k}: ${fmtDetailVal(v)}`).join('; ')}`)
+    }
+
+    const controlMethods = Array.isArray(responses.control_methods) ? responses.control_methods.join(', ')
+      : responses.control_preference ? mapVal(LEGACY_MAPS.control, responses.control_preference) : ''
+    const priorities = Array.isArray(responses.priorities) ? responses.priorities.join(', ')
+      : responses.priority_system ? String(responses.priority_system) : ''
+    const description = responses.project_description || responses.dream_description || ''
+
     const userNotes = [
       'DANE Z ANKIETY KLIENTA:',
-      responses.building_type ? `- Typ budynku: ${BUILDING_TYPE_MAP[responses.building_type] ?? responses.building_type}` : '',
-      responses.is_new_build !== undefined ? `- Stan: ${IS_NEW_BUILD_MAP[String(responses.is_new_build)] ?? String(responses.is_new_build)}` : '',
+      responses.building_type ? `- Typ budynku: ${mapVal(LEGACY_MAPS.building_type, responses.building_type)}` : '',
+      (responses.building_state ?? responses.is_new_build) !== undefined ? `- Stan: ${mapVal(LEGACY_MAPS.building_state, responses.building_state ?? responses.is_new_build)}` : '',
       responses.area_m2 ? `- Powierzchnia: ${responses.area_m2} m²` : '',
       responses.floors_count ? `- Kondygnacje: ${responses.floors_count}` : '',
       responses.rooms_count ? `- Pokoje/strefy: ${responses.rooms_count}` : '',
       responses.location ? `- Lokalizacja: ${responses.location}` : '',
-      responses.completion_date ? `- Planowane ukończenie: ${responses.completion_date}` : '',
+      responses.completion_date ? `- Planowany termin realizacji: ${responses.completion_date}` : '',
       '',
       `WYBRANE SYSTEMY: ${systemsDisplay}`,
+      detailLines.length > 0 ? `\nSZCZEGÓŁY SYSTEMÓW (z ankiety — uwzględnij ilości przy wycenie):\n${detailLines.join('\n')}` : '',
       '',
       'PREFERENCJE KLIENTA:',
-      responses.control_preference ? `- Preferowany sposób sterowania: ${CONTROL_MAP[responses.control_preference] ?? responses.control_preference}` : '',
-      responses.automation_level ? `- Poziom automatyzacji: ${AUTOMATION_MAP[responses.automation_level] ?? responses.automation_level}` : '',
-      responses.priority_system ? `- Priorytet: ${PRIORITY_MAP[responses.priority_system] ?? responses.priority_system}` : '',
+      controlMethods ? `- Preferowany sposób sterowania: ${controlMethods}` : '',
+      responses.automation_level ? `- Poziom automatyzacji: ${mapVal(LEGACY_MAPS.automation, responses.automation_level)}` : '',
+      responses.existing_systems ? `- Istniejące systemy: ${responses.existing_systems}` : '',
       responses.integration_existing ? `- Istniejące systemy: ${responses.integration_existing}` : '',
+      priorities ? `- Na czym klientowi najbardziej zależy: ${priorities}` : '',
       '',
-      'BUDŻET I HARMONOGRAM:',
-      responses.budget_range ? `- Budżet: ${BUDGET_MAP[responses.budget_range] ?? responses.budget_range}` : '',
-      responses.phasing ? `- Podejście do realizacji: ${PHASING_MAP[responses.phasing] ?? responses.phasing}` : '',
-      responses.timeline_urgency ? `- Pilność: ${TIMELINE_MAP[responses.timeline_urgency] ?? responses.timeline_urgency}` : '',
+      'HARMONOGRAM:',
+      responses.phasing ? `- Podejście do realizacji: ${mapVal(LEGACY_MAPS.phasing, responses.phasing)}` : '',
+      responses.timeline_urgency ? `- Pilność: ${mapVal(LEGACY_MAPS.timeline, responses.timeline_urgency)}` : '',
       '',
-      responses.dream_description ? `WIZJA KLIENTA (bardzo ważne — uwzględnij przy wycenie):\n"${responses.dream_description}"` : '',
+      description ? `WIZJA KLIENTA (bardzo ważne — uwzględnij przy wycenie):\n"${description}"` : '',
       responses.previous_experience ? `Doświadczenie klienta: ${responses.previous_experience}` : '',
       responses.additional_notes ? `Dodatkowe uwagi klienta: ${responses.additional_notes}` : '',
       survey.client_name ? `Klient: ${survey.client_name}` : '',
@@ -1067,12 +1063,12 @@ router.post('/from-survey/:surveyId', async (req: Request, res: Response) => {
     // 5. Map survey systems to brand systems for selectedSystems
     const brandSystemsSet = new Set<string>()
     for (const s of systems) {
-      if (['lighting', 'hvac', 'blinds', 'audio', 'ev', 'pv', 'garden', 'spa'].includes(s)) brandSystemsSet.add('KNX')
+      if (['lighting', 'heating', 'cooling', 'ventilation', 'blinds', 'pergola', 'gates', 'audio', 'ev', 'pv', 'garden', 'spa', 'hvac'].includes(s)) brandSystemsSet.add('KNX')
       if (['alarm', 'access'].includes(s)) {
         brandSystemsSet.add('Satel')
         if (s === 'access') brandSystemsSet.add('Hikvision')
       }
-      if (['cctv', 'ai_monitoring'].includes(s)) brandSystemsSet.add('Hikvision')
+      if (['cctv', 'intercom', 'ai_monitoring'].includes(s)) brandSystemsSet.add('Hikvision')
       if (['av', 'voice'].includes(s)) brandSystemsSet.add('Control4')
     }
     const selectedSystems = brandSystemsSet.size > 0
