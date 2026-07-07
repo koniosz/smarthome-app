@@ -299,6 +299,7 @@ model User {
   display_name  String
   role          String   @default("employee")
   can_view_warehouse Boolean @default(false)   // admin nadaje dostęp do zakładki Magazyn
+  can_view_invoices  Boolean @default(false)   // admin nadaje dostęp do fakturowania (sprzedaż)
   azure_oid     String?  @unique
   password_hash String?
   created_at    String

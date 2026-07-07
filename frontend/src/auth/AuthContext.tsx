@@ -7,6 +7,7 @@ export interface AuthUser {
   display_name: string
   role: 'admin' | 'employee'
   can_view_warehouse?: boolean
+  can_view_invoices?: boolean
 }
 
 interface AuthContextValue {

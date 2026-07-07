@@ -25,6 +25,7 @@ interface User {
   display_name: string
   role: 'admin' | 'employee'
   can_view_warehouse?: boolean
+  can_view_invoices?: boolean
   azure_oid: string | null
   created_at: string
 }
@@ -129,6 +130,13 @@ export default function AdminView() {
     try {
       await client.put(`/api/users/${userId}`, { can_view_warehouse })
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_view_warehouse } : u))
+    } catch { alert('Nie udało się zapisać uprawnienia.') }
+  }
+
+  async function toggleInvoices(userId: string, can_view_invoices: boolean) {
+    try {
+      await client.put(`/api/users/${userId}`, { can_view_invoices })
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, can_view_invoices } : u))
     } catch { alert('Nie udało się zapisać uprawnienia.') }
   }
 
@@ -362,6 +370,14 @@ export default function AdminView() {
                       onChange={e => toggleWarehouse(u.id, e.target.checked)}
                     />
                     📦
+                  </label>
+                  <label onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 cursor-pointer" title="Dostęp do fakturowania (sprzedaż)">
+                    <input
+                      type="checkbox"
+                      checked={!!u.can_view_invoices}
+                      onChange={e => toggleInvoices(u.id, e.target.checked)}
+                    />
+                    🧾
                   </label>
                   <select
                     value={u.role}

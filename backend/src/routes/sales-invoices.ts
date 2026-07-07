@@ -1,7 +1,6 @@
-import { Router, Request, Response } from 'express'
+import { Router, Request, Response, NextFunction } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import db from '../db'
-import { requireAdmin } from '../middleware/auth'
 
 // Faktury sprzedażowe (BETA).
 // Szkic → wystawienie (numer FV/RRRR/MM/NNN) → opłacona / anulowana.
@@ -11,7 +10,18 @@ import { requireAdmin } from '../middleware/auth'
 // Mount: /api/sales-invoices (requireAuth + requireAdmin poniżej).
 const router = Router()
 const now = () => new Date().toISOString()
-router.use(requireAdmin)
+
+// Bramka: admin lub użytkownik z nadanym uprawnieniem can_view_invoices (świeży odczyt z bazy)
+async function requireInvoices(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const u: any = await db.users.find((req as any).user?.id)
+    if (!u || (u.role !== 'admin' && !u.can_view_invoices)) {
+      res.status(403).json({ error: 'Brak dostępu do fakturowania' }); return
+    }
+    next()
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+}
+router.use(requireInvoices)
 
 const VAT_RATES = [0, 5, 8, 23]
 

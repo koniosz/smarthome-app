@@ -16,7 +16,7 @@ function now() {
 }
 
 function makeUser(row: any): AuthUser {
-  return { id: row.id, email: row.email, display_name: row.display_name, role: row.role, can_view_warehouse: !!row.can_view_warehouse }
+  return { id: row.id, email: row.email, display_name: row.display_name, role: row.role, can_view_warehouse: !!row.can_view_warehouse, can_view_invoices: !!row.can_view_invoices }
 }
 
 // POST /api/auth/login
@@ -119,6 +119,7 @@ router.post('/azure', async (req: Request, res: Response) => {
         display_name,
         role: isFirstUser ? 'admin' : 'employee',
         can_view_warehouse: false,
+        can_view_invoices: false,
         azure_oid: oid,
         password_hash: null,
         created_at: now(),
