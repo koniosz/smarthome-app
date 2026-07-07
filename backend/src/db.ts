@@ -161,6 +161,15 @@ export const db = {
     delete: (id: string) => prisma.warehouseItem.delete({ where: { id } }),
   },
 
+  sales_invoices: {
+    all: () => prisma.salesInvoice.findMany({ orderBy: { created_at: 'desc' } }),
+    find: (id: string) => prisma.salesInvoice.findUnique({ where: { id } }),
+    countForPrefix: (prefix: string) => prisma.salesInvoice.count({ where: { number: { startsWith: prefix } } }),
+    insert: (item: any) => prisma.salesInvoice.create({ data: item }),
+    update: (id: string, patch: any) => prisma.salesInvoice.update({ where: { id }, data: patch }),
+    delete: (id: string) => prisma.salesInvoice.delete({ where: { id } }),
+  },
+
   warehouse_locations: {
     all: () => prisma.warehouseLocation.findMany({ orderBy: { name: 'asc' } }),
     find: (id: string) => prisma.warehouseLocation.findUnique({ where: { id } }),

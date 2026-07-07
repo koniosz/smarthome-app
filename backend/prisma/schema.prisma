@@ -349,6 +349,38 @@ model StockMovement {
   @@map("stock_movements")
 }
 
+// Faktury sprzedażowe (beta) — struktura przygotowana pod KSeF FA(3); wysyłka do KSeF domyślnie WYŁĄCZONA
+model SalesInvoice {
+  id             String  @id
+  number         String? // FV/RRRR/MM/NNN — nadawany przy wystawieniu (szkic bez numeru)
+  status         String  @default("draft") // draft | issued | paid | cancelled
+  issue_date     String?
+  sale_date      String?
+  due_date       String?
+  payment_method String  @default("przelew")
+  buyer_name     String
+  buyer_nip      String?
+  buyer_address  String?
+  buyer_email    String?
+  items          Json    // [{name, qty, unit, unit_price, vat_rate, total_net, total_vat, total_gross}]
+  total_net      Float   @default(0)
+  total_vat      Float   @default(0)
+  total_gross    Float   @default(0)
+  vat_breakdown  Json?   // [{rate, net, vat, gross}]
+  notes          String?
+  project_id       String?
+  quote_id         String?
+  warehouse_doc_id String?
+  ksef_status    String  @default("not_sent") // not_sent | pending | sent | error
+  ksef_number    String?
+  paid_at        String?
+  created_by     String?
+  created_at     String
+  updated_at     String?
+
+  @@map("sales_invoices")
+}
+
 // Magazyny (lokalizacje) — pod dokumenty MM i stany per magazyn
 model WarehouseLocation {
   id         String @id

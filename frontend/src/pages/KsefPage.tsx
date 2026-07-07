@@ -6,6 +6,7 @@ import AllocationPanel from '../components/ksef/AllocationPanel'
 import PaymentVerificationModal from '../components/ksef/PaymentVerificationModal'
 import AssignInvoiceModal from '../components/ksef/AssignInvoiceModal'
 import InvoiceLineItems from '../components/ksef/InvoiceLineItems'
+import SalesInvoicesSection from '../components/invoices/SalesInvoicesSection'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -951,7 +952,7 @@ export default function KsefPage() {
   const [syncMsg, setSyncMsg]   = useState<string | null>(null)
 
   // View mode: 'faktury' = new Faktury design, 'all' = full admin table
-  const [viewMode, setViewMode]   = useState<'faktury' | 'all'>('faktury')
+  const [viewMode, setViewMode]   = useState<'faktury' | 'all' | 'sprzedaz'>('faktury')
   const [tab, setTab]             = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [paymentTab, setPaymentTab] = useState<'all' | 'paid' | 'unpaid'>('all')
   const [dirTab, setDirTab]       = useState<'all' | 'incoming' | 'outgoing'>('all')
@@ -1061,6 +1062,14 @@ export default function KsefPage() {
 
   // ── Faktury view ──────────────────────────────────────────────────────────────
 
+  if (viewMode === 'sprzedaz') {
+    return (
+      <div style={{ background: '#f8fafc', minHeight: '100vh' }}>
+        <SalesInvoicesSection onBack={() => setViewMode('faktury')} />
+      </div>
+    )
+  }
+
   if (viewMode === 'faktury') {
     return (
       <div style={{ padding: '36px 32px 64px', background: '#f8fafc', minHeight: '100vh', fontFamily: "'IBM Plex Sans', system-ui, sans-serif" }}>
@@ -1077,6 +1086,18 @@ export default function KsefPage() {
               </p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              <button
+                onClick={() => setViewMode('sprzedaz')}
+                title="Faktury sprzedażowe (beta)"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '10px 14px', fontSize: 13, fontWeight: 600,
+                  borderRadius: 8, border: '1px solid #ddd6fe', background: '#f5f3ff',
+                  color: '#6d28d9', cursor: 'pointer',
+                }}
+              >
+                🧾 Sprzedaż (beta)
+              </button>
               <button
                 onClick={() => setViewMode('all')}
                 title="Widok administratora"

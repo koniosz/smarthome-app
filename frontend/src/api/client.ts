@@ -356,6 +356,53 @@ export interface HandoverProtocol {
   accepted_at: string | null
   created_at: string
 }
+// ─── Faktury sprzedażowe (beta) ─────────────────────────────────────────────────
+export interface SalesInvoiceItem {
+  name: string
+  qty: number
+  unit: string
+  unit_price: number
+  vat_rate: number
+  total_net: number
+  total_vat: number
+  total_gross: number
+}
+export interface SalesInvoice {
+  id: string
+  number: string | null
+  status: 'draft' | 'issued' | 'paid' | 'cancelled'
+  issue_date: string | null
+  sale_date: string | null
+  due_date: string | null
+  payment_method: string
+  buyer_name: string
+  buyer_nip: string | null
+  buyer_address: string | null
+  buyer_email: string | null
+  items: SalesInvoiceItem[]
+  total_net: number
+  total_vat: number
+  total_gross: number
+  vat_breakdown: Array<{ rate: number; net: number; vat: number; gross: number }> | null
+  notes: string | null
+  project_id: string | null
+  quote_id: string | null
+  warehouse_doc_id: string | null
+  ksef_status: string
+  ksef_number: string | null
+  paid_at: string | null
+  created_at: string
+}
+export const salesInvoicesApi = {
+  list: () => api.get<SalesInvoice[]>('/sales-invoices').then(r => r.data),
+  create: (data: Partial<SalesInvoice>) => api.post<SalesInvoice>('/sales-invoices', data).then(r => r.data),
+  update: (id: string, data: Partial<SalesInvoice>) => api.put<SalesInvoice>(`/sales-invoices/${id}`, data).then(r => r.data),
+  issue: (id: string) => api.post<SalesInvoice>(`/sales-invoices/${id}/issue`, {}).then(r => r.data),
+  markPaid: (id: string) => api.post<SalesInvoice>(`/sales-invoices/${id}/mark-paid`, {}).then(r => r.data),
+  cancel: (id: string) => api.post<SalesInvoice>(`/sales-invoices/${id}/cancel`, {}).then(r => r.data),
+  delete: (id: string) => api.delete(`/sales-invoices/${id}`).then(r => r.data),
+}
+
 // ─── HR: urlopy + ewidencja czasu pracy ─────────────────────────────────────────
 export type LeaveType = 'wypoczynkowy' | 'na_zadanie' | 'okolicznosciowy' | 'bezplatny' | 'opieka_dziecko' | 'opiekunczy' | 'macierzynski' | 'rodzicielski' | 'ojcowski' | 'wychowawczy' | 'chorobowe' | 'inna'
 export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
