@@ -393,7 +393,15 @@ export interface SalesInvoice {
   paid_at: string | null
   created_at: string
 }
+export interface NipLookupResult {
+  nip: string
+  name: string
+  address: string
+  status_vat: string | null
+  regon: string | null
+}
 export const salesInvoicesApi = {
+  lookupNip: (nip: string) => api.get<NipLookupResult>(`/sales-invoices/lookup-nip/${encodeURIComponent(nip)}`).then(r => r.data),
   list: () => api.get<SalesInvoice[]>('/sales-invoices').then(r => r.data),
   create: (data: Partial<SalesInvoice>) => api.post<SalesInvoice>('/sales-invoices', data).then(r => r.data),
   update: (id: string, data: Partial<SalesInvoice>) => api.put<SalesInvoice>(`/sales-invoices/${id}`, data).then(r => r.data),

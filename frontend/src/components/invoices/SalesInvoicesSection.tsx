@@ -167,6 +167,22 @@ function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvo
   const [wzDocs, setWzDocs] = useState<WarehouseDoc[]>([])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  const [nipLoading, setNipLoading] = useState(false)
+  const [vatStatus, setVatStatus] = useState<string | null>(null)
+
+  const lookupNip = async () => {
+    const nip = buyerNip.replace(/[^0-9]/g, '')
+    if (nip.length !== 10) { setErr('Podaj NIP (10 cyfr), aby pobrać dane'); return }
+    setNipLoading(true); setErr(''); setVatStatus(null)
+    try {
+      const r = await salesInvoicesApi.lookupNip(nip)
+      if (r.name) setBuyerName(r.name)
+      if (r.address) setBuyerAddress(r.address)
+      setVatStatus(r.status_vat)
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || 'Nie udało się pobrać danych z rejestru.')
+    } finally { setNipLoading(false) }
+  }
 
   useEffect(() => {
     quotesApi.list().then(setQuotes).catch(() => {})
@@ -233,7 +249,22 @@ function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvo
 
         <div className="grid grid-cols-2 gap-3">
           <div><label className={lblCls}>Nabywca *</label><input className={inputCls} value={buyerName} onChange={e => setBuyerName(e.target.value)} placeholder="nazwa firmy / imię i nazwisko" /></div>
-          <div><label className={lblCls}>NIP nabywcy</label><input className={inputCls} value={buyerNip} onChange={e => setBuyerNip(e.target.value)} placeholder="np. 8961543585" /></div>
+          <div>
+            <label className={lblCls}>NIP nabywcy</label>
+            <div className="flex gap-2">
+              <input className={inputCls} value={buyerNip} onChange={e => setBuyerNip(e.target.value)} placeholder="np. 8961543585" />
+              <button type="button" onClick={lookupNip} disabled={nipLoading}
+                title="Pobierz nazwę i adres z Białej listy podatników VAT (MF)"
+                className="shrink-0 px-3 py-2 text-xs font-medium border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/20 rounded-lg disabled:opacity-50">
+                {nipLoading ? '…' : '🔍 Pobierz'}
+              </button>
+            </div>
+            {vatStatus && (
+              <div className={`text-xs mt-1 ${vatStatus === 'Czynny' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                Status VAT: <strong>{vatStatus}</strong> (Biała lista MF)
+              </div>
+            )}
+          </div>
           <div><label className={lblCls}>Adres nabywcy</label><input className={inputCls} value={buyerAddress} onChange={e => setBuyerAddress(e.target.value)} placeholder="ulica, kod, miasto" /></div>
           <div><label className={lblCls}>E-mail nabywcy</label><input className={inputCls} value={buyerEmail} onChange={e => setBuyerEmail(e.target.value)} placeholder="opcjonalnie" /></div>
         </div>

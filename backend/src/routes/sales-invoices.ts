@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express'
 import { v4 as uuidv4 } from 'uuid'
+import axios from 'axios'
 import db from '../db'
 
 // Faktury sprzedażowe (BETA).
@@ -22,6 +23,30 @@ async function requireInvoices(req: Request, res: Response, next: NextFunction):
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
 }
 router.use(requireInvoices)
+
+// GET /api/sales-invoices/lookup-nip/:nip — dane firmy z Białej listy podatników VAT (API MF, bez klucza)
+router.get('/lookup-nip/:nip', async (req: Request, res: Response) => {
+  try {
+    const nip = String(req.params.nip).replace(/[^0-9]/g, '')
+    if (nip.length !== 10) { res.status(400).json({ error: 'NIP musi mieć 10 cyfr' }); return }
+    const date = new Date().toISOString().slice(0, 10)
+    const { data } = await axios.get(`https://wl-api.mf.gov.pl/api/search/nip/${nip}?date=${date}`, { timeout: 10000 })
+    const subject = data?.result?.subject
+    if (!subject) { res.status(404).json({ error: 'Nie znaleziono firmy o podanym NIP' }); return }
+    res.json({
+      nip,
+      name: subject.name ?? '',
+      address: subject.workingAddress || subject.residenceAddress || '',
+      status_vat: subject.statusVat ?? null,   // Czynny | Zwolniony | Niezarejestrowany
+      regon: subject.regon ?? null,
+    })
+  } catch (e: any) {
+    if (e?.response?.status === 400 || e?.response?.status === 404) {
+      res.status(404).json({ error: 'Nie znaleziono firmy o podanym NIP' }); return
+    }
+    res.status(502).json({ error: 'Nie udało się pobrać danych z rejestru MF — spróbuj ponownie' })
+  }
+})
 
 const VAT_RATES = [0, 5, 8, 23]
 
