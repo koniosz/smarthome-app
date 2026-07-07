@@ -740,6 +740,29 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       salesByMonth[month] = (salesByMonth[month] ?? 0) + (inv.net_amount ?? 0)
     }
 
+    // ── Revenue: faktury z modułu Sprzedaż (B2C i inne nieobjęte KSeF) ────────
+    // KSeF widzi tylko B2B — faktury dla osób fizycznych wystawiane w module
+    // uzupełniają sprzedaż całkowitą. Pomijamy pozycje z nadanym ksef_number:
+    // po włączeniu wysyłki do KSeF pojawią się w outgoing (ochrona przed
+    // podwójnym liczeniem). Liczymy wystawione i opłacone (bez szkiców/anulowanych).
+    const moduleWhere: any = { status: { in: ['issued', 'paid'] }, ksef_number: null }
+    if (dateFrom || dateTo) {
+      const df: any = {}
+      if (dateFrom) df.gte = String(dateFrom)
+      if (dateTo)   df.lte = String(dateTo)
+      moduleWhere.issue_date = df
+    }
+    const moduleInvoices = await prisma.salesInvoice.findMany({
+      where: moduleWhere,
+      select: { id: true, number: true, buyer_name: true, buyer_nip: true, total_net: true, total_gross: true, issue_date: true, status: true },
+      orderBy: { issue_date: 'desc' },
+    })
+    const revenue_module_invoices = moduleInvoices.reduce((s, i) => s + (i.total_net ?? 0), 0)
+    for (const inv of moduleInvoices) {
+      const month = (inv.issue_date ?? '').slice(0, 7) || 'brak daty'
+      salesByMonth[month] = (salesByMonth[month] ?? 0) + (inv.total_net ?? 0)
+    }
+
     // ── Split allocations: revenue vs cost ───────────────────────────────────
     const costAllocations    = allocations.filter((a: any) => a.allocation_type !== 'revenue')
     const revenueAllocations = allocations.filter((a: any) => a.allocation_type === 'revenue')
@@ -765,13 +788,15 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
     const revenue_ksef     = revenueAllocations.reduce((s: number, a: any) => s + a.amount, 0)
 
     // Wybierz źródło przychodu — domyślnie 'payments' (ClientPayments)
-    // 'ksef'     → faktury sprzedażowe pobrane z KSeF (outgoing) — automatyczne, netto
+    // 'ksef'     → SPRZEDAŻ CAŁKOWITA = faktury z KSeF (outgoing, B2B) + faktury
+    //              z modułu Sprzedaż (B2C — nie trafiają do KSeF), netto
     // 'payments' → tylko wpłaty klientów (ClientPayment)
-    // 'both'     → wpłaty + faktury sprzedażowe (uwaga: może podwójnie liczyć!)
+    // 'both'     → wpłaty + sprzedaż całkowita (uwaga: może podwójnie liczyć!)
+    const revenue_total_sales = revenue_sales_invoices + revenue_module_invoices
     const revenue = revSrc === 'ksef'
-      ? revenue_sales_invoices
+      ? revenue_total_sales
       : revSrc === 'both'
-        ? revenue_payments + revenue_sales_invoices
+        ? revenue_payments + revenue_total_sales
         : revenue_payments
     const cogs         = grouped['cogs']?.total ?? 0
     const sales        = grouped['sales']?.total ?? 0
@@ -809,6 +834,10 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       revenue_payments,
       revenue_ksef,
       revenue_sales_invoices,
+      revenue_module_invoices,
+      revenue_total_sales,
+      module_invoice_count: moduleInvoices.length,
+      module_invoices: moduleInvoices,
       sales_invoice_count: salesInvoices.length,
       sales_by_month: salesByMonth,
       sales_invoices: salesInvoices,

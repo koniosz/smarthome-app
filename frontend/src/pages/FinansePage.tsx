@@ -280,9 +280,9 @@ export default function FinansePage() {
               value={report.revenue}
               sub={
                 report.revenue_source === 'ksef'
-                  ? `📤 ${report.sales_invoice_count} faktur sprzedażowych z KSeF`
+                  ? `📤 KSeF (B2B): ${fmt(report.revenue_sales_invoices ?? 0)} (${report.sales_invoice_count}) · 🧾 moduł (B2C): ${fmt(report.revenue_module_invoices ?? 0)} (${report.module_invoice_count ?? 0})`
                   : report.revenue_source === 'both'
-                  ? `⚠️ płatności + faktury sprzedażowe`
+                  ? `⚠️ płatności + sprzedaż całkowita (KSeF + moduł)`
                   : `💳 ${report.payment_count} wpłat klientów`
               }
               color="blue"
@@ -507,10 +507,49 @@ export default function FinansePage() {
             </div>
           )}
 
+          {/* Faktury z modułu Sprzedaż (B2C — poza KSeF) */}
+          {report.revenue_source === 'ksef' && report.module_invoices && report.module_invoices.length > 0 && (
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-800 flex items-baseline justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                  🧾 Faktury z modułu Sprzedaż ({report.module_invoice_count}) — spoza KSeF (B2C)
+                </h3>
+                <span className="text-xs text-gray-400">wystawione/opłacone · kwoty netto · razem {fmt(report.revenue_module_invoices ?? 0)} PLN</span>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-50 dark:bg-gray-800">
+                    <tr className="text-gray-400">
+                      <th className="text-left px-5 py-2 font-semibold uppercase tracking-wide">Nabywca</th>
+                      <th className="text-left px-3 py-2 font-semibold uppercase tracking-wide">Nr faktury</th>
+                      <th className="text-left px-3 py-2 font-semibold uppercase tracking-wide">Data</th>
+                      <th className="text-right px-5 py-2 font-semibold uppercase tracking-wide">Netto</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                    {report.module_invoices.map((inv: any) => (
+                      <tr key={inv.id}>
+                        <td className="px-5 py-2 font-medium text-gray-700 dark:text-gray-300">
+                          {inv.buyer_name ?? '—'}
+                          {inv.buyer_nip && <span className="text-gray-400 font-normal ml-2">{inv.buyer_nip}</span>}
+                        </td>
+                        <td className="px-3 py-2 text-gray-500 tabular-nums">{inv.number ?? '—'}</td>
+                        <td className="px-3 py-2 text-gray-500 tabular-nums">{inv.issue_date?.slice(0, 10) ?? '—'}</td>
+                        <td className="px-5 py-2 text-right font-semibold text-gray-800 dark:text-gray-200 tabular-nums">
+                          {fmt(inv.total_net)} PLN <span className="text-[11px] font-normal text-gray-400">netto</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* Brak faktur sprzedażowych w okresie */}
-          {report.revenue_source === 'ksef' && (!report.sales_invoices || report.sales_invoices.length === 0) && (
+          {report.revenue_source === 'ksef' && (!report.sales_invoices || report.sales_invoices.length === 0) && (!report.module_invoices || report.module_invoices.length === 0) && (
             <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-              ℹ️ Brak faktur sprzedażowych z KSeF w wybranym okresie. Sprawdź synchronizację KSeF (pobiera też faktury wystawione przez firmę) lub zmień zakres dat.
+              ℹ️ Brak faktur sprzedażowych w wybranym okresie (ani z KSeF, ani z modułu Sprzedaż). Sprawdź synchronizację KSeF lub zmień zakres dat.
             </div>
           )}
 

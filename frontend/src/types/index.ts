@@ -457,6 +457,19 @@ export interface PnLReport {
   revenue_ksef: number
   revenue_payments: number
   revenue_sales_invoices: number
+  revenue_module_invoices?: number
+  revenue_total_sales?: number
+  module_invoice_count?: number
+  module_invoices?: {
+    id: string
+    number: string | null
+    buyer_name: string
+    buyer_nip: string | null
+    total_net: number
+    total_gross: number
+    issue_date: string | null
+    status: string
+  }[]
   sales_invoice_count: number
   sales_by_month: Record<string, number>
   sales_invoices: {
