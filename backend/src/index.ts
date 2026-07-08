@@ -44,7 +44,8 @@ const app = express()
 const PORT = process.env.PORT || 4001
 
 app.use(cors())
-app.use(express.json({ limit: '10mb' }))
+// 50mb: dokumenty projektu/pracownicze idą jako base64 w JSON (+33% narzutu) — pozwala na pliki do ~35 MB
+app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true })) // formularze akceptacji/odmowy kosztów (POST z przeglądarki)
 
 // Public routes

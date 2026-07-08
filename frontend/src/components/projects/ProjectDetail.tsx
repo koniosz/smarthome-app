@@ -182,9 +182,16 @@ function ProjectDocumentsTab({ projectId, project }: { projectId: string; projec
     }).catch(() => setLoading(false))
   }, [projectId])
 
+  const MAX_UPLOAD_MB = 35 // limit backendu: 50mb JSON, base64 dodaje ~33% narzutu
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      alert(`Plik jest za duży (${(file.size / 1024 / 1024).toFixed(1)} MB). Maksymalny rozmiar to ${MAX_UPLOAD_MB} MB.`)
+      if (fileRef.current) fileRef.current.value = ''
+      return
+    }
     setUploadFile(file)
     if (!uploadForm.name) setUploadForm(f => ({ ...f, name: file.name }))
   }
@@ -212,8 +219,11 @@ function ProjectDocumentsTab({ projectId, project }: { projectId: string; projec
       setUploadForm({ doc_type: 'offer', name: '', notes: '' })
       setUploadFile(null)
       if (fileRef.current) fileRef.current.value = ''
-    } catch {
-      alert('Błąd podczas wgrywania pliku')
+    } catch (err: any) {
+      const msg = err?.response?.status === 413
+        ? `Plik jest za duży dla serwera. Maksymalny rozmiar to ${MAX_UPLOAD_MB} MB.`
+        : 'Błąd podczas wgrywania pliku. Sprawdź połączenie i spróbuj ponownie.'
+      alert(msg)
     } finally {
       setUploading(false)
     }

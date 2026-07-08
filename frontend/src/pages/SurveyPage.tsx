@@ -537,6 +537,11 @@ function Step4({ data, onChange, token, attachments, onAttachmentAdded }: {
   }
 
   const uploadFile = useCallback(async (file: File) => {
+    const MAX_UPLOAD_MB = 35 // limit backendu: 50mb JSON, base64 dodaje ~33% narzutu
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      setUploadError(`Plik jest za duży (${(file.size / 1024 / 1024).toFixed(1)} MB). Maksymalny rozmiar to ${MAX_UPLOAD_MB} MB.`)
+      return
+    }
     setUploading(true); setUploadError('')
     try {
       const base64 = await new Promise<string>((resolve, reject) => {

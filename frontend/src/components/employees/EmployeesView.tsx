@@ -275,9 +275,17 @@ function DocumentModal({ employeeId, onClose, onSaved }: {
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
   const needsExpiry = ['medical', 'bhp'].includes(form.doc_type)
 
+  const MAX_UPLOAD_MB = 35 // limit backendu: 50mb JSON, base64 dodaje ~33% narzutu
+
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (f) {
+      if (f.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        setError(`Plik jest za duży (${(f.size / 1024 / 1024).toFixed(1)} MB). Maksymalny rozmiar to ${MAX_UPLOAD_MB} MB.`)
+        e.target.value = ''
+        return
+      }
+      setError('')
       setFile(f)
       if (!form.name) setForm(prev => ({ ...prev, name: f.name.replace(/\.[^.]+$/, '') }))
     }
