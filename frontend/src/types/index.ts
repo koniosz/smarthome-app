@@ -632,6 +632,7 @@ export interface KsefSyncResult {
 
 // ─── Tasks (kalendarz zadań) ──────────────────────────────────────────────────
 export type TaskType = 'work' | 'event' | 'task'
+export type TaskStatus = 'not_started' | 'in_progress' | 'done'
 
 export interface TaskAssignee {
   id: string
@@ -647,15 +648,24 @@ export interface Task {
   time: string          // HH:MM — początek
   end_time: string      // HH:MM — koniec
   type: TaskType
-  done: boolean
+  status: TaskStatus
+  done: boolean         // = (status === 'done')
+  due_date: string      // YYYY-MM-DD — planowana data zakończenia (puste = brak)
   created_at: string
   updated_at: string
   project?: { id: string; name: string } | null
   assignees: TaskAssignee[]
 }
 
+// Kolejność kluczy = kolejność przycisków w modalu
 export const TASK_TYPE_LABELS: Record<TaskType, string> = {
+  event: 'Spotkanie',
   work:  'Praca',
-  event: 'Wydarzenie',
   task:  'Zadanie',
+}
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  not_started: 'Nie rozpoczęte',
+  in_progress: 'W toku',
+  done:        'Zakończone',
 }

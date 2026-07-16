@@ -57,7 +57,7 @@ export interface TaskForCalendar {
   projectName?: string | null
 }
 
-const TYPE_LABELS: Record<string, string> = { work: 'Praca', event: 'Wydarzenie', task: 'Zadanie' }
+const TYPE_LABELS: Record<string, string> = { work: 'Praca', event: 'Spotkanie', task: 'Zadanie' }
 
 function buildEvent(task: TaskForCalendar) {
   const subject = `${task.done ? '✓ ' : ''}${task.title}`

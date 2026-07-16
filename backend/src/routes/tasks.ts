@@ -12,6 +12,8 @@ function now() {
   return new Date().toISOString()
 }
 
+const TASK_STATUSES = ['not_started', 'in_progress', 'done'] as const
+
 // Normalizuj listę przypisanych z body (akceptuje assignee_ids[] lub stare assignee_id)
 function readAssigneeIds(body: any): string[] | undefined {
   if (Array.isArray(body.assignee_ids)) {
@@ -150,13 +152,14 @@ router.get('/outlook-events', async (req: Request, res: Response) => {
 // POST /api/tasks
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { title, project_id, date, time, end_time, type } = req.body
+    const { title, project_id, date, time, end_time, type, status, due_date } = req.body
     if (!title || !String(title).trim()) {
       res.status(400).json({ error: 'Tytuł jest wymagany' }); return
     }
     if (!date) {
       res.status(400).json({ error: 'Data jest wymagana' }); return
     }
+    const taskStatus = TASK_STATUSES.includes(status) ? status : 'not_started'
     const assigneeIds = readAssigneeIds(req.body) ?? []
     const id = uuidv4()
     await db.tasks.insert({
@@ -167,7 +170,9 @@ router.post('/', async (req: Request, res: Response) => {
       time: time || '',
       end_time: end_time || '',
       type: type || 'work',
-      done: false,
+      status: taskStatus,
+      done: taskStatus === 'done',
+      due_date: due_date || '',
       created_at: now(),
       updated_at: now(),
     })
@@ -189,7 +194,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (!existing) {
       res.status(404).json({ error: 'Zadanie nie znalezione' }); return
     }
-    const { title, project_id, date, time, end_time, type, done } = req.body
+    const { title, project_id, date, time, end_time, type, done, status, due_date } = req.body
     const patch: any = { updated_at: now() }
     if (title !== undefined) patch.title = String(title).trim()
     if (project_id !== undefined) patch.project_id = project_id || null
@@ -197,7 +202,15 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (time !== undefined) patch.time = time
     if (end_time !== undefined) patch.end_time = end_time
     if (type !== undefined) patch.type = type
-    if (done !== undefined) patch.done = Boolean(done)
+    if (due_date !== undefined) patch.due_date = due_date || ''
+    // status ↔ done trzymane w synchronizacji; `done` akceptowane dla starszych klientów (mobile)
+    if (status !== undefined && TASK_STATUSES.includes(status)) {
+      patch.status = status
+      patch.done = status === 'done'
+    } else if (done !== undefined) {
+      patch.done = Boolean(done)
+      patch.status = done ? 'done' : 'not_started'
+    }
     await db.tasks.update(req.params.id, patch)
 
     // Zmiana listy przypisanych (jeśli podano)

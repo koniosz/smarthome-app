@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Plus, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Clock, Plus, X } from 'lucide-react'
 import { tasksApi, employeesApi, projectsApi } from '../../api/client'
 import type { OutlookEvent } from '../../api/client'
-import type { Task, TaskType, Employee, Project } from '../../types'
-import { TASK_TYPE_LABELS } from '../../types'
+import type { Task, TaskType, TaskStatus, Employee, Project } from '../../types'
+import { TASK_TYPE_LABELS, TASK_STATUS_LABELS } from '../../types'
 import { useAuth } from '../../auth/AuthContext'
 
 type CalView = 'month' | 'week' | 'day'
@@ -15,6 +15,32 @@ const TYPE_META: Record<TaskType, { chipBg: string; chipFg: string; dot: string 
   work:  { chipBg: '#eff6ff', chipFg: '#1d4ed8', dot: '#2563eb' },
   event: { chipBg: '#f5f3ff', chipFg: '#6d28d9', dot: '#7c3aed' },
   task:  { chipBg: '#fffbeb', chipFg: '#b45309', dot: '#f59e0b' },
+}
+
+const STATUS_META: Record<TaskStatus, { chipBg: string; chipFg: string }> = {
+  not_started: { chipBg: '#f1f5f9', chipFg: '#64748b' },
+  in_progress: { chipBg: '#fffbeb', chipFg: '#b45309' },
+  done:        { chipBg: '#f0fdf4', chipFg: '#15803d' },
+}
+
+const STATUS_CYCLE: Record<TaskStatus, TaskStatus> = {
+  not_started: 'in_progress',
+  in_progress: 'done',
+  done: 'not_started',
+}
+
+// Fallback dla zadań sprzed wprowadzenia statusów
+function statusOf(t: Task): TaskStatus {
+  return t.status ?? (t.done ? 'done' : 'not_started')
+}
+
+function dueLabel(dueDate: string): string {
+  const [y, m, d] = dueDate.split('-')
+  return `${d}.${m}.${y}`
+}
+
+function isOverdue(t: Task): boolean {
+  return !!t.due_date && statusOf(t) !== 'done' && t.due_date < iso(new Date())
 }
 
 const AVATAR_COLORS = ['#7c3aed', '#2563eb', '#0d9488', '#b45309']
@@ -167,20 +193,25 @@ function AssigneeAvatars({
   )
 }
 
-// ─── Checkbox ─────────────────────────────────────────────────────────────────
-function TaskCheckbox({ done, size, onToggle }: { done: boolean; size: number; onToggle: () => void }) {
+// ─── Kontrolka statusu (klik: nie rozpoczęte → w toku → zakończone) ───────────
+function TaskStatusControl({ status, size, onCycle }: { status: TaskStatus; size: number; onCycle: () => void }) {
+  const style: Record<TaskStatus, React.CSSProperties> = {
+    not_started: { border: '1.5px solid #cbd5e1', background: '#fff' },
+    in_progress: { border: '1.5px solid #f59e0b', background: '#fffbeb' },
+    done:        { border: '1.5px solid #16a34a', background: '#16a34a' },
+  }
   return (
     <div
-      onClick={onToggle}
+      onClick={onCycle}
+      title={`${TASK_STATUS_LABELS[status]} — kliknij, aby zmienić`}
       style={{
         width: size, height: size, borderRadius: size >= 20 ? 6 : 5,
-        border: `1.5px solid ${done ? '#2563eb' : '#cbd5e1'}`,
-        background: done ? '#2563eb' : '#fff',
         cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
+        flexShrink: 0, ...style[status],
       }}
     >
-      {done && <Check size={size - 8} color="#fff" strokeWidth={3.5} />}
+      {status === 'in_progress' && <Clock size={size - 7} color="#b45309" strokeWidth={2.5} />}
+      {status === 'done' && <Check size={size - 8} color="#fff" strokeWidth={3.5} />}
     </div>
   )
 }
@@ -208,6 +239,8 @@ function TaskModal({
   const [date, setDate] = useState(task?.date ?? defaultDate)
   const [time, setTime] = useState(task?.time || '09:00')
   const [endTime, setEndTime] = useState(task?.end_time || '10:00')
+  const [status, setStatus] = useState<TaskStatus>(task ? statusOf(task) : 'not_started')
+  const [dueDate, setDueDate] = useState(task?.due_date || '')
   const [assigneeIds, setAssigneeIds] = useState<string[]>(
     task ? (task.assignees ?? []).map(a => a.employee_id) : (employees[0]?.id ? [employees[0].id] : []),
   )
@@ -255,6 +288,8 @@ function TaskModal({
         date,
         time,
         end_time: endTime,
+        status,
+        due_date: dueDate,
         assignee_ids: assigneeIds,
       }
       if (isEdit && task) {
@@ -368,6 +403,38 @@ function TaskModal({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Do</label>
               <input type="time" value={endTime} min={time} onChange={e => setEndTime(e.target.value)} style={{ ...inputStyle, padding: '9px 12px' }} />
+            </div>
+          </div>
+
+          {/* Status + planowana data zakończenia */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Status wykonania</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {(Object.keys(TASK_STATUS_LABELS) as TaskStatus[]).map(s => {
+                  const active = status === s
+                  const meta = STATUS_META[s]
+                  return (
+                    <div
+                      key={s}
+                      onClick={() => setStatus(s)}
+                      style={{
+                        flex: 1, textAlign: 'center', padding: '9px 4px', borderRadius: 8,
+                        border: `1px solid ${active ? meta.chipFg : '#e2e8f0'}`,
+                        background: active ? meta.chipBg : '#fff',
+                        color: active ? meta.chipFg : '#475569',
+                        fontSize: 12.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {TASK_STATUS_LABELS[s]}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, color: '#334155' }}>Plan. zakończenie</label>
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={{ ...inputStyle, padding: '9px 12px' }} />
             </div>
           </div>
 
@@ -558,7 +625,7 @@ export default function CalendarTasksSection({
     })
   }, [tasksByDate, todayIso, onlyMine, myEmail]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const upcomingCount = threeDays.reduce((s, g) => s + g.tasks.filter(t => !t.done).length, 0)
+  const upcomingCount = threeDays.reduce((s, g) => s + g.tasks.filter(t => statusOf(t) !== 'done').length, 0)
 
   useEffect(() => { onUpcomingCount?.(upcomingCount) }, [upcomingCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -636,8 +703,8 @@ export default function CalendarTasksSection({
   }
 
   // ── mutations ──
-  const toggleDone = async (task: Task) => {
-    const updated = await tasksApi.update(task.id, { done: !task.done })
+  const cycleStatus = async (task: Task) => {
+    const updated = await tasksApi.update(task.id, { status: STATUS_CYCLE[statusOf(task)] })
     setTasks(prev => prev.map(t => t.id === task.id ? updated : t))
   }
 
@@ -902,9 +969,11 @@ export default function CalendarTasksSection({
             {selectedTasks.length === 0 && (outlookByDate.get(selectedDate) ?? []).length === 0 ? (
               <div style={{ fontSize: 13, color: '#94a3b8', padding: '6px 0' }}>Brak zadań w tym dniu.</div>
             ) : (
-              selectedTasks.map(t => (
+              selectedTasks.map(t => {
+                const st = statusOf(t)
+                return (
                 <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid #f1f5f9' }}>
-                  <TaskCheckbox done={t.done} size={18} onToggle={() => toggleDone(t)} />
+                  <TaskStatusControl status={st} size={18} onCycle={() => cycleStatus(t)} />
                   <span style={{ fontSize: 13, fontWeight: 600, color: '#64748b', fontVariantNumeric: 'tabular-nums', width: 88 }}>{timeRange(t)}</span>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_META[t.type]?.dot ?? '#94a3b8', flexShrink: 0 }} />
                   <span
@@ -912,12 +981,21 @@ export default function CalendarTasksSection({
                     title="Kliknij, aby edytować"
                     style={{
                       fontSize: 14, fontWeight: 600, cursor: 'pointer',
-                      color: t.done ? '#94a3b8' : '#0f172a',
-                      textDecoration: t.done ? 'line-through' : 'none',
+                      color: st === 'done' ? '#94a3b8' : '#0f172a',
+                      textDecoration: st === 'done' ? 'line-through' : 'none',
                     }}
                   >
                     {t.title}
                   </span>
+                  {t.due_date && (
+                    <span title="Planowana data zakończenia" style={{
+                      fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 6, flexShrink: 0,
+                      background: isOverdue(t) ? '#fef2f2' : '#f1f5f9',
+                      color: isOverdue(t) ? '#dc2626' : '#64748b',
+                    }}>
+                      plan. {dueLabel(t.due_date)}
+                    </span>
+                  )}
                   <span
                     onClick={() => setEditingTask(t)}
                     style={{ fontSize: 13, color: '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}>
@@ -925,7 +1003,8 @@ export default function CalendarTasksSection({
                   </span>
                   <AssigneeAvatars task={t} employees={employees} size={26} onToggle={toggleAssignee} />
                 </div>
-              ))
+                )
+              })
             )}
 
             {/* Wydarzenia z Outlooka + zatwierdzone urlopy (tylko do odczytu) */}
@@ -988,7 +1067,9 @@ export default function CalendarTasksSection({
               {g.tasks.length === 0 ? (
                 <div style={{ fontSize: 13, color: '#94a3b8', padding: '2px 4px 6px' }}>Brak zadań</div>
               ) : (
-                g.tasks.map(t => (
+                g.tasks.map(t => {
+                  const st = statusOf(t)
+                  return (
                   <div
                     key={t.id}
                     style={{
@@ -1008,13 +1089,13 @@ export default function CalendarTasksSection({
                     }}
                   >
                     <div style={{ marginTop: 1 }}>
-                      <TaskCheckbox done={t.done} size={20} onToggle={() => toggleDone(t)} />
+                      <TaskStatusControl status={st} size={20} onCycle={() => cycleStatus(t)} />
                     </div>
                     <div onClick={() => setEditingTask(t)} style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0, cursor: 'pointer' }}>
                       <div style={{
                         fontSize: 14, fontWeight: 600, lineHeight: 1.35,
-                        color: t.done ? '#94a3b8' : '#0f172a',
-                        textDecoration: t.done ? 'line-through' : 'none',
+                        color: st === 'done' ? '#94a3b8' : '#0f172a',
+                        textDecoration: st === 'done' ? 'line-through' : 'none',
                       }}>
                         {t.title}
                       </div>
@@ -1022,7 +1103,7 @@ export default function CalendarTasksSection({
                         <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#64748b' }}>{timeRange(t)}</span>
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.project?.name ?? ''}</span>
                       </div>
-                      <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <span style={{
                           display: 'inline-flex', padding: '2px 8px', borderRadius: 6,
                           background: TYPE_META[t.type]?.chipBg ?? '#f1f5f9',
@@ -1031,11 +1112,29 @@ export default function CalendarTasksSection({
                         }}>
                           {TASK_TYPE_LABELS[t.type] ?? t.type}
                         </span>
+                        <span style={{
+                          display: 'inline-flex', padding: '2px 8px', borderRadius: 6,
+                          background: STATUS_META[st].chipBg, color: STATUS_META[st].chipFg,
+                          fontSize: 11, fontWeight: 700,
+                        }}>
+                          {TASK_STATUS_LABELS[st]}
+                        </span>
+                        {t.due_date && (
+                          <span title="Planowana data zakończenia" style={{
+                            display: 'inline-flex', padding: '2px 8px', borderRadius: 6,
+                            background: isOverdue(t) ? '#fef2f2' : '#f1f5f9',
+                            color: isOverdue(t) ? '#dc2626' : '#64748b',
+                            fontSize: 11, fontWeight: 700,
+                          }}>
+                            plan. {dueLabel(t.due_date)}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <AssigneeAvatars task={t} employees={employees} size={30} onToggle={toggleAssignee} />
                   </div>
-                ))
+                  )
+                })
               )}
             </div>
           ))}

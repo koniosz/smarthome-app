@@ -74,9 +74,11 @@ model Task {
   date        String   // YYYY-MM-DD
   time        String   @default("") // HH:MM — początek
   end_time    String   @default("") // HH:MM — koniec (puste = +1h)
-  type        String   @default("work") // work | event | task
+  type        String   @default("work") // work | event (Spotkanie) | task
   assignee_id String?  // DEPRECATED — zachowane dla migracji; teraz wielu przez TaskAssignee
-  done        Boolean  @default(false)
+  done        Boolean  @default(false)  // zawsze = (status === 'done') — zachowane dla kompatybilności
+  status      String   @default("not_started") // not_started | in_progress | done
+  due_date    String   @default("") // YYYY-MM-DD — planowana data zakończenia (puste = brak)
   created_at  String
   updated_at  String   @default("")
   outlook_event_id    String? // DEPRECATED (było 1 osoba) — teraz per TaskAssignee
