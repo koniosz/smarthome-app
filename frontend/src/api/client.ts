@@ -156,6 +156,22 @@ export const payablesApi = {
     api.post(`/payables/review/${txId}/dismiss`).then(r => r.data),
 }
 
+export const financeApi = {
+  pnl: (year: number, businessUnit = 'all'): Promise<import('../types').PnlResponse> =>
+    api.get('/finance/pnl', { params: { year, business_unit: businessUnit } }).then(r => r.data),
+  importSales: (file: File): Promise<import('../types').SalesImportResult> => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post('/finance/import-sales', form, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+  },
+  fixedAssets: (): Promise<import('../types').FixedAsset[]> =>
+    api.get('/finance/fixed-assets').then(r => r.data),
+  addFixedAsset: (data: Partial<import('../types').FixedAsset>): Promise<import('../types').FixedAsset> =>
+    api.post('/finance/fixed-assets', data).then(r => r.data),
+  deleteFixedAsset: (id: string): Promise<void> =>
+    api.delete(`/finance/fixed-assets/${id}`).then(r => r.data),
+}
+
 export const attachmentsApi = {
   upload: (costId: string, file: File) => {
     const form = new FormData()

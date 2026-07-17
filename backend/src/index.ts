@@ -13,6 +13,7 @@ import laborRouter from './routes/labor'
 import { updateLabor, deleteLabor } from './routes/labor'
 import paymentsRouter, { updatePayment, deletePayment } from './routes/payments'
 import payablesRouter, { requirePayments } from './routes/payables'
+import financeRouter from './routes/finance'
 import employeesRouter from './routes/employees'
 import dashboardRouter from './routes/dashboard'
 import tasksRouter from './routes/tasks'
@@ -99,6 +100,7 @@ app.use('/api/warehouse', warehouseRouter)     // magazyn (dostęp: admin lub ca
 app.use('/api/hr', hrRouter)                   // HR: urlopy + ewidencja czasu pracy
 app.use('/api/sales-invoices', salesInvoicesRouter) // faktury sprzedażowe (beta, admin)
 app.use('/api/payables', payablesRouter)       // panel Płatności (dostęp: admin lub can_view_payments)
+app.use('/api/finance', financeRouter)         // Finanse 2.0: RZiS/EBITDA + import Firmao (admin lub księgowy)
 app.use('/api/projects/:projectId/costs', costsRouter)
 app.use('/api/projects/:projectId/labor', laborRouter)
 app.use('/api/projects/:projectId/payments', paymentsRouter)

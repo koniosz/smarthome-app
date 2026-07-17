@@ -717,6 +717,52 @@ export interface PayableReviewItem {
   candidates: PayableCandidate[]
 }
 
+// ─── Finanse 2.0: RZiS / EBITDA ───────────────────────────────────────────────
+export interface PnlLines {
+  revenue: number; revenue_firmao: number; revenue_ksef: number; revenue_module: number; revenue_advances: number
+  cogs: number; gross_margin: number; gross_margin_pct: number
+  opex: number; opex_sales: number; opex_ga: number; opex_operations: number; opex_leasing: number
+  ebitda: number; ebitda_pct: number
+  depreciation: number; ebit: number
+  financial_costs: number; cit: number; net_result: number
+  provisional: boolean
+}
+
+export interface PnlResponse {
+  year: number
+  business_unit: string
+  revenue_scope: 'business_unit' | 'company_wide'
+  months: Array<PnlLines & { period: string }>
+  quarters: Array<PnlLines & { quarter: string }>
+  ytd: PnlLines & { label: string }
+  firmao_months: string[]
+  quality: {
+    unallocated_ksef_invoices: number
+    suspect_sales_records: number
+    fixed_assets_count: number
+  }
+}
+
+export interface FixedAsset {
+  id: string
+  name: string
+  value_net: number
+  depreciation_months: number
+  start_period: string
+  purchase_date: string
+  notes: string
+}
+
+export interface SalesImportResult {
+  inserted: number
+  updated: number
+  skipped: number
+  dedup_ksef: number
+  dedup_module: number
+  suspects: number
+  periods: string[]
+}
+
 export interface Mt940ImportResult {
   imported: number
   duplicates: number

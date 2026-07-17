@@ -343,6 +343,14 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                     <div className="text-sm font-semibold text-[#0f172a] truncate">{user.display_name}</div>
                     <div className="text-xs text-[#94a3b8] truncate mt-0.5">{user.email}</div>
                   </div>
+                  {(user.role === 'admin' || user.can_view_payments) && (
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/rentownosc') }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-[#475569] hover:bg-[#f8fafc] transition-colors"
+                    >
+                      Rentowność (RZiS / EBITDA)
+                    </button>
+                  )}
                   {user.role === 'admin' && (
                     <>
                       <button

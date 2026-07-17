@@ -768,6 +768,46 @@ model SmtpSettings {
 }
 
 // ─── Manual Costs (pensje, ZUS, podatki, faktury zagraniczne) ─────────────────
+// ─── Finanse: rejestr sprzedaży (import z Firmao) ────────────────────────────
+model SalesRecord {
+  id             String  @id
+  source         String  @default("firmao") // firmao | manual
+  invoice_number String
+  doc_type       String  @default("faktura") // faktura | zaliczkowa | korekta | inny
+  buyer_name     String  @default("")
+  sale_date      String                      // YYYY-MM-DD (data transakcji/sprzedaży)
+  issue_date     String  @default("")
+  due_date       String  @default("")
+  paid           Boolean @default(false)     // kolumna "Zapłacono" z Firmao
+  net            Float   @default(0)
+  vat            Float   @default(0)
+  gross          Float   @default(0)
+  currency       String  @default("PLN")
+  period         String                      // YYYY-MM — miesiąc przychodu
+  // dedupe względem innych źródeł przychodu (unikamy podwójnego liczenia):
+  // unique = tylko w Firmao | ksef_match = jest też w KSeF | module_match = jest też w module faktur
+  // suspect = możliwy duplikat (dopasowanie tylko po kwocie) — do ręcznej weryfikacji
+  dedup_status   String  @default("unique")
+  matched_id     String? // id faktury KSeF lub modułu, z którą zdeduplikowano
+  created_at     String
+
+  @@map("sales_records")
+}
+
+// ─── Finanse: środki trwałe (amortyzacja liniowa do RZiS) ────────────────────
+model FixedAsset {
+  id                  String @id
+  name                String
+  value_net           Float                   // wartość początkowa netto
+  depreciation_months Int    @default(60)     // okres amortyzacji w miesiącach
+  start_period        String                  // YYYY-MM — pierwszy miesiąc odpisu
+  purchase_date       String @default("")
+  notes               String @default("")
+  created_at          String
+
+  @@map("fixed_assets")
+}
+
 model ManualCost {
   id            String  @id
   date          String                      // YYYY-MM-DD
