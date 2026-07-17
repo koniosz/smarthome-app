@@ -1,6 +1,7 @@
 export interface ParsedTransaction {
   date: string          // ISO YYYY-MM-DD
   amount: number        // positive = credit, negative = debit
+  is_reversal: boolean  // RC/RD — storno (zwrot wcześniejszej transakcji), nie zwykła płatność
   description: string
   counterparty: string
   counterparty_iban: string
@@ -49,10 +50,13 @@ export function parseMT940(content: string): ParsedTransaction[] {
       continue
     }
 
-    const direction = amountMatch[3] // C = credit, D = debit, RC = return credit, RD = return debit
+    // C = uznanie (+), D = obciążenie (−), RD = storno obciążenia (środki WRACAJĄ, +),
+    // RC = storno uznania (środki WYCHODZĄ, −) — zgodnie ze specyfikacją SWIFT
+    const direction = amountMatch[3]
     const amountStr = amountMatch[4].replace(',', '.')
     const amountRaw = parseFloat(amountStr)
-    const amount    = (direction === 'C' || direction === 'RC') ? amountRaw : -amountRaw
+    const amount    = (direction === 'C' || direction === 'RD') ? amountRaw : -amountRaw
+    const is_reversal = direction === 'RC' || direction === 'RD'
 
     // Extract reference: everything after '//' in :61: line
     const refMatch = line61.match(/\/\/(.+)$/)
@@ -108,6 +112,7 @@ export function parseMT940(content: string): ParsedTransaction[] {
     transactions.push({
       date: dateISO,
       amount,
+      is_reversal,
       description,
       counterparty,
       counterparty_iban,

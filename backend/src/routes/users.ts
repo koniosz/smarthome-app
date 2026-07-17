@@ -63,6 +63,7 @@ router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
     if (req.body.role !== undefined) patch.role = req.body.role === 'admin' ? 'admin' : 'employee'
     if (req.body.can_view_warehouse !== undefined) patch.can_view_warehouse = Boolean(req.body.can_view_warehouse)
     if (req.body.can_view_invoices !== undefined) patch.can_view_invoices = Boolean(req.body.can_view_invoices)
+    if (req.body.can_view_payments !== undefined) patch.can_view_payments = Boolean(req.body.can_view_payments)
     if (req.body.password) patch.password_hash = await bcrypt.hash(req.body.password, 10)
 
     await db.users.update(req.params.id, patch)

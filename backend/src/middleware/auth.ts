@@ -10,6 +10,7 @@ export interface AuthUser {
   role: 'admin' | 'employee'
   can_view_warehouse?: boolean
   can_view_invoices?: boolean
+  can_view_payments?: boolean
 }
 
 declare global {

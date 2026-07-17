@@ -10,6 +10,7 @@ import {
   Banknote,
   FileBarChart,
   Warehouse,
+  Wallet,
   Users,
   Search,
   Bell,
@@ -19,7 +20,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
 import type { AppNotification } from '../../types'
 
-export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'magazyn' | 'hr'
+export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'platnosci' | 'magazyn' | 'hr'
 
 interface AppHeaderProps {
   darkMode: boolean
@@ -142,6 +143,7 @@ const NAV_ITEMS: { view: NavView; label: string; Icon: typeof Zap }[] = [
   { view: 'product-catalog', label: 'Katalog',   Icon: Package },
   { view: 'faktury',         label: 'Faktury',   Icon: FileText },
   { view: 'koszty',          label: 'Koszty',    Icon: Banknote },
+  { view: 'platnosci',       label: 'Płatności', Icon: Wallet },
   { view: 'magazyn',         label: 'Magazyn',   Icon: Warehouse },
   { view: 'hr',              label: 'HR',        Icon: Users },
 ]
@@ -264,7 +266,11 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
 
         {/* Nav */}
         <nav className="flex items-center gap-1">
-          {NAV_ITEMS.filter(({ view }) => view !== 'magazyn' || user?.role === 'admin' || user?.can_view_warehouse).map(({ view, label, Icon }) => {
+          {NAV_ITEMS.filter(({ view }) => {
+            if (view === 'magazyn') return user?.role === 'admin' || user?.can_view_warehouse
+            if (view === 'platnosci') return user?.role === 'admin' || user?.can_view_payments
+            return true
+          }).map(({ view, label, Icon }) => {
             const isActive = activeView === view
             return (
               <button

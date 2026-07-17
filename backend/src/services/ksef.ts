@@ -650,6 +650,9 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
           data: {
             id:               uuidv4(),
             ...mapped,
+            // jawnie 'unpaid' (nie NULL): filtry Prisma `{ not: 'paid' }` pomijają NULL-e,
+            // więc faktury bez statusu znikałyby z list "do zapłaty"
+            payment_status:   'unpaid',
             acquisition_date: now().split('T')[0],
             raw_data:         JSON.stringify(inv),
             created_at:       now(),

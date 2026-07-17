@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import multer from 'multer'
 import { v4 as uuidv4 } from 'uuid'
+import { requireAdmin } from '../middleware/auth'
 import { parseMT940 } from '../utils/mt940Parser'
 import { getPrzelewy24Status, getTransactions as p24GetTransactions } from '../utils/przelewy24Client'
 import db from '../db'
@@ -201,8 +202,8 @@ router.get('/transactions', async (req: Request, res: Response) => {
   }
 })
 
-// ─── DELETE /api/bank/transactions ───────────────────────────────────────────
-router.delete('/transactions', async (_req: Request, res: Response) => {
+// ─── DELETE /api/bank/transactions — destrukcyjne, tylko admin ────────────────
+router.delete('/transactions', requireAdmin, async (_req: Request, res: Response) => {
   try {
     await db.bank_transactions.deleteAll()
     return res.json({ success: true })
@@ -281,6 +282,15 @@ export async function updateKsefPayment(req: Request, res: Response) {
 
     if (!status || !['paid', 'unpaid'].includes(status)) {
       return res.status(400).json({ error: 'Wymagane pole status: "paid" | "unpaid"' })
+    }
+
+    // Cofnięcie zapłaty zwalnia powiązane transakcje bankowe z powrotem do „do sprawdzenia"
+    // (spójnie z POST /api/payables/invoices/:id/mark-unpaid)
+    if (status === 'unpaid') {
+      const linked = await db.bank_transactions.list({ matched_invoice_id: id })
+      for (const tx of linked) {
+        await db.bank_transactions.update(tx.id, { matched_invoice_id: null, match_confidence: null, review_status: 'pending' })
+      }
     }
 
     const updated = await db.ksef_invoices.updatePayment(id, {

@@ -12,6 +12,7 @@ import { updateCost, deleteCost } from './routes/costs'
 import laborRouter from './routes/labor'
 import { updateLabor, deleteLabor } from './routes/labor'
 import paymentsRouter, { updatePayment, deletePayment } from './routes/payments'
+import payablesRouter, { requirePayments } from './routes/payables'
 import employeesRouter from './routes/employees'
 import dashboardRouter from './routes/dashboard'
 import tasksRouter from './routes/tasks'
@@ -97,6 +98,7 @@ app.use('/api/quotes', quotesRouter)           // wyceny samodzielne (bez projek
 app.use('/api/warehouse', warehouseRouter)     // magazyn (dostęp: admin lub can_view_warehouse)
 app.use('/api/hr', hrRouter)                   // HR: urlopy + ewidencja czasu pracy
 app.use('/api/sales-invoices', salesInvoicesRouter) // faktury sprzedażowe (beta, admin)
+app.use('/api/payables', payablesRouter)       // panel Płatności (dostęp: admin lub can_view_payments)
 app.use('/api/projects/:projectId/costs', costsRouter)
 app.use('/api/projects/:projectId/labor', laborRouter)
 app.use('/api/projects/:projectId/payments', paymentsRouter)
@@ -139,8 +141,8 @@ app.use('/api/ksef', ksefRouter)
 app.use('/api/manual-costs', manualCostsRouter)
 
 // Bank payment verification
-app.use('/api/bank', bankRouter)
-app.patch('/api/ksef/invoices/:id/payment', updateKsefPayment)
+app.use('/api/bank', requirePayments, bankRouter) // dane bankowe: admin lub księgowy (can_view_payments)
+app.patch('/api/ksef/invoices/:id/payment', requirePayments, updateKsefPayment)
 
 // App settings (admin only)
 app.use('/api/settings', settingsRouter)

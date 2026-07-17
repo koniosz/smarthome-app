@@ -302,6 +302,7 @@ model User {
   role          String   @default("employee")
   can_view_warehouse Boolean @default(false)   // admin nadaje dostęp do zakładki Magazyn
   can_view_invoices  Boolean @default(false)   // admin nadaje dostęp do fakturowania (sprzedaż)
+  can_view_payments  Boolean @default(false)   // admin nadaje dostęp do zakładki Płatności (księgowy)
   azure_oid     String?  @unique
   password_hash String?
   created_at    String
@@ -681,6 +682,7 @@ model BankTransaction {
   reference         String  @default("")  // bank reference number / P24 order ID
   matched_invoice_id String?
   match_confidence  Float?  // 0-1 confidence score
+  review_status     String  @default("none") // none (spoza panelu Płatności) | pending (do sprawdzenia) | matched (auto) | assigned (ręcznie) | dismissed (odrzucona)
   created_at        String
 
   @@map("bank_transactions")

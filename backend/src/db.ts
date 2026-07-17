@@ -451,7 +451,8 @@ export const db = {
     deleteAll: () =>
       prisma.bankTransaction.deleteMany(),
     findUnmatched: () =>
-      prisma.bankTransaction.findMany({ where: { matched_invoice_id: null } }),
+      // odrzucone w panelu Płatności nie wracają do dopasowań starego silnika /api/bank/match
+      prisma.bankTransaction.findMany({ where: { matched_invoice_id: null, review_status: { not: 'dismissed' } } }),
   },
 
   ksef_invoices: {

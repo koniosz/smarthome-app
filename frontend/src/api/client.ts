@@ -134,6 +134,28 @@ export const projectDocumentsApi = {
     api.post(`/projects/${projectId}/documents/generate-contract`, data, { responseType: 'blob' }).then(r => r.data),
 }
 
+export const payablesApi = {
+  summary: (): Promise<import('../types').PayableSummary> =>
+    api.get('/payables/summary').then(r => r.data),
+  invoices: (filter: string, search?: string): Promise<import('../types').PayableInvoice[]> =>
+    api.get('/payables/invoices', { params: { filter, search: search || undefined } }).then(r => r.data),
+  markPaid: (id: string, paidAt?: string): Promise<void> =>
+    api.post(`/payables/invoices/${id}/mark-paid`, { paid_at: paidAt }).then(r => r.data),
+  markUnpaid: (id: string): Promise<void> =>
+    api.post(`/payables/invoices/${id}/mark-unpaid`).then(r => r.data),
+  importMt940: (file: File): Promise<import('../types').Mt940ImportResult> => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post('/payables/import-mt940', form, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+  },
+  review: (): Promise<import('../types').PayableReviewItem[]> =>
+    api.get('/payables/review').then(r => r.data),
+  assign: (txId: string, invoiceId: string): Promise<void> =>
+    api.post(`/payables/review/${txId}/assign`, { invoice_id: invoiceId }).then(r => r.data),
+  dismiss: (txId: string): Promise<void> =>
+    api.post(`/payables/review/${txId}/dismiss`).then(r => r.data),
+}
+
 export const attachmentsApi = {
   upload: (costId: string, file: File) => {
     const form = new FormData()

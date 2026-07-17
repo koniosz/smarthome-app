@@ -669,3 +669,62 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   in_progress: 'W toku',
   done:        'Zakończone',
 }
+
+// ─── Płatności (zobowiązania — panel księgowego) ──────────────────────────────
+export interface PayableSummary {
+  unpaid_count: number
+  unpaid_sum: number
+  overdue_count: number
+  overdue_sum: number
+  due_soon_count: number
+  due_soon_sum: number
+  paid_this_month_count: number
+  paid_this_month_sum: number
+  review_count: number
+}
+
+export interface PayableInvoice {
+  id: string
+  ksef_number: string | null
+  invoice_number: string | null
+  seller_name: string | null
+  seller_nip: string | null
+  gross_amount: number
+  currency: string
+  invoice_date: string | null
+  payment_due_date: string | null
+  payment_status: 'paid' | 'unpaid' | 'partial'
+  payment_source: 'mt940' | 'przelewy24' | 'manual' | null
+  paid_amount: number | null
+  paid_at: string | null
+  project_id: string | null
+  overdue: boolean
+}
+
+export interface PayableCandidate {
+  invoice: PayableInvoice
+  confidence: number
+  reasons: string[]
+}
+
+export interface PayableReviewItem {
+  id: string
+  transaction_date: string
+  amount: number
+  description: string
+  counterparty: string
+  counterparty_iban: string
+  candidates: PayableCandidate[]
+}
+
+export interface Mt940ImportResult {
+  imported: number
+  duplicates: number
+  auto_matched: number
+  to_review: number
+  credits_skipped: number
+  matched: Array<{
+    invoice_id: string; invoice_number: string | null; seller_name: string | null
+    amount: number; confidence: number; reasons: string[]
+  }>
+}
