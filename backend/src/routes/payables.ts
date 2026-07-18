@@ -146,6 +146,22 @@ function bestMatches(tx: any, invoices: any[], limit: number) {
     .slice(0, limit)
 }
 
+// Wybór faktury do automatycznego oznaczenia — wspólne dla importu i ponownego
+// dopasowania. Zwraca null przy braku kwalifikującego dopasowania lub realnej
+// niejednoznaczności (dwie faktury kwalifikują się jednocześnie; dokładna kwota
+// wygrywa z kwotą ±prowizja).
+function pickAutoMatch(tx: any, candidates: any[]): { invoice: any; confidence: number; reasons: string[] } | null {
+  const [best, second] = bestMatches(tx, candidates, 2)
+  if (!best || best.confidence < AUTO_MATCH_THRESHOLD) return null
+  const bestExact = best.reasons.includes('kwota')
+  const secondExact = !!second && second.reasons.includes('kwota')
+  const ambiguous = !!second
+    && second.confidence >= AUTO_MATCH_THRESHOLD
+    && best.confidence - second.confidence < 0.1
+    && !(bestExact && !secondExact)
+  return ambiguous ? null : best
+}
+
 async function markInvoicePaid(invoiceId: string, opts: { source: string; amount?: number | null; paidAt?: string | null; txId?: string | null }) {
   await db.ksef_invoices.updatePayment(invoiceId, {
     payment_status: 'paid',
@@ -298,17 +314,8 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
         toReview++
       } else {
         const candidates = unpaidInvoices.filter((i: any) => !paidNow.has(i.id))
-        const [best, second] = bestMatches(tx, candidates, 2)
-        // Bezpiecznik niejednoznaczności — tylko gdy DWIE faktury niezależnie kwalifikują się
-        // do auto-dopasowania i są blisko siebie (np. dwie o tej samej kwocie od tego samego
-        // dostawcy). Dokładna kwota wygrywa z kwotą "±prowizja" (tie-break).
-        const bestExact = !!best && best.reasons.includes('kwota')
-        const secondExact = !!second && second.reasons.includes('kwota')
-        const ambiguous = !!second
-          && second.confidence >= AUTO_MATCH_THRESHOLD
-          && best.confidence - second.confidence < 0.1
-          && !(bestExact && !secondExact)
-        if (best && best.confidence >= AUTO_MATCH_THRESHOLD && !ambiguous) {
+        const best = pickAutoMatch(tx, candidates)
+        if (best) {
           matchedInvoiceId = best.invoice.id
           matchConfidence = best.confidence
           reviewStatus = 'matched'
@@ -340,6 +347,39 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
   } catch (e: any) {
     console.error('[payables/import-mt940]', e)
     res.status(500).json({ error: e?.message ?? 'Błąd importu' })
+  }
+})
+
+// ── POST /api/payables/rematch — przepuść zaległe obciążenia przez aktualne reguły ─
+// Auto-dopasowanie działa przy imporcie; po zmianie reguł (albo po dojściu nowych
+// faktur z KSeF) ten endpoint ponownie ocenia listę "do sprawdzenia".
+router.post('/rematch', async (_req: Request, res: Response) => {
+  try {
+    const pending = await db.bank_transactions.list({ matched_invoice_id: null, review_status: 'pending', amount: { lt: 0 } })
+    const unpaidInvoices = (await db.ksef_invoices.listAll()).filter((i: any) => isIncoming(i) && isUnpaid(i))
+    const paidNow = new Set<string>()
+    let matched = 0
+    const details: any[] = []
+
+    for (const tx of pending) {
+      const candidates = unpaidInvoices.filter((i: any) => !paidNow.has(i.id))
+      const best = pickAutoMatch(tx, candidates)
+      if (!best) continue
+      await markInvoicePaid(best.invoice.id, { source: 'mt940', amount: Math.abs(tx.amount), paidAt: tx.transaction_date, txId: tx.id })
+      await db.bank_transactions.update(tx.id, { matched_invoice_id: best.invoice.id, match_confidence: best.confidence, review_status: 'matched' })
+      paidNow.add(best.invoice.id)
+      matched++
+      details.push({
+        invoice_id: best.invoice.id, invoice_number: best.invoice.invoice_number,
+        seller_name: best.invoice.seller_name, amount: Math.abs(tx.amount),
+        confidence: best.confidence, reasons: best.reasons,
+      })
+    }
+
+    res.json({ checked: pending.length, matched, remaining: pending.length - matched, details })
+  } catch (e) {
+    console.error('[payables/rematch]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
   }
 })
 

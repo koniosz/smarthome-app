@@ -150,6 +150,8 @@ export const payablesApi = {
   },
   review: (): Promise<import('../types').PayableReviewItem[]> =>
     api.get('/payables/review').then(r => r.data),
+  rematch: (): Promise<{ checked: number; matched: number; remaining: number }> =>
+    api.post('/payables/rematch').then(r => r.data),
   assign: (txId: string, invoiceId: string): Promise<void> =>
     api.post(`/payables/review/${txId}/assign`, { invoice_id: invoiceId }).then(r => r.data),
   dismiss: (txId: string): Promise<void> =>
