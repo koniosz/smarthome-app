@@ -109,6 +109,22 @@ export default function PlatnosciPage() {
     finally { setBusyId(null) }
   }
 
+  const [fetchingDue, setFetchingDue] = useState(false)
+  const [dueInfo, setDueInfo] = useState('')
+  const fetchDueDates = async () => {
+    setFetchingDue(true); setDueInfo('')
+    try {
+      const r = await payablesApi.fetchDueDates()
+      const parts = [`uzupełniono ${r.filled}`]
+      if (r.no_date_in_invoice > 0) parts.push(`${r.no_date_in_invoice} faktur bez terminu w XML`)
+      if (r.failed > 0) parts.push(`${r.failed} błędów pobierania`)
+      if (r.remaining > 0) parts.push(`zostało ${r.remaining} — kliknij ponownie`)
+      setDueInfo(`Terminy z KSeF: ${parts.join(' · ')}`)
+      await reload(tab, search)
+    } catch { setDueInfo('Nie udało się pobrać terminów z KSeF.') }
+    finally { setFetchingDue(false) }
+  }
+
   const [rematching, setRematching] = useState(false)
   const [rematchInfo, setRematchInfo] = useState('')
   const rematch = async () => {
@@ -255,6 +271,16 @@ export default function PlatnosciPage() {
           )}
         </button>
         <div className="flex-1" />
+        {tab !== 'review' && invoices.some(i => i.payment_status !== 'paid' && i.payment_due_date == null) && (
+          <button
+            onClick={fetchDueDates}
+            disabled={fetchingDue}
+            title="Część faktur nie ma terminu płatności — pobierz go z XML faktury w KSeF"
+            className="px-3 py-2 rounded-lg text-sm font-semibold border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-60"
+          >
+            {fetchingDue ? 'Pobieram terminy…' : `Pobierz terminy z KSeF (${invoices.filter(i => i.payment_status !== 'paid' && i.payment_due_date == null).length})`}
+          </button>
+        )}
         {tab !== 'review' && (
           <div className="relative">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -267,6 +293,10 @@ export default function PlatnosciPage() {
           </div>
         )}
       </div>
+
+      {dueInfo && (
+        <div className="mb-3 text-xs font-semibold text-violet-700 dark:text-violet-300">{dueInfo}</div>
+      )}
 
       {loading ? (
         <div className="p-10 text-center text-gray-400 text-sm">Ładowanie…</div>

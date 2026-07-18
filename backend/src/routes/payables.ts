@@ -350,6 +350,38 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
   }
 })
 
+// ── POST /api/payables/fetch-due-dates — uzupełnij terminy płatności z XML KSeF ──
+// Nieopłacone faktury kosztowe bez terminu (null = nigdy nie pobrano; '' = faktura
+// nie ma terminu w XML — nie ponawiamy). Partia max 30 na wywołanie (limiter XML
+// w ksef-lineitems trzyma równoległość 2, a limit partii chroni rate-limit KSeF).
+router.post('/fetch-due-dates', async (_req: Request, res: Response) => {
+  try {
+    const missing = (await db.ksef_invoices.listAll()).filter((i: any) =>
+      isIncoming(i) && isUnpaid(i) && i.payment_due_date == null && i.ksef_number)
+    const batch = missing.slice(0, 30)
+
+    const { fetchAndStoreInvoiceDetails } = await import('../services/ksef-lineitems')
+    let filled = 0, noDate = 0, failed = 0
+    for (const inv of batch) {
+      const due = await fetchAndStoreInvoiceDetails(inv.id)
+      if (due === null) failed++
+      else if (due === '') noDate++
+      else filled++
+    }
+
+    res.json({
+      checked: batch.length,
+      filled,                                  // uzupełnione terminy
+      no_date_in_invoice: noDate,              // faktura nie zawiera terminu w XML
+      failed,                                  // błąd pobierania (spróbuj później)
+      remaining: Math.max(0, missing.length - batch.length),
+    })
+  } catch (e) {
+    console.error('[payables/fetch-due-dates]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
 // ── POST /api/payables/rematch — przepuść zaległe obciążenia przez aktualne reguły ─
 // Auto-dopasowanie działa przy imporcie; po zmianie reguł (albo po dojściu nowych
 // faktur z KSeF) ten endpoint ponownie ocenia listę "do sprawdzenia".

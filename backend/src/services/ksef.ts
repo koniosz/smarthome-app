@@ -638,6 +638,12 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
     fetched = invoices.length
     console.log(`[KSeF] Pobrano ${fetched} faktur łącznie`)
 
+    // Termin płatności + pozycje wymagają XML faktury — pobieramy dla nowych faktur,
+    // ale max 20 na przebieg syncu (ochrona przed rate-limitem KSeF; resztę uzupełni
+    // przycisk w panelu Płatności albo leniwe pobranie pozycji)
+    let detailsFetched = 0
+    const DETAILS_PER_SYNC = 20
+
     for (const inv of invoices) {
       try {
         const mapped = mapInvoice(inv)
@@ -670,6 +676,13 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
           mapped.gross_amount,
           mapped.invoice_direction,
         ).catch(() => {})
+
+        // Termin płatności (+ cache pozycji) z XML faktury
+        if (detailsFetched < DETAILS_PER_SYNC) {
+          detailsFetched++
+          const { fetchAndStoreInvoiceDetails } = await import('./ksef-lineitems')
+          await fetchAndStoreInvoiceDetails(created.id).catch(() => {})
+        }
 
         saved++
       } catch (err: any) {
