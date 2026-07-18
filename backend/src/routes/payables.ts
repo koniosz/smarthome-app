@@ -100,11 +100,14 @@ export function scoreMatch(tx: any, inv: any): { confidence: number; reasons: st
   const desc = `${tx.description || ''} ${tx.counterparty || ''}`
   const descAlnum = alnum(desc)
 
-  // Kwota — najsilniejszy sygnał
-  if (Math.abs(txAbs - gross) <= 0.01) {
-    confidence += 0.5; reasons.push('kwota')
-  } else if (gross > 0 && Math.abs(txAbs - gross) / gross < 0.02) {
-    confidence += 0.25; reasons.push('kwota ±2%')
+  // Kwota — najsilniejszy sygnał. Tolerancja na prowizję pośrednika (P24/BLIK):
+  // max(5 zł, 2% brutto). Zgodna kwota + zgodny kontrahent ⇒ automatyczna kwalifikacja.
+  const diff = Math.abs(txAbs - gross)
+  const feeTolerance = Math.max(5, gross * 0.02)
+  if (diff <= 0.01) {
+    confidence += 0.55; reasons.push('kwota')
+  } else if (gross > 0 && diff <= feeTolerance) {
+    confidence += 0.5; reasons.push('kwota ±prowizja')
   }
 
   // Numer faktury w tytule przelewu (porównanie po znakach alfanumerycznych)
@@ -123,13 +126,13 @@ export function scoreMatch(tx: any, inv: any): { confidence: number; reasons: st
   const sellerTokens = (inv.seller_name || '').toLowerCase().split(/[^a-ząćęłńóśźż0-9]+/).filter((t: string) => t.length >= 4)
   const descLower = desc.toLowerCase()
   if (sellerTokens.length && sellerTokens.some((t: string) => descLower.includes(t))) {
-    confidence += 0.15; reasons.push('kontrahent')
+    confidence += 0.25; reasons.push('kontrahent')
   }
 
-  // Data przelewu nie wcześniej niż faktura i w oknie 120 dni
+  // Data: płacimy często po terminie, więc odstęp NIE dyskwalifikuje — mały bonus
+  // tylko za sanity (przelew nie wcześniejszy niż data faktury), bez limitu dni
   if (inv.invoice_date && tx.transaction_date && tx.transaction_date >= inv.invoice_date) {
-    const diffDays = (new Date(tx.transaction_date).getTime() - new Date(inv.invoice_date).getTime()) / 86_400_000
-    if (diffDays <= 120) { confidence += 0.1; reasons.push('data') }
+    confidence += 0.05; reasons.push('data')
   }
 
   return { confidence: Math.min(1, confidence), reasons }
@@ -296,9 +299,15 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
       } else {
         const candidates = unpaidInvoices.filter((i: any) => !paidNow.has(i.id))
         const [best, second] = bestMatches(tx, candidates, 2)
-        // Bezpiecznik niejednoznaczności: gdy dwie faktury pasują niemal równie dobrze
-        // (np. dwie o tej samej kwocie od tego samego dostawcy), nie zgadujemy — do sprawdzenia
-        const ambiguous = !!second && best.confidence - second.confidence < 0.15
+        // Bezpiecznik niejednoznaczności — tylko gdy DWIE faktury niezależnie kwalifikują się
+        // do auto-dopasowania i są blisko siebie (np. dwie o tej samej kwocie od tego samego
+        // dostawcy). Dokładna kwota wygrywa z kwotą "±prowizja" (tie-break).
+        const bestExact = !!best && best.reasons.includes('kwota')
+        const secondExact = !!second && second.reasons.includes('kwota')
+        const ambiguous = !!second
+          && second.confidence >= AUTO_MATCH_THRESHOLD
+          && best.confidence - second.confidence < 0.1
+          && !(bestExact && !secondExact)
         if (best && best.confidence >= AUTO_MATCH_THRESHOLD && !ambiguous) {
           matchedInvoiceId = best.invoice.id
           matchConfidence = best.confidence
