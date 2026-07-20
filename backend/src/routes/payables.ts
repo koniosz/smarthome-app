@@ -11,7 +11,7 @@ import { Router, Request, Response, NextFunction } from 'express'
 import multer from 'multer'
 import { v4 as uuidv4 } from 'uuid'
 import { parseMT940 } from '../utils/mt940Parser'
-import db from '../db'
+import db, { prisma } from '../db'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -347,6 +347,37 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
   } catch (e: any) {
     console.error('[payables/import-mt940]', e)
     res.status(500).json({ error: e?.message ?? 'Błąd importu' })
+  }
+})
+
+// ── GET /api/payables/invoices/:id/line-items — pozycje faktury (cache/XML KSeF) ──
+router.get('/invoices/:id/line-items', async (req: Request, res: Response) => {
+  try {
+    const { getInvoiceLineItems } = await import('../services/ksef-lineitems')
+    res.json({ items: await getInvoiceLineItems(req.params.id) })
+  } catch (err: any) {
+    res.json({ items: [], error: err?.message ?? 'Błąd' })
+  }
+})
+
+// ── GET /api/payables/invoices/:id/xml — oryginalny XML faktury z KSeF ────────
+router.get('/invoices/:id/xml', async (req: Request, res: Response) => {
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
+    if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
+    if (!invoice.ksef_number) { res.status(400).json({ error: 'Brak numeru KSeF' }); return }
+    const { getActiveSession } = await import('../services/ksef')
+    const axios = (await import('axios')).default
+    const xmlRes = await axios.get(
+      `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(invoice.ksef_number)}`,
+      { headers: { Authorization: `Bearer ${await getActiveSession()}` }, responseType: 'text', timeout: 15000 },
+    )
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="faktura-${(invoice.invoice_number ?? invoice.ksef_number).replace(/[^\w.-]/g, '_')}.xml"`)
+    res.send(xmlRes.data)
+  } catch (err: any) {
+    const msg = err?.response ? `KSeF HTTP ${err.response.status}` : err.message
+    res.status(500).json({ error: msg })
   }
 })
 

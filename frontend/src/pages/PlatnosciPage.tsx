@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, CheckCircle2, RotateCcw, Search, AlertTriangle, Banknote, CalendarClock, ListChecks } from 'lucide-react'
+import { Upload, CheckCircle2, RotateCcw, Search, AlertTriangle, Banknote, CalendarClock, ListChecks, Eye, Download, X } from 'lucide-react'
 import { payablesApi } from '../api/client'
 import type { PayableSummary, PayableInvoice, PayableReviewItem, Mt940ImportResult } from '../types'
 import { useAuth } from '../auth/AuthContext'
@@ -31,6 +31,7 @@ export default function PlatnosciPage() {
   const [importResult, setImportResult] = useState<Mt940ImportResult | null>(null)
   const [importError, setImportError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [previewInv, setPreviewInv] = useState<PayableInvoice | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Sekwencer żądań: odpowiedź, która przyszła po nowszym żądaniu, jest ignorowana
@@ -416,7 +417,16 @@ export default function PlatnosciPage() {
                       {money(inv.gross_amount, inv.currency)}
                     </td>
                     <td className="px-4 py-3">{statusBadge(inv)}</td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {inv.ksef_number && (
+                        <button
+                          onClick={() => setPreviewInv(inv)}
+                          title="Podgląd faktury z KSeF"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 mr-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 hover:text-violet-600 dark:text-gray-400 dark:hover:text-violet-400"
+                        >
+                          <Eye size={13} /> Podgląd
+                        </button>
+                      )}
                       {inv.payment_status === 'paid' ? (
                         <button
                           onClick={() => markUnpaid(inv)}
@@ -442,6 +452,132 @@ export default function PlatnosciPage() {
           </div>
         </div>
       )}
+
+      {previewInv && <InvoicePreviewModal invoice={previewInv} onClose={() => setPreviewInv(null)} />}
+    </div>
+  )
+}
+
+// ── Podgląd faktury z KSeF (dane + pozycje) + pobranie XML ────────────────────
+function InvoicePreviewModal({ invoice, onClose }: { invoice: PayableInvoice; onClose: () => void }) {
+  const [items, setItems] = useState<Array<{ nr: string; name: string; unit: string; qty: string; unitPrice: string; netValue: string; vatRate: string }> | null>(null)
+  const [itemsError, setItemsError] = useState('')
+  const [downloading, setDownloading] = useState(false)
+
+  useEffect(() => {
+    payablesApi.invoiceLineItems(invoice.id)
+      .then(r => { setItems(r.items); if (r.error) setItemsError(r.error) })
+      .catch(() => { setItems([]); setItemsError('Nie udało się pobrać pozycji z KSeF.') })
+  }, [invoice.id])
+
+  const downloadXml = async () => {
+    setDownloading(true)
+    try {
+      const blob = await payablesApi.invoiceXml(invoice.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `faktura-${(invoice.invoice_number ?? invoice.ksef_number ?? invoice.id).replace(/[^\w.-]/g, '_')}.xml`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch { alert('Nie udało się pobrać XML z KSeF.') }
+    finally { setDownloading(false) }
+  }
+
+  const netTotal = (items ?? []).reduce((s, i) => s + (parseFloat(i.netValue) || 0), 0)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] overflow-y-auto">
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-gray-800 dark:text-gray-100 truncate">
+              Faktura {invoice.invoice_number ?? '—'}
+            </h2>
+            <p className="text-xs text-gray-400 truncate">KSeF: {invoice.ksef_number ?? '—'}</p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={downloadXml}
+              disabled={downloading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 text-xs font-semibold hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-60"
+            >
+              <Download size={13} /> {downloading ? 'Pobieram…' : 'Pobierz XML'}
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"><X size={18} /></button>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-5">
+          {/* Nagłówek faktury */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="col-span-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-0.5">Sprzedawca</div>
+              <div className="text-sm font-bold text-gray-800 dark:text-gray-100">{invoice.seller_name ?? '—'}</div>
+              {invoice.seller_nip && <div className="text-xs text-gray-500 dark:text-gray-400">NIP {invoice.seller_nip}</div>}
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-0.5">Wystawiona</div>
+              <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">{fmtDate(invoice.invoice_date)}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-0.5">Termin płatności</div>
+              <div className={`text-sm font-semibold ${invoice.overdue ? 'text-red-600 dark:text-red-400' : 'text-gray-800 dark:text-gray-100'}`}>
+                {fmtDate(invoice.payment_due_date)}
+              </div>
+            </div>
+          </div>
+
+          {/* Pozycje */}
+          <div className="border border-gray-100 dark:border-gray-800 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs uppercase tracking-wide text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/40">
+                    <th className="px-3 py-2.5 text-left font-semibold w-8">#</th>
+                    <th className="px-3 py-2.5 text-left font-semibold">Nazwa</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">Ilość</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">Cena netto</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">Wartość netto</th>
+                    <th className="px-3 py-2.5 text-right font-semibold">VAT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items === null ? (
+                    <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400 text-sm">Pobieram pozycje z KSeF…</td></tr>
+                  ) : items.length === 0 ? (
+                    <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-400 text-sm">{itemsError || 'Brak pozycji do wyświetlenia.'}</td></tr>
+                  ) : (
+                    items.map((it, i) => (
+                      <tr key={i} className="border-b border-gray-50 dark:border-gray-800/60">
+                        <td className="px-3 py-2 text-gray-400 text-xs">{it.nr || i + 1}</td>
+                        <td className="px-3 py-2 text-gray-800 dark:text-gray-100">{it.name}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200 whitespace-nowrap">{it.qty} {it.unit}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200 whitespace-nowrap">{it.unitPrice && money(parseFloat(it.unitPrice) || 0, invoice.currency)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-800 dark:text-gray-100 whitespace-nowrap">{it.netValue && money(parseFloat(it.netValue) || 0, invoice.currency)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-500 dark:text-gray-400">{it.vatRate}{/^\d+$/.test(it.vatRate) ? '%' : ''}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Podsumowanie */}
+          <div className="flex justify-end">
+            <div className="text-right space-y-1">
+              {items && items.length > 0 && (
+                <div className="text-sm text-gray-500 dark:text-gray-400">Suma pozycji netto: <span className="font-semibold text-gray-700 dark:text-gray-200 tabular-nums">{money(netTotal, invoice.currency)}</span></div>
+              )}
+              <div className="text-base font-bold text-gray-900 dark:text-gray-100">Do zapłaty brutto: <span className="tabular-nums">{money(invoice.gross_amount, invoice.currency)}</span></div>
+              {invoice.payment_status === 'paid' && invoice.paid_at && (
+                <div className="text-xs font-semibold text-green-600 dark:text-green-400">✓ Zapłacona {fmtDate(invoice.paid_at)}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
