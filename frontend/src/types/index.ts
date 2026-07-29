@@ -717,6 +717,19 @@ export interface PayableReviewItem {
   candidates: PayableCandidate[]
 }
 
+// ─── Prywatna lista zadań (to-do) ─────────────────────────────────────────────
+export interface PersonalTodo {
+  id: string
+  user_id: string
+  title: string
+  notes: string
+  due_date: string   // YYYY-MM-DD lub ''
+  done: boolean
+  done_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 // ─── Finanse 2.0: RZiS / EBITDA ───────────────────────────────────────────────
 export interface PnlLines {
   revenue: number; revenue_firmao: number; revenue_ksef: number; revenue_module: number; revenue_advances: number

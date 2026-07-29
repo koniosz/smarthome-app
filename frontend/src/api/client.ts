@@ -164,6 +164,19 @@ export const payablesApi = {
     api.post(`/payables/review/${txId}/dismiss`).then(r => r.data),
 }
 
+export const personalTodosApi = {
+  list: (userId?: string): Promise<import('../types').PersonalTodo[]> =>
+    api.get('/todos', { params: userId ? { user_id: userId } : {} }).then(r => r.data),
+  create: (data: { title: string; due_date?: string; notes?: string }): Promise<import('../types').PersonalTodo> =>
+    api.post('/todos', data).then(r => r.data),
+  update: (id: string, data: Partial<{ title: string; notes: string; due_date: string; done: boolean }>): Promise<import('../types').PersonalTodo> =>
+    api.patch(`/todos/${id}`, data).then(r => r.data),
+  remove: (id: string): Promise<void> =>
+    api.delete(`/todos/${id}`).then(r => r.data),
+  clearDone: (): Promise<{ deleted: number }> =>
+    api.delete('/todos/done/clear').then(r => r.data),
+}
+
 export const financeApi = {
   pnl: (year: number, businessUnit = 'all'): Promise<import('../types').PnlResponse> =>
     api.get('/finance/pnl', { params: { year, business_unit: businessUnit } }).then(r => r.data),

@@ -5,6 +5,7 @@ import type { OutlookEvent } from '../../api/client'
 import type { Task, TaskType, TaskStatus, Employee, Project } from '../../types'
 import { TASK_TYPE_LABELS, TASK_STATUS_LABELS } from '../../types'
 import { useAuth } from '../../auth/AuthContext'
+import PersonalTodoPanel from './PersonalTodoPanel'
 
 type CalView = 'month' | 'week' | 'day'
 
@@ -1027,6 +1028,8 @@ export default function CalendarTasksSection({
           </div>
         </div>
 
+        {/* ── Prawa kolumna: zadania zespołu + prywatna lista ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         {/* ── Tasks panel ── */}
         <div style={{ ...card, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
@@ -1161,6 +1164,10 @@ export default function CalendarTasksSection({
               Dodaj zadanie
             </div>
           </div>
+        </div>
+
+        {/* ── Prywatna lista to-do (widoczna tylko dla zalogowanego) ── */}
+        <PersonalTodoPanel />
         </div>
       </div>
 

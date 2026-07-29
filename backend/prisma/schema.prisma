@@ -310,8 +310,26 @@ model User {
   project_members ProjectMember[]
   notifications   Notification[]
   access_requests AccessRequest[]
+  personal_todos  PersonalTodo[]
 
   @@map("users")
+}
+
+// ─── Prywatna lista zadań (to-do per użytkownik; wgląd ma tylko właściciel i admin) ─
+model PersonalTodo {
+  id         String  @id
+  user_id    String
+  title      String
+  notes      String  @default("")
+  due_date   String  @default("") // YYYY-MM-DD, puste = bez terminu
+  done       Boolean @default(false)
+  done_at    String?
+  created_at String
+  updated_at String  @default("")
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("personal_todos")
 }
 
 // ─── Magazyn (warehouse) ─────────────────────────────────────────────────────
