@@ -185,6 +185,10 @@ export const financeApi = {
     form.append('file', file)
     return api.post('/finance/import-sales', form, { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
   },
+  costDetails: (from: string, to: string): Promise<import('../types').CostDetailsResponse> =>
+    api.get('/finance/cost-details', { params: { from, to } }).then(r => r.data),
+  addManualCost: (data: { date: string; description: string; amount: number; cost_category: string; subcategory: string; business_unit: string }): Promise<void> =>
+    api.post('/finance/manual-cost', data).then(r => r.data),
   fixedAssets: (): Promise<import('../types').FixedAsset[]> =>
     api.get('/finance/fixed-assets').then(r => r.data),
   addFixedAsset: (data: Partial<import('../types').FixedAsset>): Promise<import('../types').FixedAsset> =>

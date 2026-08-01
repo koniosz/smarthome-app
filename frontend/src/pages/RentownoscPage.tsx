@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Upload, Landmark, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Upload, Landmark, X, PlusCircle, ListTree } from 'lucide-react'
 import { financeApi } from '../api/client'
-import type { PnlLines, PnlResponse, FixedAsset, SalesImportResult } from '../types'
+import type { PnlLines, PnlResponse, FixedAsset, SalesImportResult, CostDetailsResponse, CostDetailGroup } from '../types'
 import { useAuth } from '../auth/AuthContext'
 
 function fmt(n: number) {
@@ -11,8 +11,39 @@ function fmt(n: number) {
 function fmt0(n: number) {
   return new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 }).format(n || 0)
 }
+function money(n: number) {
+  return `${fmt(n)} zł`
+}
+function fmtDate(s: string) {
+  if (!s) return '—'
+  const [y, m, d] = s.slice(0, 10).split('-')
+  return d ? `${d}.${m}.${y}` : s
+}
 
 const MONTH_LABELS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru']
+
+// Kategorie ręcznego kosztu → taksonomia CFO (import spoza UE nie ma faktury w KSeF)
+const MANUAL_COST_CATEGORIES: Array<{ label: string; cost_category: string; subcategory: string }> = [
+  { label: '🌏 Import — towar spoza UE', cost_category: 'cogs', subcategory: 'hardware_noneu' },
+  { label: '🇪🇺 Towar z UE (WNT)', cost_category: 'cogs', subcategory: 'hardware_eu' },
+  { label: '🛃 Cło i opłaty celne', cost_category: 'cogs', subcategory: 'import_duty' },
+  { label: '🚢 Fracht / spedycja', cost_category: 'cogs', subcategory: 'import_freight' },
+  { label: '📋 Agencja celna', cost_category: 'cogs', subcategory: 'import_agency' },
+  { label: 'Materiały instalacyjne', cost_category: 'cogs', subcategory: 'installation_material' },
+  { label: 'Podwykonawca', cost_category: 'cogs', subcategory: 'subcontractor' },
+  { label: 'Pensje', cost_category: 'ga', subcategory: 'salary_gross' },
+  { label: 'ZUS', cost_category: 'ga', subcategory: 'zus_employer' },
+  { label: 'Inne administracyjne', cost_category: 'ga', subcategory: 'other' },
+]
+
+const COST_GROUP_META: Array<{ key: keyof CostDetailsResponse['groups']; label: string; icon: string }> = [
+  { key: 'salaries', label: 'Pensje', icon: '👥' },
+  { key: 'zus', label: 'ZUS', icon: '🏛️' },
+  { key: 'taxes', label: 'Podatki (CIT)', icon: '🧾' },
+  { key: 'import', label: 'Import towaru', icon: '🌏' },
+  { key: 'ksef_invoices', label: 'Faktury KSeF', icon: '📄' },
+  { key: 'other_manual', label: 'Inne koszty ręczne', icon: '✏️' },
+]
 const BU_OPTIONS = [['all', 'Cała spółka'], ['shc', 'Smart Home Center'], ['gatelynk', 'GateLynk'], ['shared', 'Wspólne']] as const
 
 type ViewMode = 'month' | 'quarters' | 'trend'
@@ -94,6 +125,22 @@ export default function RentownoscPage() {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [assetsOpen, setAssetsOpen] = useState(false)
+  const [manualCostOpen, setManualCostOpen] = useState(false)
+
+  // Szczegóły kosztów — zakres z aktywnego widoku (miesiąc albo cały rok)
+  const detailFrom = view === 'month' ? `${year}-${String(monthIdx + 1).padStart(2, '0')}` : `${year}-01`
+  const detailTo = view === 'month' ? detailFrom : `${year}-12`
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [details, setDetails] = useState<CostDetailsResponse | null>(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!detailsOpen || !canSee) return
+    setDetailsLoading(true)
+    financeApi.costDetails(detailFrom, detailTo)
+      .then(setDetails).catch(() => setDetails(null))
+      .finally(() => setDetailsLoading(false))
+  }, [detailsOpen, detailFrom, detailTo, canSee])
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -140,6 +187,10 @@ export default function RentownoscPage() {
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold disabled:opacity-60">
             <Upload size={15} /> {uploading ? 'Importuję…' : 'Wgraj sprzedaż z Firmao'}
           </button>
+          <button onClick={() => setManualCostOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-800">
+            <PlusCircle size={15} /> Dodaj koszt ręczny
+          </button>
           <button onClick={() => setAssetsOpen(true)}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-800">
             <Landmark size={15} /> Środki trwałe
@@ -147,7 +198,7 @@ export default function RentownoscPage() {
           {user?.role === 'admin' && (
             <button onClick={() => navigate('/finanse')}
               className="px-3 py-2.5 rounded-lg text-sm font-semibold text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30">
-              Szczegóły kosztów →
+              Alokacje P&amp;L →
             </button>
           )}
         </div>
@@ -352,7 +403,200 @@ export default function RentownoscPage() {
         </div>
       )}
 
+      {/* ── Szczegóły kosztów + Projekty ── */}
+      {!loading && data && (
+        <div className="mt-4">
+          <button
+            onClick={() => setDetailsOpen(o => !o)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            <ListTree size={15} />
+            {detailsOpen ? '▾' : '▸'} Szczegóły kosztów
+            <span className="text-xs text-gray-400 font-medium">
+              {view === 'month' ? `${MONTH_LABELS[monthIdx]} ${year}` : `cały ${year}`}
+            </span>
+          </button>
+
+          {detailsOpen && (
+            detailsLoading ? (
+              <div className="p-8 text-center text-gray-400 text-sm">Ładowanie szczegółów…</div>
+            ) : !details ? (
+              <div className="p-8 text-center text-red-500 text-sm">Nie udało się pobrać szczegółów.</div>
+            ) : (
+              <CostDetailsView details={details} />
+            )
+          )}
+        </div>
+      )}
+
       {assetsOpen && <FixedAssetsModal onClose={() => { setAssetsOpen(false); load() }} />}
+      {manualCostOpen && <ManualCostModal onClose={(saved) => { setManualCostOpen(false); if (saved) { load(); if (detailsOpen) { financeApi.costDetails(detailFrom, detailTo).then(setDetails).catch(() => {}) } } }} />}
+    </div>
+  )
+}
+
+// ── Szczegóły kosztów: grupy + projekty ───────────────────────────────────────
+function CostDetailsView({ details }: { details: CostDetailsResponse }) {
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+  const [projectsOpen, setProjectsOpen] = useState(false)
+  const toggle = (k: string) => setOpenGroups(p => ({ ...p, [k]: !p[k] }))
+
+  const SOURCE_LABEL: Record<string, string> = { ksef: 'KSeF', mt940: 'MT940', manual: 'ręczny' }
+
+  return (
+    <div className="mt-3 space-y-3">
+      {/* Podsumowanie + info o duplikatach */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="text-sm font-bold text-gray-800 dark:text-gray-100">
+          Koszty razem: {money(details.total)} <span className="text-xs font-medium text-gray-400">netto · {details.from === details.to ? details.from : `${details.from} – ${details.to}`}</span>
+        </div>
+        {details.skipped_mt940_duplicates.count > 0 && (
+          <span className="text-xs px-2 py-1 rounded-md bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-semibold"
+            title="Przelewy MT940 za faktury, które są już w KSeF — policzone raz, z faktury">
+            ✓ wyłapano {details.skipped_mt940_duplicates.count} duplikatów MT940 ({money(details.skipped_mt940_duplicates.total)})
+          </span>
+        )}
+      </div>
+
+      {/* Grupy */}
+      <div className="grid gap-2">
+        {COST_GROUP_META.map(({ key, label, icon }) => {
+          const g: CostDetailGroup = details.groups[key]
+          if (!g || (g.total === 0 && g.items.length === 0)) return null
+          const open = !!openGroups[key]
+          return (
+            <div key={key} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+              <button onClick={() => toggle(key)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                <span>{icon}</span>
+                <span className="text-sm font-bold text-gray-800 dark:text-gray-100 flex-1">{label}</span>
+                <span className="text-xs text-gray-400">{g.items.length} poz.</span>
+                <span className="text-sm font-bold tabular-nums text-gray-800 dark:text-gray-100">{money(g.total)}</span>
+                <span className="text-gray-400 text-xs">{open ? '▾' : '▸'}</span>
+              </button>
+              {open && (
+                <div className="border-t border-gray-100 dark:border-gray-800 max-h-72 overflow-y-auto">
+                  {g.items.map((it, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-2 border-b border-gray-50 dark:border-gray-800/60 text-sm">
+                      <span className="text-xs text-gray-400 tabular-nums w-20 flex-shrink-0">{fmtDate(it.date)}</span>
+                      <span className="text-gray-700 dark:text-gray-200 flex-1 min-w-0 truncate" title={it.description}>{it.description}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-400 font-bold uppercase flex-shrink-0">{SOURCE_LABEL[it.source] ?? it.source}</span>
+                      <span className="tabular-nums font-semibold text-gray-800 dark:text-gray-100 whitespace-nowrap">{money(it.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Projekty */}
+      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+        <button onClick={() => setProjectsOpen(o => !o)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800/50">
+          <span>📁</span>
+          <span className="text-sm font-bold text-gray-800 dark:text-gray-100 flex-1">Projekty — koszty w okresie</span>
+          <span className="text-xs text-gray-400">{details.projects.filter(p => p.project_id).length} projektów</span>
+          <span className="text-gray-400 text-xs">{projectsOpen ? '▾' : '▸'}</span>
+        </button>
+        {projectsOpen && (
+          <div className="border-t border-gray-100 dark:border-gray-800">
+            {details.projects.length === 0 ? (
+              <div className="px-4 py-6 text-center text-gray-400 text-sm">Brak kosztów przypisanych w tym okresie.</div>
+            ) : details.projects.map((p, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 dark:border-gray-800/60 text-sm">
+                <span className={`flex-1 min-w-0 truncate font-semibold ${p.project_id ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400'}`}>{p.name}</span>
+                <span className="text-xs text-gray-400">{p.count} faktur</span>
+                <span className="tabular-nums font-bold text-gray-800 dark:text-gray-100 whitespace-nowrap">{money(p.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="text-xs text-gray-400">
+        Kwoty netto, spójne z RZiS: faktury KSeF wg alokacji (VAT odliczony), pensje/ZUS/CIT z MT940, importy i inne z wpisów ręcznych. VAT nie jest kosztem.
+      </div>
+    </div>
+  )
+}
+
+// ── Modal ręcznego kosztu (np. import towaru z zagranicy) ─────────────────────
+function ManualCostModal({ onClose }: { onClose: (saved: boolean) => void }) {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [description, setDescription] = useState('')
+  const [amount, setAmount] = useState('')
+  const [catIdx, setCatIdx] = useState(0)
+  const [bu, setBU] = useState('shc')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const save = async () => {
+    const num = parseFloat(amount.replace(/[\s  ]/g, '').replace(',', '.'))
+    if (!description.trim() || isNaN(num) || num === 0) { setErr('Podaj opis i kwotę.'); return }
+    setSaving(true); setErr('')
+    try {
+      const cat = MANUAL_COST_CATEGORIES[catIdx]
+      await financeApi.addManualCost({
+        date, description: description.trim(), amount: num,
+        cost_category: cat.cost_category, subcategory: cat.subcategory, business_unit: bu,
+      })
+      onClose(true)
+    } catch {
+      setErr('Nie udało się zapisać kosztu.')
+      setSaving(false)
+    }
+  }
+
+  const inputCls = 'px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500 w-full'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => e.target === e.currentTarget && onClose(false)}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+          <div>
+            <h2 className="text-base font-bold text-gray-800 dark:text-gray-100">Dodaj koszt ręczny</h2>
+            <p className="text-xs text-gray-400">np. import towaru z zagranicy (bez faktury w KSeF) — kwota NETTO</p>
+          </div>
+          <button onClick={() => onClose(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"><X size={18} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Data</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Kwota netto (PLN)</label>
+              <input value={amount} onChange={e => setAmount(e.target.value)} placeholder="12 500,00" inputMode="decimal" className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Opis</label>
+            <input value={description} onChange={e => setDescription(e.target.value)} placeholder="np. Import paneli — dostawca CN, zgłoszenie SAD 123/2026" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Kategoria</label>
+            <select value={catIdx} onChange={e => setCatIdx(Number(e.target.value))} className={inputCls}>
+              {MANUAL_COST_CATEGORIES.map((c, i) => <option key={i} value={i}>{c.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">Jednostka</label>
+            <select value={bu} onChange={e => setBU(e.target.value)} className={inputCls}>
+              <option value="shc">Smart Home Center</option>
+              <option value="gatelynk">GateLynk</option>
+              <option value="shared">Wspólne</option>
+            </select>
+          </div>
+          {err && <div className="text-xs font-semibold text-red-600 dark:text-red-400">{err}</div>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={() => onClose(false)} className="px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-sm font-semibold text-gray-600 dark:text-gray-300">Anuluj</button>
+            <button onClick={save} disabled={saving}
+              className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold disabled:opacity-60">
+              {saving ? 'Zapisuję…' : 'Zapisz koszt'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

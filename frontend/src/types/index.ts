@@ -766,6 +766,30 @@ export interface FixedAsset {
   notes: string
 }
 
+export interface CostDetailItem {
+  date: string
+  description: string
+  amount: number
+  source: string
+  category?: string
+}
+export interface CostDetailGroup { total: number; items: CostDetailItem[] }
+export interface CostDetailsResponse {
+  from: string
+  to: string
+  groups: {
+    salaries: CostDetailGroup
+    zus: CostDetailGroup
+    taxes: CostDetailGroup
+    import: CostDetailGroup
+    ksef_invoices: CostDetailGroup
+    other_manual: CostDetailGroup
+  }
+  projects: Array<{ project_id: string | null; name: string; total: number; count: number }>
+  skipped_mt940_duplicates: { count: number; total: number }
+  total: number
+}
+
 export interface SalesImportResult {
   inserted: number
   updated: number

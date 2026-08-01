@@ -398,6 +398,141 @@ function sumLines(parts: PnlLines[]): PnlLines {
   return finalizeLines(L)
 }
 
+// ── POST /api/finance/manual-cost — ręczny koszt (np. import towaru z zagranicy) ──
+// Import spoza UE nie ma faktury w KSeF (dokumenty celne), więc musi dać się
+// dopisać ręcznie. Trafia do ManualCost (source=manual) i wchodzi do RZiS w całości.
+router.post('/manual-cost', async (req: Request, res: Response) => {
+  try {
+    const { date, description, amount, cost_category, subcategory, business_unit } = req.body ?? {}
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date ?? ''))) { res.status(400).json({ error: 'Wymagana data (YYYY-MM-DD)' }); return }
+    const amt = Number(amount)
+    if (!description || !String(description).trim() || !amt || isNaN(amt)) {
+      res.status(400).json({ error: 'Wymagane: opis i kwota' }); return
+    }
+    const u: any = (req as any).user
+    const cost = await prisma.manualCost.create({ data: {
+      id: uuidv4(), date: String(date),
+      description: String(description).trim().slice(0, 500),
+      amount: Math.round(amt * 100) / 100,
+      currency: 'PLN',
+      cost_category: String(cost_category || 'cogs'),
+      subcategory: String(subcategory || 'hardware_noneu'),
+      business_unit: ['shc', 'gatelynk', 'shared'].includes(business_unit) ? business_unit : 'shc',
+      period: String(date).slice(0, 7),
+      source: 'manual',
+      created_at: now(), created_by: u?.email ?? '',
+    }})
+    res.status(201).json(cost)
+  } catch (e) {
+    console.error('[finance/manual-cost]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
+// ── GET /api/finance/cost-details?from=YYYY-MM&to=YYYY-MM — pełny podział kosztów ──
+// Grupy spójne z regułami RZiS (te same wykluczenia i przeliczenia brutto→netto):
+// pensje / ZUS / podatki (CIT) / import / faktury KSeF / inne ręczne
+// + pominięte duplikaty MT940 + koszty per projekt.
+router.get('/cost-details', async (req: Request, res: Response) => {
+  try {
+    const from = String(req.query.from ?? '').slice(0, 7)
+    const to = String(req.query.to ?? from).slice(0, 7)
+    if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) {
+      res.status(400).json({ error: 'Wymagane: from, to (YYYY-MM)' }); return
+    }
+    const inRange = (m: string) => m >= from && m <= to
+
+    const [allocations, manualCosts] = await Promise.all([
+      prisma.ksefInvoiceAllocation.findMany({
+        include: {
+          invoice: { select: { invoice_number: true, seller_name: true, invoice_date: true, created_at: true, net_amount: true, gross_amount: true, invoice_direction: true } },
+          project: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.manualCost.findMany(),
+    ])
+
+    const r2 = (x: number) => Math.round(x * 100) / 100
+    type Item = { date: string; description: string; amount: number; source: string; category?: string }
+    const mkGroup = () => ({ total: 0, items: [] as Item[] })
+    const groups = {
+      salaries: mkGroup(),      // pensje (MT940/ręczne)
+      zus: mkGroup(),           // ZUS
+      taxes: mkGroup(),         // CIT (VAT poza RZiS — neutralny)
+      import: mkGroup(),        // import towaru: cło, fracht, agencja, towar spoza UE
+      ksef_invoices: mkGroup(), // pozostałe faktury kosztowe z KSeF
+      other_manual: mkGroup(),  // inne koszty ręczne
+    }
+    const skippedDuplicates = { count: 0, total: 0 } // MT940 pominięte (kategorie fakturowane → są w KSeF)
+    const projectMap = new Map<string, { project_id: string | null; name: string; total: number; count: number }>()
+
+    const IMPORT_SUBS = new Set(['hardware_noneu', 'hardware_eu', 'import_duty', 'import_freight', 'import_agency', 'import_vat'])
+    const MT940_SAFE = new Set(['salary_gross', 'salary_admin', 'zus_employer', 'tax_income', 'tax_vat', 'bank_fee', 'interest', 'fx'])
+
+    // ── Alokacje KSeF (brutto → netto proporcją faktury) ──
+    for (const a of allocations as any[]) {
+      const inv = a.invoice
+      if (!inv || inv.invoice_direction === 'outgoing') continue
+      const m = (inv.invoice_date || inv.created_at || '').slice(0, 7)
+      if (!inRange(m)) continue
+      const line = costLine(a.cost_category, a.subcategory)
+      if (line === 'excluded') continue
+      const netRatio = inv.gross_amount > 0 && inv.net_amount > 0 ? inv.net_amount / inv.gross_amount : 1
+      const amount = r2(a.amount * netRatio)
+      const item: Item = {
+        date: (inv.invoice_date || '').slice(0, 10),
+        description: `${inv.seller_name ?? '—'} · ${inv.invoice_number ?? 'b/n'}`,
+        amount, source: 'ksef', category: `${a.cost_category}/${a.subcategory}`,
+      }
+      const g = IMPORT_SUBS.has(a.subcategory) ? groups.import : groups.ksef_invoices
+      g.total += amount; g.items.push(item)
+
+      // per projekt
+      const key = a.project_id ?? '__none__'
+      const cur = projectMap.get(key) ?? { project_id: a.project_id ?? null, name: a.project?.name ?? 'Bez projektu (koszty firmowe)', total: 0, count: 0 }
+      cur.total += amount; cur.count += 1
+      projectMap.set(key, cur)
+    }
+
+    // ── Koszty ręczne/MT940 ──
+    for (const c of manualCosts as any[]) {
+      const m = (c.date || '').slice(0, 7)
+      if (!inRange(m)) continue
+      if (c.source === 'mt940' && !MT940_SAFE.has(c.subcategory)) {
+        skippedDuplicates.count += 1; skippedDuplicates.total += c.amount
+        continue
+      }
+      const line = costLine(c.cost_category, c.subcategory)
+      if (line === 'excluded') continue // VAT — poza RZiS
+      const item: Item = {
+        date: c.date, description: c.description, amount: r2(c.amount),
+        source: c.source, category: `${c.cost_category}/${c.subcategory}`,
+      }
+      const g = (c.subcategory === 'salary_gross' || c.subcategory === 'salary_admin') ? groups.salaries
+        : c.subcategory === 'zus_employer' ? groups.zus
+        : c.subcategory === 'tax_income' ? groups.taxes
+        : IMPORT_SUBS.has(c.subcategory) ? groups.import
+        : groups.other_manual
+      g.total += item.amount; g.items.push(item)
+    }
+
+    for (const g of Object.values(groups)) {
+      g.total = r2(g.total)
+      g.items.sort((a, b) => b.date.localeCompare(a.date))
+      if (g.items.length > 200) g.items = g.items.slice(0, 200)
+    }
+    skippedDuplicates.total = r2(skippedDuplicates.total)
+
+    const projects = [...projectMap.values()].map(p => ({ ...p, total: r2(p.total) })).sort((a, b) => b.total - a.total)
+    const total = r2(Object.values(groups).reduce((s, g) => s + g.total, 0))
+
+    res.json({ from, to, groups, projects, skipped_mt940_duplicates: skippedDuplicates, total })
+  } catch (e) {
+    console.error('[finance/cost-details]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
 // ── GET /api/finance/pnl?year=YYYY&business_unit=all|shc|gatelynk|shared ──────
 router.get('/pnl', async (req: Request, res: Response) => {
   try {
