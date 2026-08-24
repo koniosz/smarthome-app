@@ -15,6 +15,7 @@ import paymentsRouter, { updatePayment, deletePayment } from './routes/payments'
 import payablesRouter, { requirePayments } from './routes/payables'
 import financeRouter from './routes/finance'
 import personalTodosRouter from './routes/personal-todos'
+import searchRouter from './routes/search'
 import employeesRouter from './routes/employees'
 import dashboardRouter from './routes/dashboard'
 import tasksRouter from './routes/tasks'
@@ -103,6 +104,7 @@ app.use('/api/sales-invoices', salesInvoicesRouter) // faktury sprzedażowe (bet
 app.use('/api/payables', payablesRouter)       // panel Płatności (dostęp: admin lub can_view_payments)
 app.use('/api/finance', financeRouter)         // Finanse 2.0: RZiS/EBITDA + import Firmao (admin lub księgowy)
 app.use('/api/todos', personalTodosRouter)     // prywatne listy to-do (właściciel; admin podgląd)
+app.use('/api/search', searchRouter)           // wyszukiwarka globalna ⌘K (wyniki wg uprawnień)
 app.use('/api/projects/:projectId/costs', costsRouter)
 app.use('/api/projects/:projectId/labor', laborRouter)
 app.use('/api/projects/:projectId/payments', paymentsRouter)

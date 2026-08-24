@@ -19,6 +19,7 @@ import {
 import { useAuth } from '../../auth/AuthContext'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
 import type { AppNotification } from '../../types'
+import GlobalSearch from './GlobalSearch'
 
 export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'platnosci' | 'magazyn' | 'hr'
 
@@ -154,6 +155,19 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  // ⌘K / Ctrl+K otwiera wyszukiwarkę globalną z każdego miejsca
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen(o => !o)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -290,13 +304,17 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
         </nav>
 
         <div className="flex items-center gap-3 flex-1 justify-end">
-          {/* Search — shown only on dashboard */}
-          {activeView === 'dashboard' && (
-            <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] text-[#94a3b8] text-sm" style={{ width: 230 }}>
+          {/* Wyszukiwarka globalna — klik lub ⌘K */}
+          {user && (
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="flex items-center gap-2.5 px-3.5 py-2 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] text-[#94a3b8] text-sm hover:border-[#c4b5fd] hover:text-[#64748b] transition-colors"
+              style={{ width: activeView === 'dashboard' ? 230 : 170 }}
+            >
               <Search size={15} strokeWidth={2} />
-              <span className="flex-1">Szukaj…</span>
+              <span className="flex-1 text-left">Szukaj…</span>
               <span className="text-[11px] border border-[#e2e8f0] rounded bg-white px-1.5 py-px">⌘K</span>
-            </div>
+            </button>
           )}
 
           {/* Bell */}
@@ -409,6 +427,9 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
           )}
         </div>
       </header>
+
+      {/* Wyszukiwarka globalna ⌘K */}
+      <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
 
       {/* Change password modal */}
       {showChangePwd && (

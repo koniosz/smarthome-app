@@ -1,194 +1,142 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { projectsApi } from '../../api/client'
-import type { Project } from '../../types'
-import { PROJECT_STATUS_LABELS, PROJECT_TYPE_LABELS } from '../../types'
+import { Search, CornerDownLeft } from 'lucide-react'
+import { api } from '../../api/client'
+import { useAuth } from '../../auth/AuthContext'
 
-function highlight(text: string, query: string) {
-  if (!query.trim()) return <>{text}</>
-  const idx = text.toLowerCase().indexOf(query.toLowerCase())
-  if (idx === -1) return <>{text}</>
-  return (
-    <>
-      {text.slice(0, idx)}
-      <mark className="bg-violet-200 dark:bg-violet-800/60 text-inherit rounded-sm">{text.slice(idx, idx + query.length)}</mark>
-      {text.slice(idx + query.length)}
-    </>
-  )
+interface SearchItem { id: string; title: string; subtitle: string }
+interface SearchGroup { type: string; label: string; items: SearchItem[] }
+
+const GROUP_ICON: Record<string, string> = {
+  projects: '📁', products: '📦', invoices: '📄', sales_invoices: '🧾',
+  warehouse: '🏬', employees: '👥', tasks: '🗓', todos: '🔒',
 }
 
-export default function GlobalSearch() {
-  const [query, setQuery] = useState('')
-  const [allProjects, setAllProjects] = useState<Project[]>([])
-  const [results, setResults] = useState<Project[]>([])
-  const [open, setOpen] = useState(false)
-  const [activeIdx, setActiveIdx] = useState(-1)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+// Trasa docelowa po wybraniu wyniku (projekty mają widok szczegółów, reszta → moduł)
+function routeFor(type: string, item: SearchItem, isAdmin: boolean): string {
+  switch (type) {
+    case 'projects': return `/projects/${item.id}`
+    case 'products': return '/product-catalog'
+    case 'invoices': return isAdmin ? '/ksef' : '/faktury'
+    case 'sales_invoices': return '/ksef'
+    case 'warehouse': return '/magazyn'
+    case 'employees': return '/employees'
+    default: return '/'
+  }
+}
+
+export default function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const [q, setQ] = useState('')
+  const [groups, setGroups] = useState<SearchGroup[]>([])
+  const [loading, setLoading] = useState(false)
+  const [sel, setSel] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const reqSeq = useRef(0)
 
-  const loadProjects = useCallback(() => {
-    projectsApi.list().then(setAllProjects).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) { setResults([]); return }
-    const filtered = allProjects.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      p.client_name.toLowerCase().includes(q) ||
-      (p.description && p.description.toLowerCase().includes(q))
-    ).slice(0, 8)
-    setResults(filtered)
-    setActiveIdx(-1)
-  }, [query, allProjects])
+  // płaska lista do nawigacji klawiaturą
+  const flat: Array<{ group: SearchGroup; item: SearchItem }> = []
+  for (const g of groups) for (const it of g.items) flat.push({ group: g, item: it })
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+    if (open) { setQ(''); setGroups([]); setSel(0); setTimeout(() => inputRef.current?.focus(), 30) }
+  }, [open])
 
-  // Keyboard shortcut: Cmd/Ctrl+K
   useEffect(() => {
+    if (!open) return
+    const query = q.trim()
+    if (query.length < 2) { setGroups([]); setLoading(false); return }
+    setLoading(true)
+    const seq = ++reqSeq.current
+    const t = setTimeout(() => {
+      api.get('/search', { params: { q: query } })
+        .then(r => { if (seq === reqSeq.current) { setGroups(r.data.groups ?? []); setSel(0) } })
+        .catch(() => { if (seq === reqSeq.current) setGroups([]) })
+        .finally(() => { if (seq === reqSeq.current) setLoading(false) })
+    }, 250)
+    return () => clearTimeout(t)
+  }, [q, open])
+
+  const pick = useCallback((entry: { group: SearchGroup; item: SearchItem } | undefined) => {
+    if (!entry) return
+    onClose()
+    navigate(routeFor(entry.group.type, entry.item, user?.role === 'admin'))
+  }, [navigate, onClose, user?.role])
+
+  useEffect(() => {
+    if (!open) return
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        inputRef.current?.focus()
-        setOpen(true)
-      }
+      if (e.key === 'Escape') { e.preventDefault(); onClose() }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); setSel(s => Math.min(s + 1, flat.length - 1)) }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setSel(s => Math.max(s - 1, 0)) }
+      else if (e.key === 'Enter') { e.preventDefault(); pick(flat[sel]) }
     }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [])
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [open, flat.length, sel, pick]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const select = (project: Project) => {
-    navigate(`/projects/${project.id}`)
-    setQuery('')
-    setOpen(false)
-    inputRef.current?.blur()
-  }
+  if (!open) return null
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      setQuery('')
-      setOpen(false)
-      inputRef.current?.blur()
-      return
-    }
-    if (!open || results.length === 0) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setActiveIdx(i => Math.min(i + 1, results.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setActiveIdx(i => Math.max(i - 1, 0))
-    } else if (e.key === 'Enter' && activeIdx >= 0) {
-      select(results[activeIdx])
-    }
-  }
-
-  const showDropdown = open && query.trim().length > 0
-
+  let idx = -1
   return (
-    <div ref={containerRef} className="relative">
-      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors ${
-        open
-          ? 'border-violet-400 dark:border-violet-600 bg-white dark:bg-gray-800'
-          : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50'
-      }`}>
-        <span className="text-gray-400 text-sm flex-shrink-0 select-none">🔍</span>
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Szukaj…"
-          value={query}
-          className="bg-transparent w-44 text-sm text-gray-800 dark:text-gray-100 placeholder-gray-400 outline-none"
-          onFocus={() => { setOpen(true); loadProjects() }}
-          onChange={e => { setQuery(e.target.value); setOpen(true) }}
-          onKeyDown={handleKeyDown}
-        />
-        {query ? (
-          <button
-            onClick={() => { setQuery(''); setResults([]); inputRef.current?.focus() }}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0 text-xs"
-          >✕</button>
-        ) : (
-          <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 flex-shrink-0 border border-gray-200 dark:border-gray-600">
-            ⌘K
-          </kbd>
-        )}
-      </div>
+    <div className="fixed inset-0 z-[100] bg-black/40 flex items-start justify-center pt-[12vh] px-4" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="w-full max-w-xl bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800">
+          <Search size={17} className="text-gray-400 flex-shrink-0" />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="Szukaj: klienci, projekty, produkty, faktury, pracownicy…"
+            className="flex-1 text-[15px] bg-transparent outline-none text-gray-800 dark:text-gray-100 placeholder-gray-400"
+          />
+          <kbd className="text-[10px] font-bold text-gray-400 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-0.5">ESC</kbd>
+        </div>
 
-      {showDropdown && (
-        <div className="absolute top-full right-0 mt-1 w-96 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
-          {results.length > 0 ? (
-            <>
-              <div className="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-800">
-                {results.length} {results.length === 1 ? 'wynik' : 'wyniki/ów'}
-              </div>
-              {results.map((p, i) => {
-                const marginColor = p.margin_pct == null ? 'text-gray-400'
-                  : p.margin_pct < 0 ? 'text-red-500 dark:text-red-400'
-                  : p.margin_pct < 10 ? 'text-orange-500 dark:text-orange-400'
-                  : p.margin_pct < 25 ? 'text-yellow-600 dark:text-yellow-400'
-                  : 'text-green-600 dark:text-green-400'
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => select(p)}
-                    className={`w-full text-left px-4 py-3 flex items-center gap-3 transition-colors border-b border-gray-50 dark:border-gray-800 last:border-0 ${
-                      i === activeIdx
-                        ? 'bg-violet-50 dark:bg-violet-950/30'
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800'
-                    }`}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">
-                        {highlight(p.name, query.trim())}
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {p.client_name && (
-                          <span className="text-xs text-gray-400 truncate">
-                            👤 {highlight(p.client_name, query.trim())}
-                          </span>
-                        )}
-                        <span className="text-xs text-gray-300 dark:text-gray-600">·</span>
-                        <span className="text-xs text-gray-400">
-                          {PROJECT_TYPE_LABELS[p.project_type]}
-                        </span>
-                        <span className="text-xs text-gray-300 dark:text-gray-600">·</span>
-                        <span className="text-xs text-gray-400">
-                          {PROJECT_STATUS_LABELS[p.status]}
-                        </span>
-                      </div>
-                    </div>
-                    {p.margin_pct != null && (
-                      <span className={`text-sm font-bold flex-shrink-0 ${marginColor}`}>
-                        {p.margin_pct.toFixed(0)}%
-                      </span>
-                    )}
-                    <span className="text-gray-300 dark:text-gray-600 flex-shrink-0">→</span>
-                  </button>
-                )
-              })}
-              <div className="px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3 text-xs text-gray-400">
-                <span><kbd className="font-mono">↑↓</kbd> nawigacja</span>
-                <span><kbd className="font-mono">↵</kbd> otwórz</span>
-                <span><kbd className="font-mono">Esc</kbd> zamknij</span>
-              </div>
-            </>
+        <div className="max-h-[55vh] overflow-y-auto">
+          {q.trim().length < 2 ? (
+            <div className="px-4 py-8 text-center text-sm text-gray-400">Wpisz min. 2 znaki — szukam po wszystkich modułach, do których masz dostęp.</div>
+          ) : loading && groups.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-gray-400">Szukam…</div>
+          ) : groups.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-gray-400">Brak wyników dla „{q.trim()}".</div>
           ) : (
-            <div className="px-4 py-4 text-sm text-gray-400 text-center">
-              Brak wyników dla „{query}"
-            </div>
+            groups.map(g => (
+              <div key={g.type}>
+                <div className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+                  {GROUP_ICON[g.type] ?? ''} {g.label}
+                </div>
+                {g.items.map(item => {
+                  idx++
+                  const active = idx === sel
+                  const myIdx = idx
+                  return (
+                    <button
+                      key={`${g.type}:${item.id}`}
+                      onClick={() => pick({ group: g, item })}
+                      onMouseEnter={() => setSel(myIdx)}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 text-left ${active ? 'bg-violet-50 dark:bg-violet-950/40' : ''}`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-sm font-semibold truncate ${active ? 'text-violet-800 dark:text-violet-200' : 'text-gray-800 dark:text-gray-100'}`}>{item.title}</div>
+                        {item.subtitle && <div className="text-xs text-gray-400 truncate">{item.subtitle}</div>}
+                      </div>
+                      {active && <CornerDownLeft size={14} className="text-violet-400 flex-shrink-0" />}
+                    </button>
+                  )
+                })}
+              </div>
+            ))
           )}
         </div>
-      )}
+
+        <div className="flex items-center gap-4 px-4 py-2 border-t border-gray-100 dark:border-gray-800 text-[11px] text-gray-400">
+          <span><kbd className="font-bold">↑↓</kbd> nawigacja</span>
+          <span><kbd className="font-bold">Enter</kbd> otwórz</span>
+          <span className="ml-auto">wyniki wg Twoich uprawnień</span>
+        </div>
+      </div>
     </div>
   )
 }
