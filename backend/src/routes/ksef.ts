@@ -884,6 +884,7 @@ router.get('/invoices/due-today', requireAdmin, async (_req: Request, res: Respo
     const todayStr = new Date().toISOString().split('T')[0]
     const invoices = await prisma.ksefInvoice.findMany({
       where: {
+        invoice_direction: 'incoming', // tylko koszty (MY płacimy) — nie nasze faktury sprzedażowe
         payment_due_date: { not: null, lte: todayStr },
         payment_status:   { not: 'paid' },
       },

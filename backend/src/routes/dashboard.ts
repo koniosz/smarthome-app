@@ -116,6 +116,7 @@ router.get('/', async (req: Request, res: Response) => {
     const todayStr = today.toISOString().split('T')[0]
     const dueInvoices = await prisma.ksefInvoice.findMany({
       where: {
+        invoice_direction: 'incoming', // tylko koszty (MY płacimy) — nie nasze faktury sprzedażowe
         payment_due_date: { not: null, lte: todayStr },
         payment_status:   { not: 'paid' },
       },
