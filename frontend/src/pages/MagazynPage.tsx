@@ -214,8 +214,9 @@ function DocsTable({ docs, onAssign, whName }: { docs: WarehouseDoc[]; onAssign:
 }
 
 // ── Wyszukiwarka katalogu/magazynu (dla pozycji i dokumentów) ──
-function CatalogSearch({ warehouseItems, onlyWarehouse, onPick }: {
+function CatalogSearch({ warehouseItems, onlyWarehouse, onPick, inputRef }: {
   warehouseItems: WarehouseItem[]; onlyWarehouse?: boolean; onPick: (l: WarehouseDocLineInput) => void
+  inputRef?: React.RefObject<HTMLInputElement | null>
 }) {
   const [catalog, setCatalog] = useState<ProductCatalogItem[]>([])
   const [query, setQuery] = useState('')
@@ -234,7 +235,7 @@ function CatalogSearch({ warehouseItems, onlyWarehouse, onPick }: {
 
   return (
     <div>
-      <input className={inputCls} placeholder={onlyWarehouse ? 'Szukaj pozycji w magazynie…' : 'Szukaj w katalogu produktów / magazynie…'} value={query} onChange={e => setQuery(e.target.value)} />
+      <input ref={inputRef} className={inputCls} placeholder={onlyWarehouse ? 'Szukaj pozycji w magazynie…' : 'Szukaj w katalogu produktów / magazynie…'} value={query} onChange={e => setQuery(e.target.value)} />
       {results.length > 0 && (
         <div className="mt-1 border border-gray-200 dark:border-gray-700 rounded-lg max-h-56 overflow-y-auto bg-white dark:bg-gray-800">
           {results.map((r, i) => (
@@ -318,6 +319,53 @@ function DocBuilderModal({ type, items, warehouses, onClose, onSaved }: { type: 
   const [lines, setLines] = useState<WarehouseDocLineInput[]>([])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  // PZ z faktury zakupowej KSeF
+  const [ksefOpen, setKsefOpen] = useState(false)
+  const [ksefQuery, setKsefQuery] = useState('')
+  const [ksefResults, setKsefResults] = useState<Array<{ id: string; invoice_number: string | null; seller_name: string | null; invoice_date: string | null; net_amount: number; gross_amount: number }>>([])
+  const [ksefLoading, setKsefLoading] = useState(false)
+  const [ksefInfo, setKsefInfo] = useState('')
+
+  useEffect(() => {
+    if (!ksefOpen || type !== 'PZ') return
+    const t = setTimeout(() => {
+      setKsefLoading(true)
+      warehouseApi.ksefInvoices(ksefQuery.trim() || undefined)
+        .then(setKsefResults).catch(() => setKsefResults([]))
+        .finally(() => setKsefLoading(false))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [ksefOpen, ksefQuery, type])
+
+  const fillFromKsef = async (invId: string) => {
+    setKsefLoading(true); setKsefInfo('')
+    try {
+      const { invoice, items: invItems } = await warehouseApi.ksefInvoiceLines(invId)
+      if (!invItems.length) { setKsefInfo('Ta faktura nie ma pozycji do wczytania (brak XML w KSeF?).'); return }
+      const mapped: WarehouseDocLineInput[] = invItems.map(it => {
+        // dopasuj do istniejącej pozycji magazynowej po nazwie — wtedy PZ podbije jej stan
+        const match = items.find(w => w.name.trim().toLowerCase() === it.name.trim().toLowerCase())
+        return {
+          warehouse_item_id: match?.id ?? null,
+          name: it.name,
+          sku: match?.sku ?? null,
+          quantity: parseFloat(it.qty.replace(',', '.')) || 1,
+          unit: it.unit || match?.unit || 'szt.',
+          unit_price: parseFloat(it.unitPrice.replace(',', '.')) || 0,
+        }
+      })
+      setLines(mapped)
+      if (invoice.seller_name) setContractor(invoice.seller_name)
+      if (invoice.invoice_date) setDate(invoice.invoice_date.slice(0, 10))
+      const matched = mapped.filter(m => m.warehouse_item_id).length
+      setKsefInfo(`Wczytano ${mapped.length} pozycji z faktury ${invoice.invoice_number ?? ''}${matched ? ` (${matched} dopasowanych do magazynu)` : ''}. Sprawdź ilości i ceny przed utworzeniem PZ.`)
+      setKsefOpen(false)
+    } catch {
+      setKsefInfo('Nie udało się pobrać pozycji faktury z KSeF.')
+    } finally { setKsefLoading(false) }
+  }
 
   const addLine = (l: WarehouseDocLineInput) => setLines(prev => {
     const i = prev.findIndex(x => (x.warehouse_item_id && x.warehouse_item_id === l.warehouse_item_id) || (!x.warehouse_item_id && x.name === l.name))
@@ -368,8 +416,37 @@ function DocBuilderModal({ type, items, warehouses, onClose, onSaved }: { type: 
             <div><label className={lblCls}>Data</label><input type="date" className={inputCls} value={date} onChange={e => setDate(e.target.value)} /></div>
           </div>
         )}
+        {type === 'PZ' && (
+          <div className="border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20 rounded-lg p-3">
+            <button type="button" onClick={() => setKsefOpen(o => !o)}
+              className="text-sm font-semibold text-violet-700 dark:text-violet-300 hover:underline">
+              📄 {ksefOpen ? '▾' : '▸'} Wypełnij z faktury zakupowej KSeF
+            </button>
+            {ksefOpen && (
+              <div className="mt-2 space-y-1.5">
+                <input className={inputCls} placeholder="Szukaj faktury: numer lub dostawca…" value={ksefQuery} onChange={e => setKsefQuery(e.target.value)} autoFocus />
+                {ksefLoading ? (
+                  <div className="text-xs text-gray-400 px-1 py-2">Szukam…</div>
+                ) : (
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-lg max-h-48 overflow-y-auto bg-white dark:bg-gray-800">
+                    {ksefResults.length === 0 ? (
+                      <div className="text-xs text-gray-400 px-3 py-3">Brak faktur zakupowych.</div>
+                    ) : ksefResults.map(inv => (
+                      <button key={inv.id} type="button" onClick={() => fillFromKsef(inv.id)}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-violet-50 dark:hover:bg-violet-950/30 border-b border-gray-50 dark:border-gray-800 last:border-0 flex items-center justify-between gap-2">
+                        <span className="truncate">{inv.invoice_number ?? 'b/n'} · <span className="text-gray-500">{inv.seller_name ?? '—'}</span></span>
+                        <span className="text-xs text-gray-400 shrink-0">{inv.invoice_date?.slice(0, 10)} · {fmt(inv.net_amount)} netto</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {ksefInfo && <div className="mt-2 text-xs font-semibold text-violet-700 dark:text-violet-300">{ksefInfo}</div>}
+          </div>
+        )}
         <div><label className={lblCls}>Dodaj pozycję {type === 'PZ' ? '(z katalogu lub magazynu)' : type === 'MM' ? '(z magazynu źródłowego)' : '(z magazynu)'}</label>
-          <CatalogSearch warehouseItems={searchItems} onlyWarehouse={type !== 'PZ'} onPick={addLine} />
+          <CatalogSearch warehouseItems={searchItems} onlyWarehouse={type !== 'PZ'} onPick={addLine} inputRef={searchRef} />
         </div>
         {lines.length > 0 && (
           <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
@@ -390,6 +467,12 @@ function DocBuilderModal({ type, items, warehouses, onClose, onSaved }: { type: 
             </table>
           </div>
         )}
+        {/* Wyraźna zachęta do dodania kolejnej pozycji */}
+        <button type="button"
+          onClick={() => { searchRef.current?.focus(); searchRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-700 text-sm font-semibold text-gray-500 dark:text-gray-400 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors">
+          <span className="text-base leading-none">＋</span> {lines.length === 0 ? 'Dodaj pozycję — zacznij pisać w polu wyszukiwania' : 'Dodaj kolejną pozycję'}
+        </button>
         {err && <div className="text-sm text-red-500">{err}</div>}
         <div className="flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">Anuluj</button>

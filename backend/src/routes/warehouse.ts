@@ -2,7 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
-import db from '../db'
+import db, { prisma } from '../db'
 
 // Magazyn — pozycje + ruchy (przyjęcia/wydania) + import stanu początkowego z Excela.
 // Mount: /api/warehouse (za requireAuth). Dostęp: admin lub user.can_view_warehouse.
@@ -454,6 +454,48 @@ router.post('/docs/:id/assign-project', async (req: Request, res: Response) => {
     await db.warehouse_docs.update(doc.id, { project_id: project.id, cost_item_id: costId })
     res.json(await db.warehouse_docs.find(doc.id))
   } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? 'Błąd serwera' })
+  }
+})
+
+// ── Faktury zakupowe z KSeF → generowanie PZ ─────────────────────────────────
+// Za requireWarehouse (magazynier nie musi być adminem). Tylko odczyt: lista
+// faktur incoming + ich pozycje (cache/XML z ksef-lineitems).
+
+// GET /api/warehouse/ksef-invoices?search=
+router.get('/ksef-invoices', async (req: Request, res: Response) => {
+  try {
+    const search = String(req.query.search ?? '').trim()
+    const c = { contains: search, mode: 'insensitive' as const }
+    const invoices = await prisma.ksefInvoice.findMany({
+      where: {
+        invoice_direction: 'incoming',
+        ...(search ? { OR: [{ invoice_number: c }, { seller_name: c }] } : {}),
+      },
+      select: { id: true, invoice_number: true, seller_name: true, invoice_date: true, net_amount: true, gross_amount: true },
+      orderBy: { invoice_date: 'desc' },
+      take: 15,
+    })
+    res.json(invoices)
+  } catch (e) {
+    console.error('[warehouse/ksef-invoices]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
+// GET /api/warehouse/ksef-invoices/:id/line-items
+router.get('/ksef-invoices/:id/line-items', async (req: Request, res: Response) => {
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, invoice_number: true, seller_name: true, invoice_date: true, invoice_direction: true },
+    })
+    if (!invoice || invoice.invoice_direction === 'outgoing') { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
+    const { getInvoiceLineItems } = await import('../services/ksef-lineitems')
+    const items = await getInvoiceLineItems(invoice.id)
+    res.json({ invoice, items })
+  } catch (e: any) {
+    console.error('[warehouse/ksef-invoice-lines]', e)
     res.status(500).json({ error: e?.message ?? 'Błąd serwera' })
   }
 })

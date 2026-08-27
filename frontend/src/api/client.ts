@@ -371,6 +371,13 @@ export const warehouseApi = {
   reserve: (itemId: string, data: { quantity: number; date_from: string; date_to: string; reason?: string; project_ref?: string }) =>
     api.post<StockReservation>(`/warehouse/${itemId}/reserve`, data).then(r => r.data),
   releaseReservation: (id: string) => api.post<StockReservation>(`/warehouse/reservations/${id}/release`, {}).then(r => r.data),
+  // Generowanie PZ z faktury zakupowej KSeF
+  ksefInvoices: (search?: string) =>
+    api.get<Array<{ id: string; invoice_number: string | null; seller_name: string | null; invoice_date: string | null; net_amount: number; gross_amount: number }>>(
+      '/warehouse/ksef-invoices', { params: { search: search || undefined } }).then(r => r.data),
+  ksefInvoiceLines: (id: string) =>
+    api.get<{ invoice: { id: string; invoice_number: string | null; seller_name: string | null; invoice_date: string | null }; items: Array<{ nr: string; name: string; unit: string; qty: string; unitPrice: string; netValue: string; vatRate: string }> }>(
+      `/warehouse/ksef-invoices/${id}/line-items`).then(r => r.data),
 }
 
 export interface WarehouseDocLineInput {
