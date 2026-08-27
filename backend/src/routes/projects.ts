@@ -76,6 +76,11 @@ router.post('/', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Nazwa projektu jest wymagana' })
       return
     }
+    // Planowana data zakończenia prac jest OBOWIĄZKOWA przy zakładaniu projektu
+    if (!end_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(end_date))) {
+      res.status(400).json({ error: 'Data planowanego zakończenia prac jest wymagana (YYYY-MM-DD)' })
+      return
+    }
 
     const project = {
       id: uuidv4(),
@@ -174,7 +179,14 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (area_m2 !== undefined) patch.area_m2 = area_m2 ? parseFloat(area_m2) : null
     if (smart_features !== undefined) patch.smart_features = Array.isArray(smart_features) ? smart_features : []
     if (start_date !== undefined) patch.start_date = start_date
-    if (end_date !== undefined) patch.end_date = end_date
+    if (end_date !== undefined) {
+      // pola obowiązkowego nie można wyczyścić — tylko zmienić na poprawną datę
+      if (!end_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(end_date))) {
+        res.status(400).json({ error: 'Data planowanego zakończenia prac jest wymagana (YYYY-MM-DD)' })
+        return
+      }
+      patch.end_date = end_date
+    }
     if (description !== undefined) patch.description = description
 
     await db.projects.update(req.params.id, patch)

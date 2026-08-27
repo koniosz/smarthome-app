@@ -436,7 +436,20 @@ export default function ProjectsList() {
                 {/* Projekt */}
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{p.name}</div>
-                  <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>{p.client_name || '—'}</div>
+                  <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 2 }}>
+                    {p.client_name || '—'}
+                    {p.end_date && (() => {
+                      const overdue = p.end_date < new Date().toISOString().slice(0, 10) && p.status !== 'closing' && p.status !== 'cancelled'
+                      return (
+                        <span title="Planowane zakończenie prac" style={{
+                          marginLeft: 8, fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 6,
+                          background: overdue ? '#fef2f2' : '#f1f5f9', color: overdue ? '#dc2626' : '#94a3b8',
+                        }}>
+                          {overdue ? '⚠ ' : ''}do {p.end_date.split('-').reverse().join('.')}
+                        </span>
+                      )
+                    })()}
+                  </div>
                 </div>
 
                 {/* Typ */}

@@ -40,6 +40,7 @@ export default function AddProjectModal({ onClose, onCreated, initial, editMode 
     e.preventDefault()
     if (!form.name.trim()) { setError('Nazwa jest wymagana'); return }
     if (!form.area_m2 || parseFloat(form.area_m2) <= 0) { setError('Metraż budynku jest wymagany'); return }
+    if (!form.end_date) { setError('Data planowanego zakończenia prac jest wymagana'); return }
     setSaving(true)
     setError('')
     try {
@@ -166,9 +167,10 @@ export default function AddProjectModal({ onClose, onCreated, initial, editMode 
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Data zakończenia</label>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Planowane zakończenie prac <span className="text-red-500">*</span></label>
             <input
               type="date"
+              required
               className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
               value={form.end_date}
               onChange={e => set('end_date', e.target.value)}

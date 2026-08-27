@@ -68,7 +68,7 @@ export default function ProjectWizard({ onClose, onCreated, mode = 'project', on
   const update = (patch: Partial<WizardData>) => setData(d => ({ ...d, ...patch }))
 
   // ── Step 1 validation ──
-  const step1Valid = data.name.trim().length > 0
+  const step1Valid = data.name.trim().length > 0 && data.end_date.length > 0
 
   // ── Save ──────────────────────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -224,9 +224,10 @@ function Step1({ data, update }: { data: WizardData; update: (p: Partial<WizardD
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Planowane zakończenie</label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Planowane zakończenie prac <span className="text-red-500">*</span></label>
           <input
             type="date"
+            required
             className="w-full border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 text-sm bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-400"
             value={data.end_date}
             onChange={e => update({ end_date: e.target.value })}

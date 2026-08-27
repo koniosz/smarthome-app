@@ -43,6 +43,7 @@ export default function AIProjectWizard({ onClose }: Props) {
   const [clientName, setClientName] = useState('')
   const [clientContact, setClientContact] = useState('')
   const [area, setArea] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [systems, setSystems] = useState<QuoteBrand[]>(['KNX', 'Hikvision', 'Satel'])
   const [features, setFeatures] = useState<string[]>([])
   const [files, setFiles] = useState<File[]>([])
@@ -71,7 +72,7 @@ export default function AIProjectWizard({ onClose }: Props) {
     addFiles(e.dataTransfer.files)
   }
 
-  const canSubmit = name.trim().length > 0 && systems.length > 0 && files.length > 0
+  const canSubmit = name.trim().length > 0 && systems.length > 0 && files.length > 0 && endDate.length > 0
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -91,7 +92,7 @@ export default function AIProjectWizard({ onClose }: Props) {
         budget_amount: 0,
         description: '',
         start_date: null,
-        end_date: null,
+        end_date: endDate,
       })
 
       // 2. Analyze files with selected systems
@@ -198,6 +199,16 @@ export default function AIProjectWizard({ onClose }: Props) {
                   placeholder="np. 180"
                   value={area}
                   onChange={e => setArea(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Planowane zakończenie prac <span className="text-red-500">*</span></label>
+                <input
+                  type="date"
+                  required
+                  className="w-full border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-400"
+                  value={endDate}
+                  onChange={e => setEndDate(e.target.value)}
                 />
               </div>
             </div>
