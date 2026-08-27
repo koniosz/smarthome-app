@@ -16,6 +16,7 @@ import PaymentTable from '../costs/PaymentTable'
 import ExtraCostsTab from '../costs/ExtraCostsTab'
 import SurveyPanel from './SurveyPanel'
 import ProjectAccessModal from './ProjectAccessModal'
+import ProjectWarehouseTab from './ProjectWarehouseTab'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n)
@@ -139,7 +140,7 @@ function fmtDec(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 }
 
-type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'extra_costs' | 'documents' | 'history' | 'survey' | 'handover'
+type Tab = 'materials' | 'subcontractor' | 'other' | 'labor' | 'payments' | 'extra_costs' | 'warehouse' | 'documents' | 'history' | 'survey' | 'handover'
 
 // ── Project Documents Tab ────────────────────────────────────────────────────
 
@@ -623,6 +624,7 @@ export default function ProjectDetail() {
     { key: 'labor' as Tab, label: `Robocizna (${project.labor_entries.length})` },
     ...(isAdmin ? [{ key: 'payments' as Tab, label: `💳 Wpłaty (${payments.length})` }] : []),
     { key: 'extra_costs' as Tab, label: `📋 Koszty dodatkowe${project.extra_costs_count > 0 ? ` (${project.extra_costs_count})` : ''}` },
+    { key: 'warehouse' as Tab, label: '📦 Magazyn' },
     { key: 'handover' as Tab, label: '✍️ Protokół odbioru' },
     { key: 'documents' as Tab, label: '📁 Dokumenty' },
     { key: 'history' as Tab, label: '🕓 Historia zmian' },
@@ -860,6 +862,9 @@ export default function ProjectDetail() {
             clientContact={project.client_contact}
             onMovedToRegularCost={(category) => { load(); setTab(category) }}
           />
+        )}
+        {tab === 'warehouse' && (
+          <ProjectWarehouseTab projectId={project.id} />
         )}
         {tab === 'documents' && (
           <ProjectDocumentsTab projectId={project.id} project={project} />

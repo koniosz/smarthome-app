@@ -19,6 +19,7 @@ import WycenaPage from './pages/WycenaPage'
 import MagazynPage from './pages/MagazynPage'
 import PlatnosciPage from './pages/PlatnosciPage'
 import RentownoscPage from './pages/RentownoscPage'
+import SprzedazPage from './pages/SprzedazPage'
 import HrPage from './pages/HrPage'
 import HandoverPrintView from './pages/HandoverPrintView'
 import AIQuotePrintView from './pages/AIQuotePrintView'
@@ -132,6 +133,7 @@ function AppContent() {
             <Route path="/magazyn" element={<MagazynPage />} />
             <Route path="/platnosci" element={<PlatnosciPage />} />
             <Route path="/rentownosc" element={<RentownoscPage />} />
+            <Route path="/sprzedaz" element={<SprzedazPage />} />
             <Route path="/hr" element={<HrPage />} />
           </Routes>
         </main>

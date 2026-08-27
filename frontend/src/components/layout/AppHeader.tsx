@@ -369,6 +369,14 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                       Rentowność (RZiS / EBITDA)
                     </button>
                   )}
+                  {(user.role === 'admin' || user.can_view_invoices) && (
+                    <button
+                      onClick={() => { setMenuOpen(false); navigate('/sprzedaz') }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-[#475569] hover:bg-[#f8fafc] transition-colors"
+                    >
+                      Faktury sprzedażowe
+                    </button>
+                  )}
                   {user.role === 'admin' && (
                     <>
                       <button

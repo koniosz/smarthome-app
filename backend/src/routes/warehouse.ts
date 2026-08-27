@@ -303,18 +303,46 @@ router.get('/docs/:id', async (req: Request, res: Response) => {
 // POST /api/warehouse/docs — utwórz WZ/PZ/MM, zaktualizuj stany + ruchy
 // WZ respektuje rezerwacje (wydanie tylko do stanu dostępnego).
 // MM: przesunięcie międzymagazynowe — zdejmuje ze źródła, dodaje w magazynie docelowym (dopasowanie po SKU/nazwie).
-router.post('/docs', async (req: Request, res: Response) => {
-  try {
-    const type = ['WZ', 'PZ', 'MM'].includes(req.body.type) ? req.body.type : 'PZ'
-    const rawLines: any[] = Array.isArray(req.body.lines) ? req.body.lines : []
-    const date = (req.body.date && String(req.body.date)) || now().slice(0, 10)
+// Błąd domenowy tworzenia dokumentu (status HTTP + komunikat po polsku)
+export class DocError extends Error {
+  status: number
+  constructor(status: number, message: string) { super(message); this.status = status }
+}
+
+export interface DocInput {
+  type: 'WZ' | 'PZ' | 'MM'
+  date?: string
+  contractor?: string | null
+  notes?: string | null
+  source_warehouse_id?: string | null
+  target_warehouse_id?: string | null
+  project_id?: string | null
+  linked_mm_ids?: string[] | null
+  lines: any[]
+}
+
+// Magazyn "Projekty" musi zawsze istnieć — towar pobrany pod projekty trafia tam przez MM
+export async function ensureProjectsWarehouse(): Promise<any> {
+  const all: any[] = await db.warehouse_locations.all()
+  const existing = all.find(w => String(w.name).trim().toLowerCase() === 'projekty')
+  if (existing) return existing
+  const w = { id: uuidv4(), name: 'Projekty', created_at: now() }
+  await db.warehouse_locations.insert(w)
+  return w
+}
+
+// Wspólna logika WZ/PZ/MM (numeracja, walidacja stanów, ruchy magazynowe) —
+// używana przez POST /docs, pobrania z projektu i WZ generowany przy fakturze.
+export async function createWarehouseDoc(input: DocInput, userId: string | null): Promise<any> {
+    const type = ['WZ', 'PZ', 'MM'].includes(input.type) ? input.type : 'PZ'
+    const rawLines: any[] = Array.isArray(input.lines) ? input.lines : []
+    const date = (input.date && String(input.date)) || now().slice(0, 10)
     const ts = now()
-    const userId = (req as any).user?.id || null
-    const sourceWh = req.body.source_warehouse_id || null   // MM
-    const targetWh = req.body.target_warehouse_id || null   // MM / PZ (magazyn przyjęcia)
+    const sourceWh = input.source_warehouse_id || null   // MM
+    const targetWh = input.target_warehouse_id || null   // MM / PZ (magazyn przyjęcia)
 
     if (type === 'MM' && String(sourceWh || '') === String(targetWh || '')) {
-      res.status(400).json({ error: 'MM: magazyn źródłowy i docelowy muszą być różne' }); return
+      throw new DocError(400, 'MM: magazyn źródłowy i docelowy muszą być różne')
     }
 
     const allItems: any[] = await db.warehouse_items.all()
@@ -322,6 +350,7 @@ router.post('/docs', async (req: Request, res: Response) => {
 
     // walidacja + rozwiązanie pozycji
     const resolved: { raw: any; qty: number; price: number; item: any | null }[] = []
+    const requested = new Map<string, number>() // kumulacja żądań per pozycja w tym dokumencie
     for (const l of rawLines) {
       const qty = Number(l.quantity) || 0
       if (qty <= 0) continue
@@ -331,18 +360,20 @@ router.post('/docs', async (req: Request, res: Response) => {
 
       if (type === 'WZ' || type === 'MM') {
         const label = type === 'MM' ? 'MM przesuwa' : 'WZ wydaje'
-        if (!item) { res.status(400).json({ error: `Pozycja „${l.name}" nie istnieje w magazynie — ${label} tylko istniejący towar` }); return }
+        if (!item) throw new DocError(400, `Pozycja „${l.name}" nie istnieje w magazynie — ${label} tylko istniejący towar`)
         if (type === 'MM' && String(item.warehouse_id || '') !== String(sourceWh || '')) {
-          res.status(400).json({ error: `Pozycja „${item.name}" nie znajduje się w magazynie źródłowym` }); return
+          throw new DocError(400, `Pozycja „${item.name}" nie znajduje się w magazynie źródłowym`)
         }
-        const avail = item.quantity - (reserved.get(item.id) || 0)
+        const already = requested.get(item.id) || 0
+        const avail = item.quantity - (reserved.get(item.id) || 0) - already
         if (qty > avail) {
-          res.status(400).json({ error: `Niewystarczający stan dostępny: ${item.name} — ${avail} ${item.unit} (stan ${item.quantity}, zarezerwowane ${reserved.get(item.id) || 0})` }); return
+          throw new DocError(400, `Niewystarczający stan dostępny: ${item.name} — ${avail} ${item.unit} (stan ${item.quantity}, zarezerwowane ${reserved.get(item.id) || 0})`)
         }
+        requested.set(item.id, already + qty)
       }
       resolved.push({ raw: l, qty, price, item })
     }
-    if (resolved.length === 0) { res.status(400).json({ error: 'Dodaj przynajmniej jedną pozycję' }); return }
+    if (resolved.length === 0) throw new DocError(400, 'Dodaj przynajmniej jedną pozycję')
 
     // numer dokumentu: RRRR/MM/NNN/TYP
     const d = new Date()
@@ -354,12 +385,13 @@ router.post('/docs', async (req: Request, res: Response) => {
     const docId = uuidv4()
     await db.warehouse_docs.insert({
       id: docId, type, number, date,
-      contractor: req.body.contractor ? String(req.body.contractor).trim() : null,
-      project_id: null, cost_item_id: null,
+      contractor: input.contractor ? String(input.contractor).trim() : null,
+      project_id: input.project_id || null, cost_item_id: null,
+      linked_mm_ids: input.linked_mm_ids && input.linked_mm_ids.length ? (input.linked_mm_ids as any) : undefined,
       source_warehouse_id: type === 'MM' ? sourceWh : null,
       target_warehouse_id: (type === 'MM' || type === 'PZ') ? targetWh : null,
       total_net: total,
-      notes: req.body.notes ? String(req.body.notes).trim() : null,
+      notes: input.notes ? String(input.notes).trim() : null,
       created_by: userId, created_at: ts,
     })
 
@@ -392,6 +424,7 @@ router.post('/docs', async (req: Request, res: Response) => {
       } else {
         // MM: zdejmij ze źródła
         await db.warehouse_items.update(item.id, { quantity: item.quantity - r.qty, updated_at: ts })
+        item.quantity -= r.qty
         await db.stock_movements.insert({
           id: uuidv4(), warehouse_item_id: item.id, type: 'out',
           quantity: r.qty, unit_price: r.price, reason: `MM ${number} → magazyn docelowy`, project_ref: null,
@@ -427,8 +460,19 @@ router.post('/docs', async (req: Request, res: Response) => {
       })
     }
 
-    res.status(201).json(await db.warehouse_docs.find(docId))
+    return await db.warehouse_docs.find(docId)
+}
+
+router.post('/docs', async (req: Request, res: Response) => {
+  try {
+    const doc = await createWarehouseDoc({
+      type: req.body.type, date: req.body.date, contractor: req.body.contractor,
+      notes: req.body.notes, source_warehouse_id: req.body.source_warehouse_id,
+      target_warehouse_id: req.body.target_warehouse_id, lines: req.body.lines,
+    }, (req as any).user?.id || null)
+    res.status(201).json(doc)
   } catch (e: any) {
+    if (e instanceof DocError) { res.status(e.status).json({ error: e.message }); return }
     res.status(500).json({ error: e?.message ?? 'Błąd serwera' })
   }
 })

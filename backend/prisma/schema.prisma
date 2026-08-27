@@ -393,6 +393,7 @@ model SalesInvoice {
   project_id       String?
   quote_id         String?
   warehouse_doc_id String?
+  linked_mm_line_ids Json?  // wybrane pozycje MM projektu — przy wystawieniu powstaje z nich WZ
   ksef_status    String  @default("not_sent") // not_sent | pending | sent | error
   ksef_number    String?
   paid_at        String?
@@ -444,6 +445,7 @@ model WarehouseDoc {
   cost_item_id String?  // utworzona pozycja kosztowa w projekcie
   source_warehouse_id String?  // MM: magazyn źródłowy
   target_warehouse_id String?  // MM: magazyn docelowy (PZ: magazyn przyjęcia)
+  linked_mm_ids Json?          // WZ wygenerowany z faktury: identyfikatory dokumentów MM
   total_net    Float    @default(0)
   notes        String?
   created_by   String?

@@ -177,6 +177,26 @@ export const personalTodosApi = {
     api.delete('/todos/done/clear').then(r => r.data),
 }
 
+// ── Pobrania magazynowe pod projekt (dla każdego zalogowanego) ────────────────
+export interface ProjectWarehousePickItem {
+  id: string; name: string; sku: string | null; unit: string; unit_price: number
+  warehouse_id: string | null; warehouse_name: string; available: number
+}
+export interface ProjectWarehouseDocLine extends WarehouseDocLine {
+  invoiced?: { invoice_id: string; number: string | null } | null
+}
+export interface ProjectWarehouseDoc extends Omit<WarehouseDoc, 'lines'> {
+  lines: ProjectWarehouseDocLine[]
+}
+export const projectWarehouseApi = {
+  items: (projectId: string): Promise<ProjectWarehousePickItem[]> =>
+    api.get(`/projects/${projectId}/warehouse-items`).then(r => r.data),
+  docs: (projectId: string): Promise<ProjectWarehouseDoc[]> =>
+    api.get(`/projects/${projectId}/warehouse-docs`).then(r => r.data),
+  pick: (projectId: string, lines: Array<{ warehouse_item_id: string; quantity: number }>): Promise<{ docs: WarehouseDoc[] }> =>
+    api.post(`/projects/${projectId}/warehouse-pick`, { lines }).then(r => r.data),
+}
+
 export const financeApi = {
   pnl: (year: number, businessUnit = 'all'): Promise<import('../types').PnlResponse> =>
     api.get('/finance/pnl', { params: { year, business_unit: businessUnit } }).then(r => r.data),
@@ -458,6 +478,7 @@ export interface SalesInvoice {
   project_id: string | null
   quote_id: string | null
   warehouse_doc_id: string | null
+  linked_mm_line_ids?: string[] | null
   ksef_status: string
   ksef_number: string | null
   paid_at: string | null

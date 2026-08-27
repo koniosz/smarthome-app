@@ -16,6 +16,7 @@ import payablesRouter, { requirePayments } from './routes/payables'
 import financeRouter from './routes/finance'
 import personalTodosRouter from './routes/personal-todos'
 import searchRouter from './routes/search'
+import projectWarehouseRouter from './routes/project-warehouse'
 import employeesRouter from './routes/employees'
 import dashboardRouter from './routes/dashboard'
 import tasksRouter from './routes/tasks'
@@ -106,6 +107,7 @@ app.use('/api/finance', financeRouter)         // Finanse 2.0: RZiS/EBITDA + imp
 app.use('/api/todos', personalTodosRouter)     // prywatne listy to-do (właściciel; admin podgląd)
 app.use('/api/search', searchRouter)           // wyszukiwarka globalna ⌘K (wyniki wg uprawnień)
 app.use('/api/projects/:projectId/costs', costsRouter)
+app.use('/api/projects/:projectId', projectWarehouseRouter) // pobrania magazynowe pod projekt (każdy zalogowany)
 app.use('/api/projects/:projectId/labor', laborRouter)
 app.use('/api/projects/:projectId/payments', paymentsRouter)
 

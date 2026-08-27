@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import Modal from '../ui/Modal'
-import { salesInvoicesApi, quotesApi, warehouseApi } from '../../api/client'
-import type { SalesInvoice, SalesInvoiceItem, WarehouseDoc } from '../../api/client'
-import type { AiQuote } from '../../types'
+import { salesInvoicesApi, quotesApi, warehouseApi, projectsApi, projectWarehouseApi } from '../../api/client'
+import type { SalesInvoice, SalesInvoiceItem, WarehouseDoc, ProjectWarehouseDoc, ProjectWarehouseDocLine } from '../../api/client'
+import type { AiQuote, Project } from '../../types'
 import { COMPANY_INFO } from '../../constants/company'
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500'
@@ -165,6 +165,49 @@ function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvo
   const [wzRef, setWzRef] = useState<string | null>(invoice?.warehouse_doc_id ?? null)
   const [quotes, setQuotes] = useState<AiQuote[]>([])
   const [wzDocs, setWzDocs] = useState<WarehouseDoc[]>([])
+  // Projekt + pobrania magazynowe (MM) — przy wystawieniu powstaje z nich WZ
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectRef, setProjectRef] = useState<string>(invoice?.project_id ?? '')
+  const [mmDocs, setMmDocs] = useState<ProjectWarehouseDoc[]>([])
+  const [mmSelected, setMmSelected] = useState<Set<string>>(new Set(invoice?.linked_mm_line_ids ?? []))
+  // pozycje już WSTAWIONE do tabeli faktury (przy edycji szkicu: wiersze już tam są)
+  const [mmInserted, setMmInserted] = useState<Set<string>>(new Set(invoice?.linked_mm_line_ids ?? []))
+  const [mmInfo, setMmInfo] = useState('')
+  // pozycja zablokowana tylko, gdy rozlicza ją INNA faktura niż edytowany szkic
+  const lockedByOther = (l: ProjectWarehouseDocLine) => !!l.invoiced && l.invoiced.invoice_id !== (invoice?.id ?? '')
+
+  useEffect(() => { projectsApi.list().then(setProjects).catch(() => {}) }, [])
+  useEffect(() => {
+    if (!projectRef) { setMmDocs([]); return }
+    projectWarehouseApi.docs(projectRef)
+      .then(ds => setMmDocs(ds.filter(d => d.type === 'MM')))
+      .catch(() => setMmDocs([]))
+  }, [projectRef])
+
+  const toggleMmLine = (lineId: string) => setMmSelected(prev => {
+    const next = new Set(prev)
+    if (next.has(lineId)) next.delete(lineId); else next.add(lineId)
+    return next
+  })
+
+  const insertMmLines = () => {
+    const selectedLines: ProjectWarehouseDocLine[] = []
+    for (const d of mmDocs) for (const l of d.lines) {
+      if (mmSelected.has(l.id) && !mmInserted.has(l.id) && !lockedByOther(l)) selectedLines.push(l)
+    }
+    if (!selectedLines.length) { setMmInfo(mmSelected.size ? 'Zaznaczone pozycje są już wstawione.' : 'Zaznacz pozycje MM do wstawienia.'); return }
+    const newItems: SalesInvoiceItem[] = selectedLines.map(l => ({
+      name: l.name, qty: l.quantity || 1, unit: l.unit || 'szt.', unit_price: l.unit_price || 0,
+      vat_rate: 23, total_net: 0, total_vat: 0, total_gross: 0,
+      ...( { _mm: true } as any ),
+    }))
+    setLines(prev => {
+      const existing = prev.filter(l => l.name.trim())
+      return [...existing, ...newItems]
+    })
+    setMmInserted(prev => new Set([...prev, ...selectedLines.map(l => l.id)]))
+    setMmInfo(`Wstawiono ${newItems.length} pozycji. Przy wystawieniu faktury powstanie z nich dokument WZ.`)
+  }
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [nipLoading, setNipLoading] = useState(false)
@@ -218,7 +261,10 @@ function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvo
       buyer_name: buyerName.trim(), buyer_nip: buyerNip.trim() || undefined, buyer_address: buyerAddress.trim() || undefined,
       buyer_email: buyerEmail.trim() || undefined, issue_date: issueDate || undefined, sale_date: saleDate || undefined,
       due_date: dueDate || undefined, payment_method: payment, notes: notes.trim() || undefined,
-      items: validLines, quote_id: quoteRef || undefined, warehouse_doc_id: wzRef || undefined,
+      items: validLines.map(({ ...l }) => { delete (l as any)._mm; return l }),
+      quote_id: quoteRef || undefined, warehouse_doc_id: wzRef || undefined,
+      project_id: projectRef || undefined,
+      linked_mm_line_ids: [...mmInserted],
     }
     try {
       if (editing && invoice) await salesInvoicesApi.update(invoice.id, payload as any)
@@ -243,6 +289,54 @@ function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvo
                 <option value="">— wybierz WZ —</option>
                 {wzDocs.map(d => <option key={d.id} value={d.id}>{d.number} · {d.contractor || ''}</option>)}
               </select>
+            </div>
+          </div>
+        )}
+
+        {/* Projekt + pobrania magazynowe MM → automatyczny WZ przy wystawieniu */}
+        <div>
+          <label className={lblCls}>Projekt (podpina pobrania magazynowe MM)</label>
+          <select className={inputCls} value={projectRef} onChange={e => { setProjectRef(e.target.value); setMmSelected(new Set()); setMmInserted(new Set()); setMmInfo(''); setLines(prev => { const kept = prev.filter(l => !(l as any)._mm); return kept.length ? kept : [{ ...EMPTY_LINE }] }) }} disabled={editing && !!invoice?.linked_mm_line_ids?.length}>
+            <option value="">— bez projektu —</option>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}{p.client_name ? ` · ${p.client_name}` : ''}</option>)}
+          </select>
+        </div>
+        {projectRef && mmDocs.length > 0 && (
+          <div className="border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20 rounded-lg p-3 space-y-2">
+            <div className="text-sm font-semibold text-violet-700 dark:text-violet-300">📦 Pobrania magazynowe projektu (MM) — zaznacz, co trafia na fakturę</div>
+            <div className="max-h-52 overflow-y-auto space-y-2">
+              {mmDocs.map(d => (
+                <div key={d.id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg">
+                  <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-100 dark:border-gray-800">
+                    <label className="flex items-center gap-2 text-xs font-bold text-gray-700 dark:text-gray-200 cursor-pointer">
+                      <input type="checkbox"
+                        checked={d.lines.every(l => mmSelected.has(l.id) || lockedByOther(l))}
+                        onChange={e => setMmSelected(prev => {
+                          const next = new Set(prev)
+                          for (const l of d.lines) { if (lockedByOther(l)) continue; if (e.target.checked) next.add(l.id); else next.delete(l.id) }
+                          return next
+                        })} />
+                      {d.number}
+                    </label>
+                    <span className="text-xs text-gray-400">{fmtDate(d.date)} · {fmt(d.total_net)} netto</span>
+                  </div>
+                  {d.lines.map(l => (
+                    <label key={l.id} className={`flex items-center gap-2 px-3 py-1 text-xs ${lockedByOther(l) ? 'opacity-50' : 'cursor-pointer hover:bg-violet-50 dark:hover:bg-violet-950/30'}`}>
+                      <input type="checkbox" disabled={lockedByOther(l)} checked={mmSelected.has(l.id)} onChange={() => toggleMmLine(l.id)} />
+                      <span className="flex-1 truncate text-gray-700 dark:text-gray-200">{l.name}</span>
+                      <span className="text-gray-400 whitespace-nowrap">{fmt(l.quantity || 0)} {l.unit} × {fmt(l.unit_price || 0)}</span>
+                      {lockedByOther(l) && <span className="text-[10px] font-bold text-amber-600">na fakturze {l.invoiced!.number ?? '(szkic)'}</span>}
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={insertMmLines}
+                className="px-3 py-1.5 text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">
+                Wstaw zaznaczone pozycje do faktury
+              </button>
+              {mmInfo && <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">{mmInfo}</span>}
             </div>
           </div>
         )}
