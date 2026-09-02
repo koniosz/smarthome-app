@@ -198,6 +198,14 @@ export const projectWarehouseApi = {
     api.post(`/projects/${projectId}/warehouse-pick`, { lines }).then(r => r.data),
 }
 
+// ── Dane firmy do dokumentów (logo na fakturze) ───────────────────────────────
+export interface CompanySettings { invoice_logo: string; invoice_footer: string; updated_at: string }
+export const companySettingsApi = {
+  get: (): Promise<CompanySettings> => api.get('/settings/company').then(r => r.data),
+  update: (data: Partial<Pick<CompanySettings, 'invoice_logo' | 'invoice_footer'>>): Promise<CompanySettings> =>
+    api.put('/settings/company', data).then(r => r.data),
+}
+
 export const financeApi = {
   pnl: (year: number, businessUnit = 'all'): Promise<import('../types').PnlResponse> =>
     api.get('/finance/pnl', { params: { year, business_unit: businessUnit } }).then(r => r.data),

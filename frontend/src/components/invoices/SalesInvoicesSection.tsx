@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import Modal from '../ui/Modal'
-import { salesInvoicesApi, quotesApi, warehouseApi, projectsApi, projectWarehouseApi } from '../../api/client'
-import type { SalesInvoice, SalesInvoiceItem, WarehouseDoc, ProjectWarehouseDoc, ProjectWarehouseDocLine } from '../../api/client'
+import { salesInvoicesApi, quotesApi, warehouseApi, projectsApi, projectWarehouseApi, companySettingsApi } from '../../api/client'
+import type { SalesInvoice, SalesInvoiceItem, WarehouseDoc, ProjectWarehouseDoc, ProjectWarehouseDocLine, CompanySettings } from '../../api/client'
 import type { AiQuote, Project } from '../../types'
 import { COMPANY_INFO } from '../../constants/company'
+import { useAuth } from '../../auth/AuthContext'
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500'
 const lblCls = 'block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1'
@@ -21,31 +22,68 @@ function fmtDate(s?: string | null) {
 }
 
 export default function SalesInvoicesSection({ onBack }: { onBack: () => void }) {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [list, setList] = useState<SalesInvoice[]>([])
   const [loading, setLoading] = useState(true)
   const [editInv, setEditInv] = useState<SalesInvoice | 'new' | null>(null)
+  const [previewInv, setPreviewInv] = useState<SalesInvoice | null>(null)
+  const [company, setCompany] = useState<CompanySettings>({ invoice_logo: '', invoice_footer: '', updated_at: '' })
+  const [logoBusy, setLogoBusy] = useState(false)
 
   const load = () => { setLoading(true); salesInvoicesApi.list().then(setList).catch(() => setList([])).finally(() => setLoading(false)) }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); companySettingsApi.get().then(setCompany).catch(() => {}) }, [])
 
   const act = async (fn: () => Promise<any>, confirmMsg?: string) => {
     if (confirmMsg && !window.confirm(confirmMsg)) return
     try { await fn(); load() } catch (e: any) { alert(e?.response?.data?.error || 'Błąd operacji.') }
   }
 
+  // Logo firmy na fakturze — plik → data URL → ustawienia (tylko admin)
+  const uploadLogo = async (file: File) => {
+    if (file.size > 700 * 1024) { alert('Logo jest za duże — maksymalnie 700 KB (najlepiej PNG/SVG ~300×100 px).'); return }
+    setLogoBusy(true)
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = reject; r.readAsDataURL(file)
+      })
+      setCompany(await companySettingsApi.update({ invoice_logo: dataUrl }))
+    } catch (e: any) { alert(e?.response?.data?.error || 'Nie udało się zapisać logo.') }
+    finally { setLogoBusy(false) }
+  }
+  const removeLogo = async () => {
+    if (!confirm('Usunąć logo z faktur?')) return
+    setLogoBusy(true)
+    try { setCompany(await companySettingsApi.update({ invoice_logo: '' })) } finally { setLogoBusy(false) }
+  }
+
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto min-h-screen bg-[#f8fafc] dark:bg-gray-950">
       <div className="flex items-start justify-between mb-1 flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Faktury sprzedażowe <span className="text-xs font-semibold align-middle bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 px-2 py-0.5 rounded-full">BETA</span></h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Szkic → wystawienie (numer FV) → wydruk/PDF · numeracja FV/RRRR/MM/NNN</p>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-50">Faktury sprzedażowe <span className="text-xs font-semibold align-middle bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 px-2 py-0.5 rounded-full">BETA</span></h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Szkic → wystawienie (numer FV) → podgląd / wydruk / PDF · numeracja FV/RRRR/MM/NNN</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} className="px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">← Faktury kosztowe</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && (
+            <label className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg cursor-pointer ${logoBusy ? 'opacity-60' : ''}`}
+              title="Logo drukowane w nagłówku faktury">
+              {company.invoice_logo
+                ? <img src={company.invoice_logo} alt="logo" className="h-5 max-w-[80px] object-contain" />
+                : <span>🖼</span>}
+              {company.invoice_logo ? 'Zmień logo' : 'Dodaj logo firmy'}
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogo(f); e.target.value = '' }} />
+            </label>
+          )}
+          {isAdmin && company.invoice_logo && (
+            <button onClick={removeLogo} disabled={logoBusy} className="px-2 py-2 text-xs text-gray-400 hover:text-red-500" title="Usuń logo">✕</button>
+          )}
+          <button onClick={onBack} className="px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">← Wróć</button>
           <button onClick={() => setEditInv('new')} className="px-4 py-2 text-sm font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">+ Nowa faktura</button>
         </div>
       </div>
-      <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 mb-4 mt-3 max-w-2xl">
+      <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2 mb-4 mt-3 max-w-2xl">
         ⚠️ Wysyłka do KSeF jest <strong>przygotowana, ale wyłączona</strong> — od 04.2026 KSeF jest obowiązkowy dla faktur B2B; włączenie wysyłki wymaga osobnej decyzji.
       </p>
 
@@ -69,18 +107,19 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
                     <div className="text-xs text-gray-400">{fmt(inv.total_net)} netto</div>
                   </div>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button onClick={() => setPreviewInv(inv)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">👁 Podgląd</button>
                     {inv.status === 'draft' && <>
-                      <button onClick={() => setEditInv(inv)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">✏️ Edytuj</button>
+                      <button onClick={() => setEditInv(inv)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">✏️ Edytuj</button>
                       <button onClick={() => act(() => salesInvoicesApi.issue(inv.id), `Wystawić fakturę dla ${inv.buyer_name}? Zostanie nadany numer.`)} className="px-2.5 py-1 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded">Wystaw</button>
-                      <button onClick={() => act(() => salesInvoicesApi.delete(inv.id), 'Usunąć szkic?')} className="px-2 py-1 text-xs border border-red-200 dark:border-red-900 text-red-500 rounded hover:bg-red-50">🗑</button>
+                      <button onClick={() => act(() => salesInvoicesApi.delete(inv.id), 'Usunąć szkic?')} className="px-2 py-1 text-xs border border-red-200 dark:border-red-900 text-red-500 rounded hover:bg-red-50 dark:hover:bg-red-950/30">🗑</button>
                     </>}
                     {inv.status === 'issued' && <>
-                      <button onClick={() => printInvoice(inv)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj</button>
+                      <button onClick={() => printInvoice(inv, company)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj / PDF</button>
                       <button onClick={() => act(() => salesInvoicesApi.markPaid(inv.id))} className="px-2.5 py-1 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded">Opłacona</button>
-                      <button onClick={() => act(() => salesInvoicesApi.cancel(inv.id), 'Anulować fakturę? Pozostanie w rejestrze jako anulowana.')} className="px-2 py-1 text-xs border border-red-200 dark:border-red-900 text-red-500 rounded hover:bg-red-50">Anuluj</button>
+                      <button onClick={() => act(() => salesInvoicesApi.cancel(inv.id), 'Anulować fakturę? Pozostanie w rejestrze jako anulowana.')} className="px-2 py-1 text-xs border border-red-200 dark:border-red-900 text-red-500 rounded hover:bg-red-50 dark:hover:bg-red-950/30">Anuluj</button>
                     </>}
-                    {inv.status === 'paid' && <button onClick={() => printInvoice(inv)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj</button>}
+                    {inv.status === 'paid' && <button onClick={() => printInvoice(inv, company)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj / PDF</button>}
                   </div>
                 </div>
               )
@@ -89,12 +128,43 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
         )}
 
       {editInv && <InvoiceBuilderModal invoice={editInv === 'new' ? null : editInv} onClose={() => setEditInv(null)} onSaved={() => { setEditInv(null); load() }} />}
+      {previewInv && <InvoicePreviewModal invoice={previewInv} company={company} onClose={() => setPreviewInv(null)} />}
+    </div>
+  )
+}
+
+// ── Podgląd faktury (ta sama treść co wydruk, w oknie aplikacji) ──
+function InvoicePreviewModal({ invoice, company, onClose }: { invoice: SalesInvoice; company: CompanySettings; onClose: () => void }) {
+  const html = buildInvoiceHtml(invoice, company, false)
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 dark:border-gray-800">
+          <div>
+            <div className="text-sm font-bold text-gray-800 dark:text-gray-100">Podgląd: Faktura {invoice.number ?? '(szkic — bez numeru)'}</div>
+            <div className="text-xs text-gray-400">{invoice.buyer_name} · {fmt(invoice.total_gross)} PLN brutto</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => printInvoice(invoice, company)} className="px-3 py-1.5 text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">🖨 Drukuj / zapisz PDF</button>
+            <button onClick={onClose} className="px-3 py-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">Zamknij</button>
+          </div>
+        </div>
+        {/* iframe izoluje style wydruku od trybu ciemnego aplikacji — faktura zawsze biała */}
+        <iframe title="Podgląd faktury" srcDoc={html} className="flex-1 w-full bg-white" style={{ border: 0 }} />
+      </div>
     </div>
   )
 }
 
 // ── Wydruk faktury (okno drukowania — Ctrl+P → PDF) ──
-function printInvoice(inv: SalesInvoice) {
+function printInvoice(inv: SalesInvoice, company?: CompanySettings) {
+  const html = buildInvoiceHtml(inv, company ?? { invoice_logo: '', invoice_footer: '', updated_at: '' }, true)
+  const w = window.open('', '_blank')
+  if (w) { w.document.write(html); w.document.close() }
+}
+
+// ── HTML faktury (wspólny dla podglądu i wydruku) ──
+function buildInvoiceHtml(inv: SalesInvoice, company: CompanySettings, autoPrint: boolean): string {
   const rows = (inv.items || []).map((i, idx) => `<tr>
     <td>${idx + 1}</td><td>${i.name}</td>
     <td style="text-align:right">${fmt(i.qty)}</td><td>${i.unit}</td>
@@ -116,8 +186,11 @@ function printInvoice(inv: SalesInvoice) {
   .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:14px}
   .lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px}</style></head><body>
   <div class="hdr">
-    <div><div style="font-weight:800;font-size:14px">${COMPANY_INFO.name}</div>
-    <div style="font-size:11px;color:#475569">${COMPANY_INFO.address}<br>NIP: ${COMPANY_INFO.nip}</div></div>
+    <div style="display:flex;align-items:center;gap:14px">
+      ${company.invoice_logo ? `<img src="${company.invoice_logo}" alt="logo" style="max-height:64px;max-width:200px;object-fit:contain">` : ''}
+      <div><div style="font-weight:800;font-size:14px">${COMPANY_INFO.name}</div>
+      <div style="font-size:11px;color:#475569">${COMPANY_INFO.address}<br>NIP: ${COMPANY_INFO.nip}</div></div>
+    </div>
     <div style="text-align:right"><h1>Faktura ${inv.number ?? '(szkic)'}</h1>
     <div style="font-size:11px;color:#475569">Data wystawienia: ${fmtDate(inv.issue_date)}<br>Data sprzedaży: ${fmtDate(inv.sale_date)}${inv.due_date ? `<br>Termin płatności: ${fmtDate(inv.due_date)}` : ''}</div></div>
   </div>
@@ -140,9 +213,10 @@ function printInvoice(inv: SalesInvoice) {
     <div style="border-top:1px solid #999;padding-top:4px;width:40%">Osoba upoważniona do wystawienia</div>
     <div style="border-top:1px solid #999;padding-top:4px;width:40%">Osoba upoważniona do odbioru</div>
   </div>
-  <script>window.print()</script></body></html>`
-  const w = window.open('', '_blank')
-  if (w) { w.document.write(html); w.document.close() }
+  ${company.invoice_footer ? `<div style="margin-top:28px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:10px;color:#64748b;text-align:center">${company.invoice_footer}</div>` : ''}
+  ${inv.status === 'draft' ? `<div style="position:fixed;top:40%;left:0;right:0;text-align:center;font-size:64px;font-weight:800;color:rgba(220,38,38,0.12);transform:rotate(-20deg);pointer-events:none">SZKIC</div>` : ''}
+  ${autoPrint ? '<script>window.print()</script>' : ''}</body></html>`
+  return html
 }
 
 // ── Kreator / edycja faktury ──

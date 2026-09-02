@@ -1,12 +1,52 @@
 import { Router, Request, Response } from 'express'
 import nodemailer from 'nodemailer'
-import db from '../db'
+import db, { prisma } from '../db'
 import { requireAdmin } from '../middleware/auth'
 import { getSmtpConfig } from '../services/mailer'
 
 const router = Router()
 
 const MASKED = '••••••••'
+
+// ── Dane firmy do dokumentów (logo na fakturze) ───────────────────────────────
+// GET dla każdego zalogowanego (wydruk faktury potrzebuje logo), PUT tylko admin.
+const LOGO_MAX_BYTES = 700 * 1024
+
+router.get('/company', async (_req: Request, res: Response) => {
+  try {
+    const s = await prisma.companySettings.findUnique({ where: { id: 'default' } })
+    res.json({ invoice_logo: s?.invoice_logo ?? '', invoice_footer: s?.invoice_footer ?? '', updated_at: s?.updated_at ?? '' })
+  } catch (e) {
+    console.error('[settings/company GET]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
+
+router.put('/company', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const patch: any = { updated_at: new Date().toISOString() }
+    if (req.body.invoice_logo !== undefined) {
+      const logo = String(req.body.invoice_logo ?? '')
+      if (logo && !/^data:image\/(png|jpeg|jpg|svg\+xml|webp);base64,/.test(logo)) {
+        res.status(400).json({ error: 'Logo musi być obrazem PNG, JPG, WEBP lub SVG' }); return
+      }
+      if (logo.length > LOGO_MAX_BYTES * 1.37) { // base64 ≈ +37 %
+        res.status(400).json({ error: 'Logo jest za duże — maksymalnie ~700 KB' }); return
+      }
+      patch.invoice_logo = logo
+    }
+    if (req.body.invoice_footer !== undefined) patch.invoice_footer = String(req.body.invoice_footer ?? '').slice(0, 500)
+    const s = await prisma.companySettings.upsert({
+      where: { id: 'default' },
+      create: { id: 'default', ...patch },
+      update: patch,
+    })
+    res.json({ invoice_logo: s.invoice_logo, invoice_footer: s.invoice_footer, updated_at: s.updated_at })
+  } catch (e) {
+    console.error('[settings/company PUT]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
+  }
+})
 
 // GET /api/settings/smtp — zwróć aktualną konfigurację (hasło zamaskowane)
 router.get('/smtp', requireAdmin, async (req: Request, res: Response) => {

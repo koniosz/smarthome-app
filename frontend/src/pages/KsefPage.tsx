@@ -1064,7 +1064,7 @@ export default function KsefPage() {
 
   if (viewMode === 'sprzedaz') {
     return (
-      <div style={{ background: '#f8fafc', minHeight: '100vh' }}>
+      <div className="min-h-screen bg-[#f8fafc] dark:bg-gray-950">
         <SalesInvoicesSection onBack={() => setViewMode('faktury')} />
       </div>
     )

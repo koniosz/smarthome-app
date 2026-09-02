@@ -774,6 +774,16 @@ model ClientSurveyAttachment {
 }
 
 // ─── SMTP / Email configuration ───────────────────────────────────────────────
+// ─── Dane firmy do dokumentów (logo na fakturze itd.) — jeden rekord "default" ─
+model CompanySettings {
+  id             String @id @default("default")
+  invoice_logo   String @default("")   // data URL (PNG/JPG/SVG, max ~500 KB) — pusty = bez logo
+  invoice_footer String @default("")   // opcjonalna stopka na fakturze
+  updated_at     String @default("")
+
+  @@map("company_settings")
+}
+
 model SmtpSettings {
   id         String @id @default("default")
   host       String @default("")
