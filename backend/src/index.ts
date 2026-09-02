@@ -17,6 +17,7 @@ import financeRouter from './routes/finance'
 import personalTodosRouter from './routes/personal-todos'
 import searchRouter from './routes/search'
 import projectWarehouseRouter from './routes/project-warehouse'
+import hrCalamariRouter from './routes/hr-calamari'
 import employeesRouter from './routes/employees'
 import dashboardRouter from './routes/dashboard'
 import tasksRouter from './routes/tasks'
@@ -100,6 +101,7 @@ app.use('/api/tasks', tasksRouter)
 app.use('/api/projects', projectsRouter)
 app.use('/api/quotes', quotesRouter)           // wyceny samodzielne (bez projektu)
 app.use('/api/warehouse', warehouseRouter)     // magazyn (dostęp: admin lub can_view_warehouse)
+app.use('/api/hr/calamari', hrCalamariRouter) // HR: import historii z Calamari (admin, klucz API per żądanie)
 app.use('/api/hr', hrRouter)                   // HR: urlopy + ewidencja czasu pracy
 app.use('/api/sales-invoices', salesInvoicesRouter) // faktury sprzedażowe (beta, admin)
 app.use('/api/payables', payablesRouter)       // panel Płatności (dostęp: admin lub can_view_payments)

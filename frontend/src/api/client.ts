@@ -4,6 +4,7 @@ import type {
   EmployeeAsset, EmployeeDocument, DashboardStats,
   AiQuote, ProductCatalogItem, ExtraCost, AccessRequest, AppNotification, CostAuditEntry,
   BankTransaction, ProjectDocument, ClientSurvey, ClientSurveyAttachment, Task,
+  CalamariImportResult,
 } from '../types'
 
 const BASE = '/api'
@@ -598,6 +599,9 @@ export const hrApi = {
     api.post<HrWorkTimeEntry>(`/hr/admin/work-time/${employeeId}`, data).then(r => r.data),
   adminEwidencja: (employeeId: string, month: string) =>
     api.get<HrEwidencja>(`/hr/admin/ewidencja/${employeeId}`, { params: { month } }).then(r => r.data),
+  // Import historii z Calamari (klucz API użyty tylko na czas żądania)
+  calamariImport: (data: { tenant: string; api_key: string; date_from?: string; date_to?: string; dry_run: boolean; import_leaves?: boolean; import_timesheets?: boolean }) =>
+    api.post<CalamariImportResult>('/hr/calamari/import', data).then(r => r.data),
   setSchedule: (employeeId: string, data: { auto_time_enabled?: boolean; work_start?: string; work_end?: string; work_break_minutes?: number }) =>
     api.put<Employee>(`/hr/admin/schedule/${employeeId}`, data).then(r => r.data),
   fillSchedule: (employeeId: string, month: string) =>

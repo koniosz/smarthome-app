@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Modal from '../components/ui/Modal'
 import { hrApi, LEAVE_TYPE_LABELS } from '../api/client'
 import type { LeaveType, HrLeaveBalance, HrLeaveRequest, HrEwidencja } from '../api/client'
-import type { Employee } from '../types'
+import type { Employee, CalamariImportResult } from '../types'
 import { useAuth } from '../auth/AuthContext'
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500'
@@ -324,11 +324,11 @@ function EwidencjaTable({ ew, onEditDay, adminEdit }: { ew: HrEwidencja; onEditD
 
 // ═══ Administracja HR ═══
 function AdminHR() {
-  const [sub, setSub] = useState<'wnioski' | 'salda' | 'ewidencja' | 'grafik'>('wnioski')
+  const [sub, setSub] = useState<'wnioski' | 'salda' | 'ewidencja' | 'grafik' | 'calamari'>('wnioski')
   return (
     <div className="space-y-4">
       <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit flex-wrap">
-        {([['wnioski', 'Wnioski urlopowe'], ['salda', 'Salda urlopowe'], ['ewidencja', 'Ewidencja czasu pracy'], ['grafik', 'Grafik (auto)']] as const).map(([k, v]) => (
+        {([['wnioski', 'Wnioski urlopowe'], ['salda', 'Salda urlopowe'], ['ewidencja', 'Ewidencja czasu pracy'], ['grafik', 'Grafik (auto)'], ['calamari', '⬇️ Import z Calamari']] as const).map(([k, v]) => (
           <button key={k} onClick={() => setSub(k)}
             className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors ${sub === k ? 'bg-white dark:bg-gray-900 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}>
             {v}
@@ -339,6 +339,109 @@ function AdminHR() {
       {sub === 'salda' && <AdminSalda />}
       {sub === 'ewidencja' && <AdminEwidencja />}
       {sub === 'grafik' && <AdminGrafik />}
+      {sub === 'calamari' && <AdminCalamari />}
+    </div>
+  )
+}
+
+// ═══ Import historii urlopów i czasu pracy z Calamari (oficjalne API, klucz per import) ═══
+function AdminCalamari() {
+  const [tenant, setTenant] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [dateFrom, setDateFrom] = useState('2018-01-01')
+  const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10))
+  const [leaves, setLeaves] = useState(true)
+  const [timesheets, setTimesheets] = useState(true)
+  const [busy, setBusy] = useState<'preview' | 'import' | null>(null)
+  const [result, setResult] = useState<CalamariImportResult | null>(null)
+  const [err, setErr] = useState('')
+
+  const run = async (dryRun: boolean) => {
+    if (!tenant.trim() || !apiKey.trim()) { setErr('Podaj nazwę firmy w Calamari i klucz API.'); return }
+    if (!dryRun && !confirm(`Zaimportować dane z Calamari do systemu?\nUrlopy: ${result?.leaves.imported ?? '?'} · Czas pracy: ${result?.timesheets.imported ?? '?'} dni`)) return
+    setBusy(dryRun ? 'preview' : 'import'); setErr('')
+    try {
+      const r = await hrApi.calamariImport({ tenant: tenant.trim(), api_key: apiKey.trim(), date_from: dateFrom, date_to: dateTo, dry_run: dryRun, import_leaves: leaves, import_timesheets: timesheets })
+      setResult(r)
+      if (!dryRun) setApiKey('')
+    } catch (e: any) {
+      setErr(e?.response?.data?.error || 'Błąd importu.')
+    } finally { setBusy(null) }
+  }
+
+  const inputCls = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500'
+  const lbl = 'block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1'
+
+  return (
+    <div className="space-y-4 max-w-3xl">
+      <div className="bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 rounded-xl p-4 text-sm text-violet-900 dark:text-violet-200">
+        <div className="font-semibold mb-1">Jak pobrać klucz API z Calamari</div>
+        <ol className="list-decimal ml-5 space-y-0.5 text-xs">
+          <li>Zaloguj się do Calamari jako administrator → <b>Konfiguracja → Integracje → API</b> → wygeneruj klucz.</li>
+          <li>Nazwa firmy to fragment adresu: <code>https://<b>nazwa</b>.calamari.io</code>.</li>
+          <li>Pracownicy są dopasowywani <b>po adresie e-mail</b> — upewnij się, że kartoteki w sekcji Pracownicy mają te same e-maile co w Calamari.</li>
+          <li>Klucz jest używany tylko na czas importu i nie jest zapisywany. Po imporcie unieważnij go w Calamari.</li>
+        </ol>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div><label className={lbl}>Nazwa firmy w Calamari</label><input className={inputCls} value={tenant} onChange={e => setTenant(e.target.value)} placeholder="np. smarthomecenter" autoComplete="off" /></div>
+        <div><label className={lbl}>Klucz API</label><input type="password" className={inputCls} value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="wklej klucz" autoComplete="new-password" /></div>
+        <div><label className={lbl}>Od</label><input type="date" className={inputCls} value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></div>
+        <div><label className={lbl}>Do</label><input type="date" className={inputCls} value={dateTo} onChange={e => setDateTo(e.target.value)} /></div>
+      </div>
+      <div className="flex items-center gap-5 text-sm">
+        <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={leaves} onChange={e => setLeaves(e.target.checked)} /> Urlopy i nieobecności</label>
+        <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={timesheets} onChange={e => setTimesheets(e.target.checked)} /> Czas pracy (timesheet)</label>
+      </div>
+      {err && <div className="text-sm text-red-500">{err}</div>}
+      <div className="flex gap-3">
+        <button onClick={() => run(true)} disabled={!!busy}
+          className="px-4 py-2 text-sm font-semibold border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 rounded-lg hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-50">
+          {busy === 'preview' ? 'Sprawdzam…' : '1. Sprawdź (bez zapisu)'}
+        </button>
+        <button onClick={() => run(false)} disabled={!!busy || !result || !result.dry_run}
+          title={!result ? 'Najpierw sprawdź połączenie i podgląd' : ''}
+          className="px-4 py-2 text-sm font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg disabled:opacity-50">
+          {busy === 'import' ? 'Importuję…' : '2. Importuj do systemu'}
+        </button>
+      </div>
+
+      {result && (
+        <div className={`rounded-xl border p-4 space-y-3 text-sm ${result.dry_run ? 'bg-gray-50 dark:bg-gray-800/40 border-gray-200 dark:border-gray-700' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'}`}>
+          <div className="font-semibold text-gray-800 dark:text-gray-100">
+            {result.dry_run ? '🔍 Podgląd — nic nie zapisano' : '✅ Import zakończony'} · zakres {result.range.from} – {result.range.to}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white dark:bg-gray-900 rounded-lg p-3 border border-gray-100 dark:border-gray-800">
+              <div className="text-xs text-gray-400 uppercase font-bold">Pracownicy</div>
+              <div className="text-lg font-bold text-gray-800 dark:text-gray-100">{result.employees.matched} / {result.employees.calamari}</div>
+              <div className="text-xs text-gray-400">dopasowanych po e-mailu</div>
+            </div>
+            <div className="bg-white dark:bg-gray-900 rounded-lg p-3 border border-gray-100 dark:border-gray-800">
+              <div className="text-xs text-gray-400 uppercase font-bold">Urlopy</div>
+              <div className="text-lg font-bold text-gray-800 dark:text-gray-100">{result.leaves.imported}</div>
+              <div className="text-xs text-gray-400">{result.dry_run ? 'do importu' : 'zaimportowane'} · {result.leaves.skipped_existing} już było · {result.leaves.skipped_unmatched} bez kartoteki</div>
+            </div>
+            <div className="bg-white dark:bg-gray-900 rounded-lg p-3 border border-gray-100 dark:border-gray-800">
+              <div className="text-xs text-gray-400 uppercase font-bold">Czas pracy</div>
+              <div className="text-lg font-bold text-gray-800 dark:text-gray-100">{result.timesheets.imported} dni</div>
+              <div className="text-xs text-gray-400">{result.dry_run ? 'do importu' : 'zaimportowane'} · {result.timesheets.skipped_existing} już było · {result.timesheets.skipped_unmatched} bez kartoteki</div>
+            </div>
+          </div>
+          {Object.keys(result.leaves.by_type).length > 0 && (
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              Typy: {Object.entries(result.leaves.by_type).map(([t, n]) => `${LEAVE_TYPE_LABELS[t as LeaveType] ?? t}: ${n}`).join(' · ')}
+            </div>
+          )}
+          {result.employees.unmatched.length > 0 && (
+            <div className="text-xs text-amber-700 dark:text-amber-400">
+              <b>Bez kartoteki w systemie ({result.employees.unmatched.length}):</b> {result.employees.unmatched.join(', ')}
+              <div className="mt-1 text-gray-400">Dodaj ich w sekcji Pracownicy z tym samym e-mailem i uruchom import ponownie — zaimportowane rekordy nie zdublują się.</div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

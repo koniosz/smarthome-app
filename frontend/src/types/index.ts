@@ -717,6 +717,15 @@ export interface PayableReviewItem {
   candidates: PayableCandidate[]
 }
 
+// ─── HR: import z Calamari ────────────────────────────────────────────────────
+export interface CalamariImportResult {
+  dry_run: boolean
+  range: { from: string; to: string }
+  employees: { calamari: number; matched: number; unmatched: string[] }
+  leaves: { fetched: number; imported: number; skipped_existing: number; skipped_unmatched: number; by_type: Record<string, number> }
+  timesheets: { fetched: number; imported: number; skipped_existing: number; skipped_unmatched: number }
+}
+
 // ─── Prywatna lista zadań (to-do) ─────────────────────────────────────────────
 export interface PersonalTodo {
   id: string
