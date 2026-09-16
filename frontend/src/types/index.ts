@@ -742,7 +742,8 @@ export interface PersonalTodo {
 // ─── Finanse 2.0: RZiS / EBITDA ───────────────────────────────────────────────
 export interface PnlLines {
   revenue: number; revenue_firmao: number; revenue_ksef: number; revenue_module: number; revenue_advances: number
-  cogs: number; gross_margin: number; gross_margin_pct: number
+  // cogs = cogs_purchases − inventory_change (zmiana stanu magazynu; dodatnia = magazyn urósł)
+  cogs: number; cogs_purchases: number; inventory_change: number; gross_margin: number; gross_margin_pct: number
   opex: number; opex_sales: number; opex_ga: number; opex_operations: number; opex_leasing: number
   ebitda: number; ebitda_pct: number
   depreciation: number; ebit: number
@@ -758,6 +759,7 @@ export interface PnlResponse {
   quarters: Array<PnlLines & { quarter: string }>
   ytd: PnlLines & { label: string }
   firmao_months: string[]
+  inventory_in_pnl: boolean
   quality: {
     unallocated_ksef_invoices: number
     suspect_sales_records: number
@@ -792,10 +794,13 @@ export interface CostDetailsResponse {
     taxes: CostDetailGroup
     import: CostDetailGroup
     ksef_invoices: CostDetailGroup
+    non_ksef: CostDetailGroup       // dokumenty ze skrzynki kosztów + przelewy z reguł bankowych
     other_manual: CostDetailGroup
   }
   projects: Array<{ project_id: string | null; name: string; total: number; count: number }>
   skipped_mt940_duplicates: { count: number; total: number }
+  // koszty w walucie obcej bez przeliczenia na PLN — poza RZiS (do ręcznego przeliczenia)
+  foreign_currency_costs?: { count: number; items: Array<CostDetailItem & { currency: string }> }
   total: number
 }
 

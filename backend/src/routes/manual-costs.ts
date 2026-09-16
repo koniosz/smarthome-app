@@ -3,11 +3,12 @@
  * oraz import wyciągów bankowych MT940 (format SWIFT)
  */
 import { Router, Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
 import { v4 as uuidv4 } from 'uuid'
+import { prisma } from '../db'
 import { requireAdmin } from '../middleware/auth'
+import { parseMT940Statements } from '../utils/mt940Parser'
+import { saveBankBalances, upsertMt940Costs } from '../services/mt940-costs'
 
-const prisma = new PrismaClient()
 const router = Router()
 
 // ─── Taksonomia kosztów ręcznych ──────────────────────────────────────────────
@@ -24,6 +25,7 @@ export const MANUAL_SUBCATEGORIES: Record<string, Record<string, string>> = {
     accounting:     'Księgowość / doradztwo',
     legal:          'Usługi prawne',
     office_supplies:'Materiały biurowe',
+    other:          'Inne / nierozpoznane',
   },
   financial: {
     tax_vat:        'VAT do US',
@@ -54,20 +56,41 @@ export const MANUAL_SUBCATEGORIES: Record<string, Record<string, string>> = {
 }
 
 // ─── Auto-klasyfikacja z opisu transakcji (MT940 / ręcznie) ──────────────────
-function autoClassifyManual(description: string, reference: string): {
+// Nierozpoznany przelew → ga/other (poza listą MT940_SAFE_SUBCATEGORIES), czyli NIE wchodzi
+// do RZiS, dopóki nie zdecyduje reguła bankowa lub użytkownik (lista „nierozpoznane przelewy").
+export function autoClassifyManual(description: string, reference: string): {
   cost_category: string; subcategory: string; business_unit: string
 } {
   const t = `${description} ${reference}`.toLowerCase()
 
   // ZUS
-  if (/\bzus\b|zakład.*ubezp|ubezpieczenia społeczne|składk.*społeczn/.test(t))
+  if (/\bzus\b|zakład.*ubezp|zaklad.*ubezp|ubezpieczenia społeczne|składk.*społeczn/.test(t))
     return { cost_category: 'ga', subcategory: 'zus_employer', business_unit: 'shared' }
 
-  // Podatki — US / Urząd Skarbowy
-  if (/urząd.*skarb|us\s|mikrorachun|podatek.*vat|\bvat\b.*deklaracj|jpk|pit-\d|cit-\d/.test(t))
-    return { cost_category: 'financial', subcategory: 'tax_vat', business_unit: 'shared' }
-  if (/podatek.*dochod|zaliczka.*podatek|podatek.*cit|podatek.*pit/.test(t))
+  // Podatki — najpierw RODZAJ podatku (CIT/PIT → tax_income, VAT/JPK → tax_vat), dopiero potem
+  // ogólny „przelew do US” → tax_other. Kolejność ma znaczenie: tax_vat jest wykluczone z RZiS,
+  // tax_income wchodzi jako CIT (cit_paid_ytd), więc zaliczka CIT błędnie oznaczona jako VAT
+  // znika z wyniku. Wszystkie krótkie tokeny z granicami słów (`\bus\b`, `\bcit\b`, `\bjpk`):
+  // niezakotwiczone `us\s` łapało GLOBUS/PLUS/BONUS/ASUS i cicho wyrzucało te koszty z RZiS.
+  const taxOffice = /urząd.*skarb|urzad.*skarb|\bus\b|mikrorachun/.test(t)
+  // PIT-4 / PIT-4R / PIT-8A(R) = zaliczki na podatek pracowników/zleceniobiorców potrącone z wynagrodzeń —
+  // to część kosztu pensji brutto (ga/salary_gross), NIE podatek dochodowy spółki (CIT).
+  if (/\bpit-?4r?\b|\bpit-?8ar?\b|pit.?4|pit.?8a|podat.*od wynagrodze|zaliczk.*od wynagrodze/.test(t))
+    return { cost_category: 'ga', subcategory: 'salary_gross', business_unit: 'shared' }
+  const incomeTax = taxOffice
+    ? /\bcit\b|\bcit-?\d|\bpit\b|\bpit-?\d|podatek.*dochod|zaliczk.*podat/.test(t)
+    : /\bcit-?\d|\bpit-?\d|\bcit\b.*zaliczk|zaliczk.*\bcit\b|\bpit\b.*zaliczk|zaliczk.*\bpit\b|podatek.*dochod|podatek.*\bcit\b|podatek.*\bpit\b/.test(t)
+  if (incomeTax)
     return { cost_category: 'financial', subcategory: 'tax_income', business_unit: 'shared' }
+  const vatTax = taxOffice
+    ? /\bvat\b|\bvat-?7|\bvat-?ue|\bjpk/.test(t)
+    : /\bjpk|podatek\s+vat|podatek od towar|\bvat\b.*deklaracj|deklaracj.*\bvat\b|\bvat-?7\b|\bvat-?ue\b/.test(t)
+  if (vatTax)
+    return { cost_category: 'financial', subcategory: 'tax_vat', business_unit: 'shared' }
+  // Inny przelew do US (PCC, odsetki, opłaty) — tax_other NIE jest w MT940_SAFE_SUBCATEGORIES,
+  // więc trafia na listę „nierozpoznane przelewy” do decyzji zamiast cicho znikać.
+  if (taxOffice)
+    return { cost_category: 'financial', subcategory: 'tax_other', business_unit: 'shared' }
 
   // Wynagrodzenia
   if (/wynagrodzeni|pensj|płac|wypłata|premia|urlop.*wypłac/.test(t))
@@ -78,7 +101,7 @@ function autoClassifyManual(description: string, reference: string): {
     return { cost_category: 'financial', subcategory: 'leasing', business_unit: 'shared' }
 
   // Opłaty bankowe
-  if (/opłat.*bank|prowizja.*bank|obsługa.*rachun|opłata.*konto/.test(t))
+  if (/opłat.*bank|prowizja.*bank|obsługa.*rachun|opłata.*konto|oplat.*bank|obsluga.*rachun/.test(t))
     return { cost_category: 'financial', subcategory: 'bank_fee', business_unit: 'shared' }
 
   // Paliwo
@@ -95,64 +118,8 @@ function autoClassifyManual(description: string, reference: string): {
   if (/fracht|freight|spedycj|forwarding/.test(t))
     return { cost_category: 'cogs', subcategory: 'import_freight', business_unit: 'shc' }
 
-  // Domyślnie: G&A
-  return { cost_category: 'ga', subcategory: 'salary_gross', business_unit: 'shared' }
-}
-
-// ─── Parser MT940 ─────────────────────────────────────────────────────────────
-interface Mt940Transaction {
-  date: string           // YYYY-MM-DD
-  amount: number         // ujemne = wychodzące
-  currency: string
-  description: string
-  reference: string
-  side: 'D' | 'C'       // Debet (wychodzące) | Credit (przychodzące)
-}
-
-function parseMt940(content: string): Mt940Transaction[] {
-  const transactions: Mt940Transaction[] = []
-
-  // Podziel na bloki transakcji — każda zaczyna się od :61:
-  // Wzorzec :61: YYMMDDYYMMDD D/C kwota N// referencja
-  const txBlocks = content.split(/(?=:61:)/)
-
-  for (const block of txBlocks) {
-    if (!block.startsWith(':61:')) continue
-
-    // Parsuj :61: — linia transakcji
-    // Format: :61:YYMMDDYYMMDDDkwota,groszeNGBP//referencja
-    // lub:    :61:YYMMDD[MMDD]C/DRkwota,grosze[N]referencja
-    const line61 = block.match(/:61:(\d{6})(\d{4})?([DC]R?)(\d+,\d{2})N?\w{0,3}\/\/([^\n]*)/)
-    if (!line61) continue
-
-    const [, dateStr, , side, amountStr, reference] = line61
-    const year  = 2000 + parseInt(dateStr.slice(0, 2))
-    const month = dateStr.slice(2, 4)
-    const day   = dateStr.slice(4, 6)
-    const date  = `${year}-${month}-${day}`
-    const amount = parseFloat(amountStr.replace(',', '.'))
-
-    // Pobierz opis z :86:
-    const desc86 = block.match(/:86:([\s\S]*?)(?=:\d{2}[A-Z]?:|$)/)
-    let description = desc86 ? desc86[1].replace(/\n/g, ' ').replace(/\s+/g, ' ').trim() : reference.trim()
-
-    // Usuń kody pola MT940 (np. ~20, ~30, ~31 itp.)
-    description = description.replace(/~\d{2}/g, ' ').replace(/\s+/g, ' ').trim()
-
-    // Szukaj waluty w nagłówku :25:
-    const currency = (content.match(/:25:[\w\/]+(PLN|EUR|USD|GBP|CHF)/) ?? [])[1] ?? 'PLN'
-
-    transactions.push({
-      date,
-      amount,
-      currency,
-      description: description.slice(0, 300),
-      reference: reference.trim().slice(0, 100),
-      side: side.startsWith('D') ? 'D' : 'C',
-    })
-  }
-
-  return transactions
+  // Domyślnie: G&A / inne (nierozpoznane — do decyzji)
+  return { cost_category: 'ga', subcategory: 'other', business_unit: 'shared' }
 }
 
 // ─── GET /api/manual-costs ───────────────────────────────────────────────────
@@ -202,6 +169,7 @@ router.post('/', requireAdmin, async (req: Request, res: Response) => {
         reference:     reference ?? '',
         source:        'manual',
         created_at:    new Date().toISOString(),
+        created_by:    (req as any).user?.email ?? '',
       },
     })
     res.json(created)
@@ -243,48 +211,36 @@ router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
-// ─── POST /api/manual-costs/import-mt940 — wgraj wyciąg MT940 ────────────────
+// ─── POST /api/manual-costs/import-mt940 — wgraj wyciąg MT940 (treść jako string) ──
+// Wspólny serwis z /api/payables/import-mt940: deduplikacja, auto-klasyfikacja,
+// reguły bankowe, zapis sald wyciągu.
 router.post('/import-mt940', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { content } = req.body  // treść pliku MT940 jako string
     if (!content) return res.status(400).json({ error: 'Brak treści pliku MT940' })
 
-    const transactions = parseMt940(String(content))
+    const { transactions, balances } = parseMT940Statements(String(content))
+    if (!transactions.length)
+      return res.status(400).json({ error: 'Nie znaleziono transakcji w pliku. Sprawdź, czy to poprawny wyciąg MT940.' })
 
-    // Importuj tylko transakcje wychodzące (Debet) — koszty
-    const outgoing = transactions.filter(t => t.side === 'D')
+    // Koszty = obciążenia (bez storn)
+    const outgoing = transactions.filter(t => t.amount < 0 && !t.is_reversal)
 
-    let saved = 0
-    const results: any[] = []
-
-    for (const tx of outgoing) {
-      const auto = autoClassifyManual(tx.description, tx.reference)
-      const cost = await prisma.manualCost.create({
-        data: {
-          id:            uuidv4(),
-          date:          tx.date,
-          description:   tx.description,
-          amount:        tx.amount,
-          currency:      tx.currency,
-          cost_category: auto.cost_category,
-          subcategory:   auto.subcategory,
-          business_unit: auto.business_unit,
-          reference:     tx.reference,
-          notes:         '',
-          source:        'mt940',
-          created_at:    new Date().toISOString(),
-        },
-      })
-      results.push(cost)
-      saved++
-    }
+    const balances_saved = await saveBankBalances(balances)
+    const result = await upsertMt940Costs(transactions, { createdBy: (req as any).user?.email ?? '' })
 
     res.json({
-      total_parsed:    transactions.length,
-      outgoing:        outgoing.length,
-      saved,
-      message:         `Zaimportowano ${saved} transakcji kosztowych z wyciągu MT940.`,
-      costs:           results,
+      total_parsed:     transactions.length,
+      outgoing:         outgoing.length,
+      saved:            result.created,
+      skipped_existing: result.skipped_existing,
+      rules_applied:    result.rules_applied,
+      balances_saved,
+      message: `Zaimportowano ${result.created} transakcji kosztowych z wyciągu MT940`
+        + (result.skipped_existing ? ` (${result.skipped_existing} już było w bazie)` : '')
+        + (result.rules_applied ? `, reguły bankowe rozpoznały ${result.rules_applied}` : '')
+        + (balances_saved ? `, zapisano ${balances_saved} sald` : '')
+        + '.',
     })
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })

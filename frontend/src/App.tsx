@@ -19,6 +19,8 @@ import WycenaPage from './pages/WycenaPage'
 import MagazynPage from './pages/MagazynPage'
 import PlatnosciPage from './pages/PlatnosciPage'
 import RentownoscPage from './pages/RentownoscPage'
+import KondycjaPage from './pages/KondycjaPage'
+import KosztySpozaKsefPage from './pages/KosztySpozaKsefPage'
 import SprzedazPage from './pages/SprzedazPage'
 import HrPage from './pages/HrPage'
 import HandoverPrintView from './pages/HandoverPrintView'
@@ -36,6 +38,7 @@ function pathToView(pathname: string): NavView {
   if (pathname.startsWith('/hr')) return 'hr'
   if (pathname.startsWith('/product-catalog')) return 'product-catalog'
   if (pathname.startsWith('/faktury') || pathname.startsWith('/ksef')) return 'faktury'
+  if (pathname.startsWith('/kondycja') || pathname.startsWith('/rentownosc') || pathname.startsWith('/koszty-spoza-ksef')) return 'kondycja'
   if (pathname.startsWith('/koszty')) return 'koszty'
   return 'dashboard'
 }
@@ -133,6 +136,8 @@ function AppContent() {
             <Route path="/magazyn" element={<MagazynPage />} />
             <Route path="/platnosci" element={<PlatnosciPage />} />
             <Route path="/rentownosc" element={<RentownoscPage />} />
+            <Route path="/kondycja" element={<KondycjaPage />} />
+            <Route path="/koszty-spoza-ksef" element={<KosztySpozaKsefPage />} />
             <Route path="/sprzedaz" element={<SprzedazPage />} />
             <Route path="/hr" element={<HrPage />} />
           </Routes>

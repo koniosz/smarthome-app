@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, Upload, Landmark, X, PlusCircle, ListTree } from 'lucide-react'
 import { financeApi } from '../api/client'
+import { accountantApi, type AccountantCompareResponse } from '../api/accountant'
 import type { PnlLines, PnlResponse, FixedAsset, SalesImportResult, CostDetailsResponse, CostDetailGroup } from '../types'
 import { useAuth } from '../auth/AuthContext'
+import AccountantStatementModal from '../components/finance/AccountantStatementModal'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)
@@ -42,6 +44,7 @@ const COST_GROUP_META: Array<{ key: keyof CostDetailsResponse['groups']; label: 
   { key: 'taxes', label: 'Podatki (CIT)', icon: '🧾' },
   { key: 'import', label: 'Import towaru', icon: '🌏' },
   { key: 'ksef_invoices', label: 'Faktury KSeF', icon: '📄' },
+  { key: 'non_ksef', label: 'Spoza KSeF (dokumenty, reguły bankowe)', icon: '📥' },
   { key: 'other_manual', label: 'Inne koszty ręczne', icon: '✏️' },
 ]
 const BU_OPTIONS = [['all', 'Cała spółka'], ['shc', 'Smart Home Center'], ['gatelynk', 'GateLynk'], ['shared', 'Wspólne']] as const
@@ -77,8 +80,17 @@ function Row({ label, value, pctVal, bold, indent, tone, note }: {
   )
 }
 
+// Zmiana stanu magazynu w konwencji tabeli (koszty ze znakiem minus):
+// cogs = cogs_purchases − inventory_change, więc wiersz pokazuje +inventory_change,
+// żeby „Zakupy” + „Zmiana stanu magazynu” dały „= Koszt sprzedanych towarów”.
+// Magazyn urósł (inventory_change > 0) → część zakupów została na półce → koszt mniejszy.
+function inventoryNote(change: number) {
+  if (Math.abs(change) < 0.005) return 'bez zmian'
+  return change > 0 ? 'magazyn urósł → koszt mniejszy' : 'magazyn zmalał → koszt większy'
+}
+
 // ── Tabela RZiS dla jednego okresu ────────────────────────────────────────────
-function PnlTable({ L }: { L: PnlLines }) {
+function PnlTable({ L, showInventory }: { L: PnlLines; showInventory: boolean }) {
   return (
     <table className="w-full">
       <tbody>
@@ -87,7 +99,11 @@ function PnlTable({ L }: { L: PnlLines }) {
         {L.revenue_ksef > 0 && <Row label="KSeF (B2B)" value={L.revenue_ksef} indent />}
         {L.revenue_module > 0 && <Row label="Moduł faktur (B2C)" value={L.revenue_module} indent />}
         {L.revenue_advances > 0 && <Row label="w tym faktury zaliczkowe" value={L.revenue_advances} indent />}
-        <Row label="Koszt własny sprzedaży (COGS)" value={-L.cogs} />
+        <Row label="Zakupy towarów i materiałów" value={-L.cogs_purchases} indent note="faktury zakupowe w okresie" />
+        {showInventory && (
+          <Row label="Zmiana stanu magazynu" value={L.inventory_change} indent note={inventoryNote(L.inventory_change)} />
+        )}
+        <Row label="= Koszt sprzedanych towarów (COGS)" value={-L.cogs} bold />
         <Row label="Marża brutto" value={L.gross_margin} pctVal={L.gross_margin_pct} bold tone="green" />
         <Row label="Koszty operacyjne (OPEX)" value={-L.opex} />
         {L.opex_sales > 0 && <Row label="Sprzedaż i marketing" value={-L.opex_sales} indent />}
@@ -127,9 +143,38 @@ export default function RentownoscPage() {
   const [assetsOpen, setAssetsOpen] = useState(false)
   const [manualCostOpen, setManualCostOpen] = useState(false)
 
+  // Wybrany miesiąc jako okres YYYY-MM
+  const selectedPeriod = `${year}-${String(monthIdx + 1).padStart(2, '0')}`
+
   // Szczegóły kosztów — zakres z aktywnego widoku (miesiąc albo cały rok)
-  const detailFrom = view === 'month' ? `${year}-${String(monthIdx + 1).padStart(2, '0')}` : `${year}-01`
+  const detailFrom = view === 'month' ? selectedPeriod : `${year}-01`
   const detailTo = view === 'month' ? detailFrom : `${year}-12`
+
+  // Uzgodnienie z księgową dla wybranego miesiąca (404 → brak zestawienia)
+  const [accountantOpen, setAccountantOpen] = useState(false)
+  const [accountantTab, setAccountantTab] = useState<'import' | 'list' | 'compare'>('import')
+  const [reconcile, setReconcile] = useState<AccountantCompareResponse | null>(null)
+  const [reconcileState, setReconcileState] = useState<'loading' | 'ok' | 'missing' | 'error'>('missing')
+  const reconcileSeq = useRef(0)
+
+  const loadReconcile = useCallback(async (period: string) => {
+    const seq = ++reconcileSeq.current
+    setReconcileState('loading')
+    try {
+      const res = await accountantApi.compareOrNull(period)
+      if (seq !== reconcileSeq.current) return // odpowiedź dla nieaktualnego miesiąca — ignoruj
+      setReconcile(res)
+      setReconcileState(res ? 'ok' : 'missing')
+    } catch {
+      if (seq !== reconcileSeq.current) return
+      setReconcile(null)
+      setReconcileState('error')
+    }
+  }, [])
+
+  useEffect(() => { if (canSee && view === 'month') loadReconcile(selectedPeriod) }, [canSee, view, selectedPeriod, loadReconcile])
+
+  const openAccountant = (tab: 'import' | 'list' | 'compare') => { setAccountantTab(tab); setAccountantOpen(true) }
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [details, setDetails] = useState<CostDetailsResponse | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
@@ -171,6 +216,8 @@ export default function RentownoscPage() {
 
   const month = data?.months[monthIdx]
   const trendMax = data ? Math.max(...data.months.map(m => Math.max(m.revenue, 1))) : 1
+  // Wiersz „Zmiana stanu magazynu” tylko gdy magazyn jest w RZiS i w roku była jakakolwiek zmiana
+  const showInventory = !!data && data.inventory_in_pnl && data.months.some(m => Math.abs(m.inventory_change) >= 0.005)
 
   return (
     <div className="p-6 max-w-[1150px] mx-auto" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
@@ -194,6 +241,21 @@ export default function RentownoscPage() {
           <button onClick={() => setAssetsOpen(true)}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-800">
             <Landmark size={15} /> Środki trwałe
+          </button>
+          <button onClick={() => openAccountant('import')}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-800"
+            title="Wgraj zestawienie obrotów i sald od biura rachunkowego i porównaj z naszym RZiS">
+            🧾 Zestawienie księgowej
+          </button>
+          <button onClick={() => navigate('/kondycja')}
+            className="px-3 py-2.5 rounded-lg text-sm font-semibold text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30"
+            title="Prosty obraz: czy firma zarabia, ile ma gotówki, co sprawdzić">
+            📊 Kondycja firmy
+          </button>
+          <button onClick={() => navigate('/koszty-spoza-ksef')}
+            className="px-3 py-2.5 rounded-lg text-sm font-semibold text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30"
+            title="Faktury zagraniczne, paragony, subskrypcje — dokumenty spoza KSeF i reguły bankowe">
+            📥 Koszty spoza KSeF
           </button>
           {user?.role === 'admin' && (
             <button onClick={() => navigate('/finanse')}
@@ -221,6 +283,7 @@ export default function RentownoscPage() {
       {data?.revenue_scope === 'company_wide' && (
         <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-300">
           ⚠ Filtr jednostki dotyczy <b>tylko kosztów</b> — przychody (i przez to marże/EBITDA) liczone są dla całej spółki, bo rejestr sprzedaży nie ma podziału na jednostki.
+          Zmiana stanu magazynu również liczona jest tylko dla całej spółki — w tym widoku koszt sprzedanych towarów = zakupy jednostki.
         </div>
       )}
 
@@ -307,8 +370,11 @@ export default function RentownoscPage() {
                   RZiS — {MONTH_LABELS[monthIdx]} {year}
                   {month.provisional && <span className="ml-2 text-xs font-semibold text-amber-600 dark:text-amber-400">przychody wstępne — wgraj rejestr Firmao</span>}
                 </div>
-                <PnlTable L={month} />
+                <PnlTable L={month} showInventory={showInventory} />
               </div>
+
+              {/* Uzgodnienie z księgową — pasek pod tabelą */}
+              <ReconcileBar state={reconcileState} compare={reconcile} onOpen={openAccountant} />
             </>
           )}
         </>
@@ -326,7 +392,9 @@ export default function RentownoscPage() {
               <tbody>
                 {([
                   ['Przychody netto', (l: PnlLines) => l.revenue, true],
-                  ['COGS', (l: PnlLines) => -l.cogs, false],
+                  ['Zakupy towarów i materiałów', (l: PnlLines) => -l.cogs_purchases, false],
+                  ...(showInventory ? [['Zmiana stanu magazynu', (l: PnlLines) => l.inventory_change, false] as [string, (l: PnlLines) => number, boolean]] : []),
+                  ['= Koszt sprzedanych towarów (COGS)', (l: PnlLines) => -l.cogs, true],
                   ['Marża brutto', (l: PnlLines) => l.gross_margin, true],
                   ['OPEX', (l: PnlLines) => -l.opex, false],
                   ['EBITDA', (l: PnlLines) => l.ebitda, true],
@@ -386,7 +454,12 @@ export default function RentownoscPage() {
                 </tr>
               </thead>
               <tbody className="tabular-nums">
-                {([['Przychody', (m: PnlLines) => m.revenue], ['EBITDA', (m: PnlLines) => m.ebitda], ['EBITDA %', (m: PnlLines) => m.ebitda_pct]] as [string, (m: PnlLines) => number][]).map(([label, get]) => (
+                {([
+                  ['Przychody', (m: PnlLines) => m.revenue],
+                  ...(showInventory ? [['Zmiana magazynu', (m: PnlLines) => m.inventory_change] as [string, (m: PnlLines) => number]] : []),
+                  ['EBITDA', (m: PnlLines) => m.ebitda],
+                  ['EBITDA %', (m: PnlLines) => m.ebitda_pct],
+                ] as [string, (m: PnlLines) => number][]).map(([label, get]) => (
                   <tr key={label} className="border-b border-gray-50 dark:border-gray-800/50">
                     <td className="py-1.5 pr-2 font-semibold text-gray-500 dark:text-gray-400 whitespace-nowrap">{label}</td>
                     {data.months.map(m => {
@@ -431,6 +504,54 @@ export default function RentownoscPage() {
 
       {assetsOpen && <FixedAssetsModal onClose={() => { setAssetsOpen(false); load() }} />}
       {manualCostOpen && <ManualCostModal onClose={(saved) => { setManualCostOpen(false); if (saved) { load(); if (detailsOpen) { financeApi.costDetails(detailFrom, detailTo).then(setDetails).catch(() => {}) } } }} />}
+      {accountantOpen && (
+        <AccountantStatementModal period={selectedPeriod} initialTab={accountantTab}
+          onClose={(changed) => { setAccountantOpen(false); if (changed) loadReconcile(selectedPeriod) }} />
+      )}
+    </div>
+  )
+}
+
+// ── Pasek „Uzgodnienie z księgową” pod tabelą RZiS ────────────────────────────
+function ReconcileBar({ state, compare, onOpen }: {
+  state: 'loading' | 'ok' | 'missing' | 'error'
+  compare: AccountantCompareResponse | null
+  onOpen: (tab: 'import' | 'list' | 'compare') => void
+}) {
+  const base = 'mt-3 flex items-center gap-3 flex-wrap px-4 py-3 rounded-xl border text-sm'
+  if (state === 'loading') {
+    return <div className={`${base} bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 text-gray-400`}>Uzgodnienie z księgową: sprawdzam…</div>
+  }
+  if (state === 'error') {
+    return (
+      <div className={`${base} bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 text-gray-400`}>
+        Uzgodnienie z księgową: nie udało się sprawdzić.
+        <button onClick={() => onOpen('compare')} className="ml-auto text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline">Otwórz →</button>
+      </div>
+    )
+  }
+  if (state === 'missing' || !compare) {
+    return (
+      <div className={`${base} bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 text-gray-500 dark:text-gray-400`}>
+        <span>Uzgodnienie z księgową: <b className="text-gray-700 dark:text-gray-200">— brak zestawienia</b></span>
+        <span className="text-xs text-gray-400">Wgraj zestawienie obrotów i sald z biura, a system porówna je z tym RZiS.</span>
+        <button onClick={() => onOpen('import')} className="ml-auto text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline">Wgraj zestawienie →</button>
+      </div>
+    )
+  }
+  const diff = Math.abs(compare.ours.result - compare.theirs.result)
+  const ok = compare.verdict === 'ok'
+  return (
+    <div className={`${base} ${ok
+      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300'
+      : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300'}`}>
+      <span>
+        Uzgodnienie z księgową: <b>{ok ? '✅ zgodne' : `⚠️ różnica ${fmt0(diff)} zł`}</b>
+      </span>
+      <span className="text-xs opacity-80">
+        {ok ? `wynik różni się o ${fmt0(diff)} zł — w granicach błędu (próg ${fmt0(compare.threshold)} zł)` : `przekracza próg ${fmt0(compare.threshold)} zł — sprawdź podpowiedzi`}
+      </span>
+      <button onClick={() => onOpen('compare')} className="ml-auto text-xs font-semibold hover:underline">Szczegóły →</button>
     </div>
   )
 }
@@ -454,6 +575,12 @@ function CostDetailsView({ details }: { details: CostDetailsResponse }) {
           <span className="text-xs px-2 py-1 rounded-md bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-semibold"
             title="Przelewy MT940 za faktury, które są już w KSeF — policzone raz, z faktury">
             ✓ wyłapano {details.skipped_mt940_duplicates.count} duplikatów MT940 ({money(details.skipped_mt940_duplicates.total)})
+          </span>
+        )}
+        {(details.foreign_currency_costs?.count ?? 0) > 0 && (
+          <span className="text-xs px-2 py-1 rounded-md bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 font-semibold"
+            title={(details.foreign_currency_costs?.items ?? []).map(i => `${i.date} · ${i.description} · ${i.amount} ${i.currency}`).join('\n')}>
+            ⚠ koszty w walucie obcej bez kursu: {details.foreign_currency_costs!.count} — poza RZiS, przelicz ręcznie na PLN
           </span>
         )}
       </div>

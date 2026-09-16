@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid'
 import * as XLSX from 'xlsx'
 import { requirePayments } from './payables'
 import db, { prisma } from '../db'
+import { inventoryChangeByMonth } from '../services/inventory-valuation'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -326,11 +327,11 @@ router.delete('/fixed-assets/:id', async (req: Request, res: Response) => {
 })
 
 // ── Silnik RZiS ───────────────────────────────────────────────────────────────
-function monthsOf(year: number): string[] {
+export function monthsOf(year: number): string[] {
   return Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`)
 }
 
-function addMonths(period: string, n: number): string {
+export function addMonths(period: string, n: number): string {
   const [y, m] = period.split('-').map(Number)
   const d = new Date(Date.UTC(y, m - 1 + n, 1))
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
@@ -345,9 +346,10 @@ export function depreciationForPeriod(assets: Array<{ value_net: number; depreci
   return Math.round(sum * 100) / 100
 }
 
-const EMPTY_LINES = () => ({
+export const EMPTY_LINES = () => ({
   revenue: 0, revenue_firmao: 0, revenue_ksef: 0, revenue_module: 0, revenue_advances: 0,
-  cogs: 0, gross_margin: 0, gross_margin_pct: 0,
+  // cogs = cogs_purchases − inventory_change (zmiana stanu zapasów: dodatnia = magazyn urósł)
+  cogs: 0, cogs_purchases: 0, inventory_change: 0, gross_margin: 0, gross_margin_pct: 0,
   opex: 0, opex_sales: 0, opex_ga: 0, opex_operations: 0, opex_leasing: 0,
   ebitda: 0, ebitda_pct: 0,
   depreciation: 0, ebit: 0,
@@ -355,6 +357,25 @@ const EMPTY_LINES = () => ({
   provisional: true, // brak importu Firmao → przychód wstępny (KSeF+moduł)
 })
 export type PnlLines = ReturnType<typeof EMPTY_LINES>
+
+// Wiersze z MT940 wchodzą do RZiS tylko z kategorii, które NIGDY nie przychodzą fakturą w KSeF
+// (pensje, ZUS, podatki, opłaty bankowe) — czynsz/paliwo/leasing płacone przelewem mają fakturę
+// w KSeF i liczyłyby się podwójnie. pnl_mode nadpisuje tę regułę: include (reguła bankowa /
+// dokument spoza KSeF) → zawsze; exclude (duplikat) → nigdy. Wpisy ręczne i z dokumentów → zawsze.
+// Koszt w walucie obcej (kwota NIE jest w PLN — np. wyciąg z rachunku EUR bez kursu NBP)
+// nigdy nie wchodzi do RZiS: sumowanie EUR jako PLN zaniżałoby koszt ~4×.
+export const MT940_SAFE_SUBCATEGORIES = new Set(['salary_gross', 'salary_admin', 'zus_employer', 'tax_income', 'tax_vat', 'bank_fee', 'interest', 'fx'])
+export function isForeignCurrencyCost(c: { currency?: string | null }): boolean {
+  const cur = String(c.currency ?? '').trim().toUpperCase()
+  return cur !== '' && cur !== 'PLN'
+}
+export function includeManualCostInPnl(c: { source?: string | null; subcategory?: string | null; pnl_mode?: string | null; currency?: string | null }): boolean {
+  if (isForeignCurrencyCost(c)) return false
+  if (c.pnl_mode === 'exclude') return false
+  if (c.pnl_mode === 'include') return true
+  if (c.source === 'mt940' && !MT940_SAFE_SUBCATEGORIES.has(String(c.subcategory ?? ''))) return false
+  return true
+}
 
 // Klasyfikacja pozycji kosztowej do linii RZiS
 export function costLine(cost_category: string, subcategory: string):
@@ -372,8 +393,9 @@ export function costLine(cost_category: string, subcategory: string):
   return 'opex_ga' // nieznane kategorie zachowawczo do G&A
 }
 
-function finalizeLines(L: PnlLines): PnlLines {
+export function finalizeLines(L: PnlLines): PnlLines {
   const r2 = (x: number) => Math.round(x * 100) / 100
+  L.cogs = r2(L.cogs_purchases - L.inventory_change)
   L.opex = r2(L.opex_sales + L.opex_ga + L.opex_operations + L.opex_leasing)
   L.gross_margin = r2(L.revenue - L.cogs)
   L.gross_margin_pct = L.revenue > 0 ? r2(L.gross_margin / L.revenue * 100) : 0
@@ -381,13 +403,13 @@ function finalizeLines(L: PnlLines): PnlLines {
   L.ebitda_pct = L.revenue > 0 ? r2(L.ebitda / L.revenue * 100) : 0
   L.ebit = r2(L.ebitda - L.depreciation)
   L.net_result = r2(L.ebit - L.financial_costs - L.cit)
-  for (const k of ['revenue', 'revenue_firmao', 'revenue_ksef', 'revenue_module', 'revenue_advances', 'cogs', 'opex_sales', 'opex_ga', 'opex_operations', 'opex_leasing', 'depreciation', 'financial_costs', 'cit'] as const) {
+  for (const k of ['revenue', 'revenue_firmao', 'revenue_ksef', 'revenue_module', 'revenue_advances', 'cogs', 'cogs_purchases', 'inventory_change', 'opex_sales', 'opex_ga', 'opex_operations', 'opex_leasing', 'depreciation', 'financial_costs', 'cit'] as const) {
     L[k] = r2(L[k])
   }
   return L
 }
 
-function sumLines(parts: PnlLines[]): PnlLines {
+export function sumLines(parts: PnlLines[]): PnlLines {
   const L = EMPTY_LINES()
   for (const p of parts) {
     for (const k of Object.keys(L) as (keyof PnlLines)[]) {
@@ -461,13 +483,15 @@ router.get('/cost-details', async (req: Request, res: Response) => {
       taxes: mkGroup(),         // CIT (VAT poza RZiS — neutralny)
       import: mkGroup(),        // import towaru: cło, fracht, agencja, towar spoza UE
       ksef_invoices: mkGroup(), // pozostałe faktury kosztowe z KSeF
+      non_ksef: mkGroup(),      // koszty spoza KSeF: dokumenty ze skrzynki + przelewy z reguł bankowych
       other_manual: mkGroup(),  // inne koszty ręczne
     }
     const skippedDuplicates = { count: 0, total: 0 } // MT940 pominięte (kategorie fakturowane → są w KSeF)
+    // Koszty w walucie obcej bez przeliczenia na PLN — poza RZiS, do ręcznego przeliczenia
+    const foreignCurrency = { count: 0, items: [] as Array<Item & { currency: string }> }
     const projectMap = new Map<string, { project_id: string | null; name: string; total: number; count: number }>()
 
     const IMPORT_SUBS = new Set(['hardware_noneu', 'hardware_eu', 'import_duty', 'import_freight', 'import_agency', 'import_vat'])
-    const MT940_SAFE = new Set(['salary_gross', 'salary_admin', 'zus_employer', 'tax_income', 'tax_vat', 'bank_fee', 'interest', 'fx'])
 
     // ── Alokacje KSeF (brutto → netto proporcją faktury) ──
     for (const a of allocations as any[]) {
@@ -498,7 +522,16 @@ router.get('/cost-details', async (req: Request, res: Response) => {
     for (const c of manualCosts as any[]) {
       const m = (c.date || '').slice(0, 7)
       if (!inRange(m)) continue
-      if (c.source === 'mt940' && !MT940_SAFE.has(c.subcategory)) {
+      if (isForeignCurrencyCost(c)) {
+        // kwota w EUR/USD… nie jest w PLN — nie sumujemy jej z resztą ani nie liczymy jako duplikat
+        foreignCurrency.count += 1
+        if (foreignCurrency.items.length < 200) foreignCurrency.items.push({
+          date: c.date, description: c.description, amount: r2(c.amount), currency: String(c.currency),
+          source: c.source, category: `${c.cost_category}/${c.subcategory}`,
+        })
+        continue
+      }
+      if (!includeManualCostInPnl(c)) {
         skippedDuplicates.count += 1; skippedDuplicates.total += c.amount
         continue
       }
@@ -508,10 +541,12 @@ router.get('/cost-details', async (req: Request, res: Response) => {
         date: c.date, description: c.description, amount: r2(c.amount),
         source: c.source, category: `${c.cost_category}/${c.subcategory}`,
       }
+      const fromNonKsef = c.source === 'document' || (c.source === 'mt940' && c.pnl_mode === 'include')
       const g = (c.subcategory === 'salary_gross' || c.subcategory === 'salary_admin') ? groups.salaries
         : c.subcategory === 'zus_employer' ? groups.zus
         : c.subcategory === 'tax_income' ? groups.taxes
         : IMPORT_SUBS.has(c.subcategory) ? groups.import
+        : fromNonKsef ? groups.non_ksef
         : groups.other_manual
       g.total += item.amount; g.items.push(item)
     }
@@ -526,18 +561,31 @@ router.get('/cost-details', async (req: Request, res: Response) => {
     const projects = [...projectMap.values()].map(p => ({ ...p, total: r2(p.total) })).sort((a, b) => b.total - a.total)
     const total = r2(Object.values(groups).reduce((s, g) => s + g.total, 0))
 
-    res.json({ from, to, groups, projects, skipped_mt940_duplicates: skippedDuplicates, total })
+    foreignCurrency.items.sort((a, b) => b.date.localeCompare(a.date))
+
+    res.json({ from, to, groups, projects, skipped_mt940_duplicates: skippedDuplicates, foreign_currency_costs: foreignCurrency, total })
   } catch (e) {
     console.error('[finance/cost-details]', e)
     res.status(500).json({ error: 'Błąd serwera' })
   }
 })
 
-// ── GET /api/finance/pnl?year=YYYY&business_unit=all|shc|gatelynk|shared ──────
-router.get('/pnl', async (req: Request, res: Response) => {
-  try {
-    const year = parseInt(String(req.query.year)) || new Date().getFullYear()
-    const bu = String(req.query.business_unit ?? 'all')
+// ── Silnik: pełny RZiS roku (miesiące, kwartały, YTD, jakość danych) ─────────
+// Używany przez GET /pnl, „Kondycję firmy", raport e-mail i uzgodnienie z księgową.
+export type PnlYear = {
+  year: number
+  business_unit: string
+  revenue_scope: 'business_unit' | 'company_wide'
+  months: Array<PnlLines & { period: string }>
+  quarters: Array<PnlLines & { quarter: string }>
+  ytd: PnlLines & { label: string }
+  firmao_months: string[]
+  inventory_in_pnl: boolean
+  quality: { unallocated_ksef_invoices: number; suspect_sales_records: number; fixed_assets_count: number }
+}
+
+export async function computePnlYear(year: number, bu = 'all'): Promise<PnlYear> {
+  {
     const months = monthsOf(year)
     const yFrom = `${year}-01-01`, yTo = `${year}-12-31`
 
@@ -606,27 +654,36 @@ router.get('/pnl', async (req: Request, res: Response) => {
       if (line === 'excluded') continue
       if (line === 'cit') l.cit += amountNet
       else if (line === 'financial') l.financial_costs += amountNet
+      else if (line === 'cogs') l.cogs_purchases += amountNet
       else l[line] += amountNet
     }
 
-    // ── Koszty: MT940/ręczne ──
-    // Wiersze z MT940 tylko z kategorii, które NIGDY nie przychodzą fakturą w KSeF
-    // (pensje, ZUS, podatki, opłaty bankowe) — czynsz/paliwo/leasing płacone przelewem mają
-    // fakturę w KSeF i liczyłyby się podwójnie. Wpisy ręczne (source=manual) wchodzą w całości.
-    const MT940_SAFE_SUBCATEGORIES = new Set(['salary_gross', 'salary_admin', 'zus_employer', 'tax_income', 'tax_vat', 'bank_fee', 'interest', 'fx'])
+    // ── Koszty: MT940/ręczne/dokumenty (reguła włączania: includeManualCostInPnl) ──
     for (const c of manualCosts as any[]) {
-      if (c.source === 'mt940' && !MT940_SAFE_SUBCATEGORIES.has(c.subcategory)) continue
+      if (!includeManualCostInPnl(c)) continue
       const m = (c.date || '').slice(0, 7)
       const l = L(m); if (!l) continue
       const line = costLine(c.cost_category, c.subcategory)
       if (line === 'excluded') continue
       if (line === 'cit') l.cit += c.amount
       else if (line === 'financial') l.financial_costs += c.amount
+      else if (line === 'cogs') l.cogs_purchases += c.amount
       else l[line] += c.amount
     }
 
     // ── Amortyzacja ──
     for (const m of months) L(m)!.depreciation = depreciationForPeriod(assets as any[], m)
+
+    // ── Zmiana stanu magazynu (koszt sprzedanych towarów zamiast kosztu zakupów) ──
+    // Magazyn nie ma podziału na jednostki (WarehouseItem/StockMovement bez business_unit),
+    // więc zmiana stanu wchodzi do RZiS TYLKO w widoku całej spółki — w widoku jednostki
+    // odejmowałaby zapasy całej firmy od zakupów jednej jednostki (ujemny COGS, potrójne liczenie).
+    const settings = await prisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null)
+    const inventoryInPnl = (settings ? settings.inventory_in_pnl !== false : true) && bu === 'all'
+    if (inventoryInPnl) {
+      const inv = await inventoryChangeByMonth(months)
+      for (const m of months) L(m)!.inventory_change = inv.get(m) ?? 0
+    }
 
     for (const m of months) finalizeLines(L(m)!)
 
@@ -646,7 +703,7 @@ router.get('/pnl', async (req: Request, res: Response) => {
     })
     const suspects = (salesRecords as any[]).filter(r => r.dedup_status === 'suspect').length
 
-    res.json({
+    return {
       year,
       business_unit: bu,
       // Rekordy sprzedaży (Firmao/KSeF/moduł) nie mają przypisania do jednostki —
@@ -656,12 +713,22 @@ router.get('/pnl', async (req: Request, res: Response) => {
       quarters,
       ytd: { label: 'YTD', ...ytd },
       firmao_months: [...firmaoMonths].sort(),
+      inventory_in_pnl: inventoryInPnl,
       quality: {
         unallocated_ksef_invoices: unallocatedInvoices,
         suspect_sales_records: suspects,
         fixed_assets_count: (assets as any[]).length,
       },
-    })
+    }
+  }
+}
+
+// ── GET /api/finance/pnl?year=YYYY&business_unit=all|shc|gatelynk|shared ──────
+router.get('/pnl', async (req: Request, res: Response) => {
+  try {
+    const year = parseInt(String(req.query.year)) || new Date().getFullYear()
+    const bu = String(req.query.business_unit ?? 'all')
+    res.json(await computePnlYear(year, bu))
   } catch (e) {
     console.error('[finance/pnl]', e)
     res.status(500).json({ error: 'Błąd serwera' })

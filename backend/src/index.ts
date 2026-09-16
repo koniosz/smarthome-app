@@ -14,6 +14,15 @@ import { updateLabor, deleteLabor } from './routes/labor'
 import paymentsRouter, { updatePayment, deletePayment } from './routes/payments'
 import payablesRouter, { requirePayments } from './routes/payables'
 import financeRouter from './routes/finance'
+import financeHealthRouter from './routes/finance-health'
+import bankRulesRouter from './routes/bank-rules'
+import cashflowRouter from './routes/cashflow'
+import inventoryValuationRouter from './routes/inventory-valuation'
+import accountantStatementRouter from './routes/accountant-statement'
+import costDocumentsRouter from './routes/cost-documents'
+import settingsImapRouter from './routes/settings-imap'
+import { startReportScheduler } from './services/report-scheduler'
+import { startImapPoller } from './services/cost-inbox-imap'
 import personalTodosRouter from './routes/personal-todos'
 import searchRouter from './routes/search'
 import projectWarehouseRouter from './routes/project-warehouse'
@@ -105,7 +114,14 @@ app.use('/api/hr/calamari', hrCalamariRouter) // HR: import historii z Calamari 
 app.use('/api/hr', hrRouter)                   // HR: urlopy + ewidencja czasu pracy
 app.use('/api/sales-invoices', salesInvoicesRouter) // faktury sprzedażowe (beta, admin)
 app.use('/api/payables', payablesRouter)       // panel Płatności (dostęp: admin lub can_view_payments)
+// Automatyzacja rentowności — routery szczegółowe PRZED /api/finance (własne requirePayments):
+app.use('/api/finance/bank-rules', bankRulesRouter)          // reguły bankowe MT940 + nierozpoznane przelewy
+app.use('/api/finance/cashflow', cashflowRouter)             // prognoza gotówki 7–90 dni
+app.use('/api/finance/inventory', inventoryValuationRouter)  // wycena magazynu + zmiana stanu zapasów
+app.use('/api/finance/accountant', accountantStatementRouter) // zestawienie obrotów i sald od księgowej + uzgodnienie
 app.use('/api/finance', financeRouter)         // Finanse 2.0: RZiS/EBITDA + import Firmao (admin lub księgowy)
+app.use('/api/finance', financeHealthRouter)   // Kondycja firmy: /health, raport e-mail, ustawienia raportu
+app.use('/api/cost-documents', costDocumentsRouter) // skrzynka kosztów spoza KSeF (POST i /mine — każdy; reszta admin/księgowy)
 app.use('/api/todos', personalTodosRouter)     // prywatne listy to-do (właściciel; admin podgląd)
 app.use('/api/search', searchRouter)           // wyszukiwarka globalna ⌘K (wyniki wg uprawnień)
 app.use('/api/projects/:projectId/costs', costsRouter)
@@ -155,6 +171,7 @@ app.use('/api/bank', requirePayments, bankRouter) // dane bankowe: admin lub ksi
 app.patch('/api/ksef/invoices/:id/payment', requirePayments, updateKsefPayment)
 
 // App settings (admin only)
+app.use('/api/settings/imap', settingsImapRouter) // skrzynka IMAP na faktury spoza KSeF (admin)
 app.use('/api/settings', settingsRouter)
 
 // Project documents & contract generator
@@ -201,6 +218,10 @@ const server = app.listen(Number(PORT), '0.0.0.0', () => {
   console.log()
 })
 
+// SCHEDULERS=off (lokalny smoke test) — wyłącza wszystkie harmonogramy (przypomnienia, KSeF, raporty, IMAP)
+const SCHEDULERS_ON = process.env.SCHEDULERS !== 'off'
+if (!SCHEDULERS_ON) console.log('[Harmonogramy] WYŁĄCZONE (SCHEDULERS=off)')
+
 // ── Dzienna wysyłka przypomnień o płatnościach ────────────────────────────────
 const _prismaIndex = new PrismaClient()
 async function sendDailyPaymentReminder() {
@@ -222,23 +243,23 @@ async function sendDailyPaymentReminder() {
   }
 }
 // Run once after 3 minutes from startup, then every 24 hours
-setTimeout(async () => {
+if (SCHEDULERS_ON) setTimeout(async () => {
   await sendDailyPaymentReminder()
   setInterval(sendDailyPaymentReminder, 24 * 60 * 60 * 1000)
 }, 3 * 60 * 1000)
-console.log('[Płatności] Dzienna wysyłka przypomnień włączona')
+if (SCHEDULERS_ON) console.log('[Płatności] Dzienna wysyłka przypomnień włączona')
 
 // ── HR: auto-wypełnianie ewidencji z grafiku (pracownicy z auto_time_enabled) ──
-setTimeout(async () => {
+if (SCHEDULERS_ON) setTimeout(async () => {
   await fillScheduleEntries(7)
   setInterval(() => fillScheduleEntries(7), 24 * 60 * 60 * 1000)
 }, 4 * 60 * 1000)
-console.log('[HR grafik] Dzienne auto-uzupełnianie ewidencji włączone')
+if (SCHEDULERS_ON) console.log('[HR grafik] Dzienne auto-uzupełnianie ewidencji włączone')
 
 // ── KSeF — automatyczna synchronizacja 3x dziennie (co 8 godzin) ────────────
 // KSeF API limit: 20 requestów/godzinę. Pełna sync robi ~2 req (krótki zakres)
 // lub ~14+ req (historyczna). 3x/dzień = bezpieczny margines.
-if (process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
+if (SCHEDULERS_ON && process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
   const KSEF_INTERVAL = 8 * 60 * 60 * 1000 // 8 godzin (3x dziennie)
   // Pierwsze uruchomienie po 3 minutach od startu
   setTimeout(async () => {
@@ -313,11 +334,18 @@ async function sendEmployeeExpiryReminders() {
 }
 
 // Uruchom raz po 5 minutach od startu, potem co 24 godziny (ok. 06:00 każdego dnia)
-setTimeout(async () => {
+if (SCHEDULERS_ON) setTimeout(async () => {
   await sendEmployeeExpiryReminders()
   setInterval(sendEmployeeExpiryReminders, 24 * 60 * 60 * 1000)
 }, 5 * 60 * 1000)
-console.log('[HR] Codzienny raport wygasających badań włączony (biuro@smarthomecenter.pl)')
+if (SCHEDULERS_ON) console.log('[HR] Codzienny raport wygasających badań włączony (biuro@smarthomecenter.pl)')
+
+// ── Raport „Kondycja firmy" (miesięczny/kwartalny e-mail) + skrzynka IMAP na koszty spoza KSeF ──
+if (SCHEDULERS_ON) {
+  startReportScheduler()   // pierwszy przebieg 6 min po starcie, potem co 60 min (wysyłka wg dnia z ustawień)
+  startImapPoller()        // 5 min po starcie, potem co 15 min — tylko gdy ImapSettings.enabled
+  console.log('[Kondycja] Harmonogram raportów i poller IMAP włączone')
+}
 
 // Zwiększ timeout dla długich zapytań AI (rzuty, cenniki)
 // Render free ma 30s timeout w proxy — to nie obejdzie limitu Render,

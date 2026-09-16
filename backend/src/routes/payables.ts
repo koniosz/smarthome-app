@@ -10,7 +10,8 @@
 import { Router, Request, Response, NextFunction } from 'express'
 import multer from 'multer'
 import { v4 as uuidv4 } from 'uuid'
-import { parseMT940 } from '../utils/mt940Parser'
+import { parseMT940Statements } from '../utils/mt940Parser'
+import { saveBankBalances, upsertMt940Costs } from '../services/mt940-costs'
 import db, { prisma } from '../db'
 
 const router = Router()
@@ -268,7 +269,7 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
     let content = req.file.buffer.toString('utf-8')
     if (content.includes('�')) content = req.file.buffer.toString('latin1')
 
-    const parsed = parseMT940(content)
+    const { transactions: parsed, balances } = parseMT940Statements(content)
     if (!parsed.length) { res.status(400).json({ error: 'Nie znaleziono transakcji w pliku. Sprawdź, czy to poprawny wyciąg MT940.' }); return }
 
     // Deduplikacja względem już zaimportowanych (data + kwota + referencja + opis).
@@ -343,7 +344,25 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
       imported++
     }
 
-    res.json({ imported, duplicates, auto_matched: autoMatched, to_review: toReview, credits_skipped: credits, matched: matchedDetails })
+    // ── Salda wyciągu (BankBalance) + koszty do RZiS (ManualCost source='mt940') — wspólny serwis ──
+    // Transakcje bankowe są już zapisane; błąd tego etapu nie unieważnia importu (ponowny upload
+    // zdeduplikuje), tylko trafia do odpowiedzi jako costs_error.
+    let costs_created = 0, costs_skipped = 0, rules_applied = 0, balances_saved = 0
+    let costs_error: string | undefined
+    try {
+      balances_saved = await saveBankBalances(balances)
+      const c = await upsertMt940Costs(parsed, { createdBy: (req as any).user?.email ?? '' })
+      costs_created = c.created; costs_skipped = c.skipped_existing; rules_applied = c.rules_applied
+    } catch (ce: any) {
+      console.error('[payables/import-mt940] koszty/salda:', ce)
+      costs_error = ce?.message ?? 'Błąd zapisu kosztów z wyciągu'
+    }
+
+    res.json({
+      imported, duplicates, auto_matched: autoMatched, to_review: toReview, credits_skipped: credits, matched: matchedDetails,
+      costs_created, costs_skipped, rules_applied, balances_saved,
+      ...(costs_error ? { costs_error } : {}),
+    })
   } catch (e: any) {
     console.error('[payables/import-mt940]', e)
     res.status(500).json({ error: e?.message ?? 'Błąd importu' })

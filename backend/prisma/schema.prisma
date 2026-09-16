@@ -779,6 +779,13 @@ model CompanySettings {
   id             String @id @default("default")
   invoice_logo   String @default("")   // data URL (PNG/JPG/SVG, max ~500 KB) — pusty = bez logo
   invoice_footer String @default("")   // opcjonalna stopka na fakturze
+  company_name   String @default("")   // nazwa spółki w raportach
+  // ── Raport „Kondycja firmy" (miesięczny/kwartalny e-mail) ──
+  reports_enabled Boolean @default(false)  // włącz świadomie w „Ustawieniach raportu" po sprawdzeniu liczb
+  report_day      Int     @default(10)   // dzień miesiąca wysyłki raportu za poprzedni miesiąc/kwartał
+  report_emails   String  @default("")   // dodatkowi odbiorcy (po przecinku) poza adminami i księgowym
+  cit_rate        Float   @default(9)    // % — 9 (mały podatnik) lub 19; do szacunku CIT
+  inventory_in_pnl Boolean @default(true) // uwzględniaj zmianę stanu magazynu w RZiS
   updated_at     String @default("")
 
   @@map("company_settings")
@@ -850,9 +857,139 @@ model ManualCost {
   period        String?                     // YYYY-MM (dla pensji/ZUS)
   notes         String  @default("")
   reference     String  @default("")        // referencja bankowa / numer dok.
-  source        String  @default("manual")  // manual | mt940
+  source        String  @default("manual")  // manual | mt940 | document (skrzynka kosztów)
+  // auto = reguła bezpiecznej listy MT940 (pensje/ZUS/podatki), include = licz zawsze (np. dostawca
+  // zagraniczny bez KSeF, z reguły bankowej lub dokumentu), exclude = nigdy (duplikat faktury KSeF)
+  pnl_mode      String  @default("auto")
+  bank_rule_id  String?                     // reguła bankowa, która skategoryzowała przelew
+  document_id   String?                     // CostDocument, z którego powstał koszt
   created_at    String
   created_by    String  @default("")
 
   @@map("manual_costs")
+}
+
+// ── Saldo rachunku z wyciągu MT940 (:60F/:62F) — gotówka na koncie ─────────────
+model BankBalance {
+  id           String @id
+  account      String                    // :25: numer rachunku (znormalizowany, bez spacji)
+  currency     String @default("PLN")
+  date         String                    // YYYY-MM-DD — data salda końcowego (:62F)
+  opening      Float  @default(0)        // saldo otwarcia (:60F/:60M)
+  closing      Float  @default(0)        // saldo zamknięcia (:62F/:62M)
+  statement_no String @default("")       // :28C:
+  created_at   String
+
+  @@unique([account, date, statement_no])
+  @@map("bank_balances")
+}
+
+// ── Reguła bankowa: przelew/karta spoza KSeF → kategoria kosztu (Google, Apple, AliExpress…) ──
+model BankRule {
+  id            String @id
+  name          String @default("")       // czytelna nazwa, np. "Google Workspace"
+  pattern       String                    // fragment (case-insensitive) kontrahenta/opisu
+  match_field   String @default("any")    // counterparty | description | any
+  cost_category String @default("ga")
+  subcategory   String @default("software")
+  business_unit String @default("shared")
+  pnl_mode      String @default("include") // include | exclude
+  hits          Int    @default(0)
+  created_by    String @default("")
+  created_at    String
+  updated_at    String @default("")
+
+  @@map("bank_rules")
+}
+
+// ── Skrzynka kosztów: dokument spoza KSeF (PDF/zdjęcie) odczytany przez AI, do zatwierdzenia ──
+model CostDocument {
+  id             String  @id
+  source         String  @default("upload")   // upload | email | mobile
+  status         String  @default("pending")  // pending | approved | rejected | processing | error
+  file_name      String  @default("")
+  mime_type      String  @default("")
+  file_data      String  @default("")         // base64 (bez prefiksu data:), max 10 MB
+  extracted      Json?                        // surowy wynik AI
+  extract_error  String  @default("")
+  seller_name    String  @default("")
+  seller_nip     String  @default("")
+  seller_country String  @default("")
+  doc_number     String  @default("")
+  doc_date       String  @default("")         // YYYY-MM-DD
+  currency       String  @default("PLN")
+  net            Float   @default(0)          // w walucie dokumentu
+  vat            Float   @default(0)
+  gross          Float   @default(0)
+  fx_rate        Float   @default(1)          // kurs NBP (tabela A, dzień roboczy poprzedzający doc_date)
+  fx_date        String  @default("")
+  net_pln        Float   @default(0)
+  gross_pln      Float   @default(0)
+  cost_category  String  @default("cogs")
+  subcategory    String  @default("hardware_noneu")
+  business_unit  String  @default("shc")
+  is_receipt     Boolean @default(false)
+  confidence     Float   @default(0)
+  duplicate_of   String  @default("")         // 'ksef:<id>' | 'mt940:<manual_cost_id>' | 'document:<id>' | ''
+  duplicate_note String  @default("")
+  manual_cost_id String?                      // po zatwierdzeniu → ManualCost (source=document)
+  email_from     String  @default("")
+  email_subject  String  @default("")
+  email_uid      String  @default("")         // IMAP: <host>|<folder>|<uid> — idempotencja
+  notes          String  @default("")
+  created_by     String  @default("")
+  created_at     String
+  reviewed_by    String  @default("")
+  reviewed_at    String  @default("")
+
+  @@map("cost_documents")
+}
+
+// ── Skrzynka e-mail (IMAP) na faktury spoza KSeF ─────────────────────────────
+model ImapSettings {
+  id              String  @id @default("default")
+  enabled         Boolean @default(false)
+  host            String  @default("")
+  port            Int     @default(993)
+  secure          Boolean @default(true)
+  user            String  @default("")
+  pass            String  @default("")
+  folder          String  @default("INBOX")
+  last_uid        Int     @default(0)
+  last_checked_at String  @default("")
+  last_error      String  @default("")
+  updated_at      String  @default("")
+
+  @@map("imap_settings")
+}
+
+// ── Zestawienie obrotów i sald od biura rachunkowego (uzgodnienie z księgową) ──
+model AccountantStatement {
+  id         String @id
+  period     String @unique               // YYYY-MM
+  mode       String @default("monthly")   // monthly (obroty miesiąca) | ytd (narastająco od stycznia)
+  file_name  String @default("")
+  rows       Json                         // [{account, name, debit, credit}]
+  lines      Json                         // zmapowane linie RZiS księgowej: {revenue, depreciation, materials, services, taxes_fees, salaries, social, other, financial_costs, cit, costs_total, result}
+  revenue    Float  @default(0)
+  costs      Float  @default(0)
+  result     Float  @default(0)
+  notes      String @default("")
+  created_by String @default("")
+  created_at String
+
+  @@map("accountant_statements")
+}
+
+// ── Log wysyłek raportu „Kondycja firmy" (idempotencja harmonogramu) ───────────
+model ReportDispatch {
+  id         String @id
+  kind       String                       // monthly | quarterly
+  period     String                       // 2026-08 | 2026-Q3
+  status     String                       // sent | incomplete | failed
+  recipients String @default("")
+  summary    Json?
+  created_at String
+
+  @@map("report_dispatches")
 }

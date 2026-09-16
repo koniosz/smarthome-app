@@ -15,13 +15,14 @@ import {
   Search,
   Bell,
   ChevronDown,
+  Activity,
 } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
 import type { AppNotification } from '../../types'
 import GlobalSearch from './GlobalSearch'
 
-export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'platnosci' | 'magazyn' | 'hr'
+export type NavView = 'dashboard' | 'projects' | 'wycena' | 'product-catalog' | 'faktury' | 'koszty' | 'platnosci' | 'magazyn' | 'hr' | 'kondycja'
 
 interface AppHeaderProps {
   darkMode: boolean
@@ -145,6 +146,7 @@ const NAV_ITEMS: { view: NavView; label: string; Icon: typeof Zap }[] = [
   { view: 'faktury',         label: 'Faktury',   Icon: FileText },
   { view: 'koszty',          label: 'Koszty',    Icon: Banknote },
   { view: 'platnosci',       label: 'Płatności', Icon: Wallet },
+  { view: 'kondycja',        label: 'Kondycja',  Icon: Activity },
   { view: 'magazyn',         label: 'Magazyn',   Icon: Warehouse },
   { view: 'hr',              label: 'HR',        Icon: Users },
 ]
@@ -283,6 +285,7 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
           {NAV_ITEMS.filter(({ view }) => {
             if (view === 'magazyn') return user?.role === 'admin' || user?.can_view_warehouse
             if (view === 'platnosci') return user?.role === 'admin' || user?.can_view_payments
+            if (view === 'kondycja') return user?.role === 'admin' || user?.can_view_payments
             return true
           }).map(({ view, label, Icon }) => {
             const isActive = activeView === view
@@ -362,12 +365,26 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                     <div className="text-xs text-[#94a3b8] truncate mt-0.5">{user.email}</div>
                   </div>
                   {(user.role === 'admin' || user.can_view_payments) && (
-                    <button
-                      onClick={() => { setMenuOpen(false); navigate('/rentownosc') }}
-                      className="w-full text-left px-4 py-2.5 text-sm text-[#475569] hover:bg-[#f8fafc] transition-colors"
-                    >
-                      Rentowność (RZiS / EBITDA)
-                    </button>
+                    <>
+                      <button
+                        onClick={() => { setMenuOpen(false); navigate('/kondycja') }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-[#475569] hover:bg-[#f8fafc] transition-colors"
+                      >
+                        📊 Kondycja firmy
+                      </button>
+                      <button
+                        onClick={() => { setMenuOpen(false); navigate('/rentownosc') }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-[#475569] hover:bg-[#f8fafc] transition-colors"
+                      >
+                        Rentowność (RZiS / EBITDA)
+                      </button>
+                      <button
+                        onClick={() => { setMenuOpen(false); navigate('/koszty-spoza-ksef') }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-[#475569] hover:bg-[#f8fafc] transition-colors"
+                      >
+                        📥 Koszty spoza KSeF
+                      </button>
+                    </>
                   )}
                   {(user.role === 'admin' || user.can_view_invoices) && (
                     <button
