@@ -935,6 +935,91 @@ async function upsertCostItemForAllocation(
   })
 }
 
+// ── Przypisanie całej faktury kosztowej do projektu (Płatności, udostępnione) ──
+// Jedna alokacja na pełną kwotę brutto + CostItem w projekcie + project_id faktury + log aktywności.
+// reassign=true przenosi istniejące alokacje projektowe (i ich koszty) do nowego projektu.
+export class AssignError extends Error {
+  constructor(public status: number, message: string) { super(message) }
+}
+
+export async function assignInvoiceToProject(
+  invoiceId: string,
+  opts: { project_id: string; notes?: string; category?: string; reassign?: boolean },
+  user: { user_id: string | null; user_name: string },
+): Promise<{ project_id: string; project_name: string; allocations_count: number; moved: boolean }> {
+  const invoice = await prisma.ksefInvoice.findUnique({ where: { id: invoiceId } })
+  if (!invoice) throw new AssignError(404, 'Faktura nie znaleziona')
+  if (invoice.invoice_direction === 'outgoing') throw new AssignError(400, 'To faktura sprzedażowa — nie jest kosztem projektu')
+  const project = await prisma.project.findUnique({ where: { id: String(opts.project_id || '') }, select: { id: true, name: true } })
+  if (!project) throw new AssignError(404, 'Projekt nie znaleziony')
+
+  const category = opts.category && ['materials', 'subcontractor', 'other'].includes(opts.category) ? opts.category : 'materials'
+  const notes = String(opts.notes ?? '').slice(0, 500)
+  const nowIso = new Date().toISOString()
+  const { v4: uuidv4 } = require('uuid')
+  const allocs = await prisma.ksefInvoiceAllocation.findMany({ where: { invoice_id: invoice.id }, orderBy: { created_at: 'asc' } })
+  const label = `${invoice.seller_name ?? ''} ${invoice.invoice_number ?? ''}`.trim() || 'Faktura KSeF'
+
+  // Auto-klasyfikacja z synchronizacji (jedna alokacja „internal” bez projektu z notatką „Auto-klasyfikacja…”)
+  // nie jest decyzją człowieka — przypisanie do projektu ją zastępuje (zachowując nauczoną taksonomię).
+  const auto = allocs.length === 1 && allocs[0].allocation_type === 'internal' && !allocs[0].project_id
+    && String(allocs[0].notes || '').startsWith('Auto-klasyfikacja') ? allocs[0] : null
+
+  if (allocs.length === 0 || auto) {
+    if (auto) {
+      await prisma.costItem.deleteMany({ where: { ksef_allocation_id: auto.id } })
+      await prisma.ksefInvoiceAllocation.delete({ where: { id: auto.id } })
+    }
+    const classified = auto
+      ? { cost_category: auto.cost_category, subcategory: auto.subcategory, business_unit: auto.business_unit }
+      : autoClassify(invoice.seller_name, notes || null)
+    const allocationId = uuidv4()
+    await prisma.ksefInvoiceAllocation.create({
+      data: {
+        id: allocationId, invoice_id: invoice.id, project_id: project.id,
+        amount: invoice.gross_amount, notes, category, allocation_type: 'project',
+        cost_category: classified.cost_category, subcategory: classified.subcategory, business_unit: classified.business_unit,
+        created_at: nowIso, updated_at: nowIso,
+      },
+    })
+    await upsertCostItemForAllocation(allocationId, project.id, invoice, invoice.gross_amount, notes, category)
+    await prisma.ksefInvoice.update({ where: { id: invoice.id }, data: { project_id: project.id } })
+    await logKsefActivity(project.id, user, 'add',
+      `Przypisano fakturę KSeF: ${label} — ${invoice.gross_amount.toFixed(2)} ${invoice.currency} (${CATEGORIES_PL[category] ?? category})${auto ? ' — zastąpiono auto-klasyfikację kosztu firmowego' : ''}`, allocationId)
+    return { project_id: project.id, project_name: project.name, allocations_count: 1, moved: false }
+  }
+
+  // Faktura rozpisana ręcznie — z Płatności można ją tylko przenieść W CAŁOŚCI między projektami;
+  // podział (kilka projektów, część kwoty, koszt firmowy) zmienia się w zakładce Faktury (KSeF).
+  if (allocs.some(a => a.allocation_type !== 'project' || !a.project_id)) {
+    throw new AssignError(409, 'Faktura jest rozpisana jako koszt firmowy/wewnętrzny — zmień to w zakładce Faktury (KSeF) lub poproś administratora')
+  }
+  const allocated = allocs.reduce((sum, a) => sum + (a.amount || 0), 0)
+  if (Math.abs(allocated - invoice.gross_amount) > 0.01) {
+    throw new AssignError(409, `Faktura jest rozpisana częściowo (${allocated.toFixed(2)} z ${invoice.gross_amount.toFixed(2)} ${invoice.currency}) — dokończ podział w zakładce Faktury (KSeF)`)
+  }
+  const oldProjectIds = [...new Set(allocs.map(a => a.project_id as string))]
+  if (oldProjectIds.length > 1) {
+    throw new AssignError(409, `Faktura jest rozpisana na ${oldProjectIds.length} projekty — zmień podział w zakładce Faktury (KSeF)`)
+  }
+  if (oldProjectIds[0] === project.id) {
+    // już w tym projekcie — tylko wyrównaj project_id faktury (mógł wskazywać stary projekt)
+    if (invoice.project_id !== project.id) await prisma.ksefInvoice.update({ where: { id: invoice.id }, data: { project_id: project.id } })
+    return { project_id: project.id, project_name: project.name, allocations_count: allocs.length, moved: false }
+  }
+  if (!opts.reassign) {
+    throw new AssignError(409, `Faktura jest już kosztem innego projektu (${allocs.length} alok.) — użyj „Zmień projekt”, żeby ją przenieść`)
+  }
+  for (const a of allocs) {
+    await prisma.ksefInvoiceAllocation.update({ where: { id: a.id }, data: { project_id: project.id, updated_at: nowIso } })
+    await prisma.costItem.updateMany({ where: { ksef_allocation_id: a.id }, data: { project_id: project.id } })
+  }
+  await prisma.ksefInvoice.update({ where: { id: invoice.id }, data: { project_id: project.id } })
+  await logKsefActivity(oldProjectIds[0], user, 'delete', `Przeniesiono fakturę KSeF do projektu „${project.name}”: ${label}`)
+  await logKsefActivity(project.id, user, 'add', `Przeniesiono fakturę KSeF z innego projektu: ${label} — ${invoice.gross_amount.toFixed(2)} ${invoice.currency}`)
+  return { project_id: project.id, project_name: project.name, allocations_count: allocs.length, moved: true }
+}
+
 // GET /api/ksef/invoices/:id/allocations
 router.get('/invoices/:id/allocations', requireAuth, async (req: Request, res: Response) => {
   try {

@@ -698,6 +698,12 @@ export interface PayableInvoice {
   paid_amount: number | null
   paid_at: string | null
   project_id: string | null
+  project_name: string | null       // projekt, w którym koszt faktycznie leży (alokacja ma pierwszeństwo)
+  allocations_count: number         // liczba alokacji (0 = nierozpisana)
+  allocated_amount: number          // suma alokacji (brutto); < gross_amount = rozpisana częściowo
+  internal_allocation: boolean      // ręcznie rozpisana jako koszt firmowy/wewnętrzny — zmiana tylko w KSeF
+  auto_classified: boolean          // automatyczna klasyfikacja z synchronizacji — przypisanie do projektu ją zastąpi
+  multi_project: boolean            // rozpisana na kilka projektów — podział tylko w KSeF
   overdue: boolean
 }
 

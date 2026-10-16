@@ -163,6 +163,10 @@ export const payablesApi = {
     api.post(`/payables/review/${txId}/assign`, { invoice_id: invoiceId }).then(r => r.data),
   dismiss: (txId: string): Promise<void> =>
     api.post(`/payables/review/${txId}/dismiss`).then(r => r.data),
+  // Cała faktura jako koszt projektu (alokacja + pozycja kosztowa w projekcie); reassign = przenieś z innego projektu
+  assignProject: (id: string, data: { project_id: string; category?: string; notes?: string; reassign?: boolean }):
+    Promise<{ ok: boolean; project_id: string; project_name: string; allocations_count: number; moved: boolean }> =>
+    api.post(`/payables/invoices/${id}/assign-project`, data).then(r => r.data),
 }
 
 export const personalTodosApi = {

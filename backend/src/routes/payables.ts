@@ -13,6 +13,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { parseMT940Statements } from '../utils/mt940Parser'
 import { saveBankBalances, upsertMt940Costs } from '../services/mt940-costs'
 import db, { prisma } from '../db'
+import { assignInvoiceToProject, AssignError } from './ksef'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -48,7 +49,11 @@ function isOverdue(inv: any): boolean {
   return isUnpaid(inv) && !!inv.payment_due_date && inv.payment_due_date < today()
 }
 
-function invoiceView(inv: any) {
+type InvoiceExtra = {
+  projectId?: string | null; projectName?: string | null; allocationsCount?: number; allocatedAmount?: number
+  internalAllocation?: boolean; autoClassified?: boolean; multiProject?: boolean
+}
+function invoiceView(inv: any, extra?: InvoiceExtra) {
   return {
     id: inv.id,
     ksef_number: inv.ksef_number,
@@ -63,7 +68,14 @@ function invoiceView(inv: any) {
     payment_source: inv.payment_source,
     paid_amount: inv.paid_amount,
     paid_at: inv.paid_at,
-    project_id: inv.project_id,
+    // projekt, w którym koszt faktycznie leży (alokacja ma pierwszeństwo przed legacy project_id)
+    project_id: extra ? (extra.projectId ?? null) : inv.project_id,
+    project_name: extra?.projectName ?? null,
+    allocations_count: extra?.allocationsCount ?? 0,
+    allocated_amount: extra?.allocatedAmount ?? 0,
+    internal_allocation: extra?.internalAllocation ?? false, // ręcznie rozpisana jako koszt firmowy — tylko w KSeF
+    auto_classified: extra?.autoClassified ?? false,         // automatyczna klasyfikacja z synchronizacji — można nadpisać
+    multi_project: extra?.multiProject ?? false,             // rozpisana na kilka projektów — podział tylko w KSeF
     overdue: isOverdue(inv),
   }
 }
@@ -224,7 +236,42 @@ router.get('/invoices', async (req: Request, res: Response) => {
       list.sort((a: any, b: any) => (a.payment_due_date || '9999').localeCompare(b.payment_due_date || '9999'))
     }
 
-    res.json(list.slice(0, 500).map(invoiceView))
+    // Projekt + alokacje (żeby pokazać „📁 projekt” i wiedzieć, czy można przenieść)
+    const page = list.slice(0, 500)
+    const ids = page.map((i: any) => i.id)
+    const [projects, allocs] = await Promise.all([
+      prisma.project.findMany({ select: { id: true, name: true } }),
+      prisma.ksefInvoiceAllocation.findMany({
+        where: { invoice_id: { in: ids } }, orderBy: { created_at: 'asc' },
+        select: { invoice_id: true, project_id: true, allocation_type: true, amount: true, notes: true },
+      }),
+    ])
+    const projectName = new Map(projects.map(p => [p.id, p.name]))
+    type Agg = { count: number; amount: number; internal: boolean; auto: boolean; projectIds: string[] }
+    const byInvoice = new Map<string, Agg>()
+    for (const a of allocs) {
+      const cur = byInvoice.get(a.invoice_id) ?? { count: 0, amount: 0, internal: false, auto: false, projectIds: [] }
+      cur.count += 1; cur.amount += a.amount || 0
+      if (a.allocation_type !== 'project' || !a.project_id) {
+        if (String(a.notes || '').startsWith('Auto-klasyfikacja') && a.allocation_type === 'internal') cur.auto = true
+        else cur.internal = true
+      } else if (!cur.projectIds.includes(a.project_id)) cur.projectIds.push(a.project_id)
+      byInvoice.set(a.invoice_id, cur)
+    }
+    res.json(page.map((inv: any) => {
+      const al = byInvoice.get(inv.id)
+      const autoOnly = !!al && al.auto && al.count === 1
+      const pid = al?.projectIds[0] ?? inv.project_id ?? null
+      return invoiceView(inv, {
+        projectId: pid,
+        projectName: pid ? (projectName.get(pid) ?? null) : null,
+        allocationsCount: al?.count ?? 0,
+        allocatedAmount: Math.round((al?.amount ?? 0) * 100) / 100,
+        internalAllocation: !!al && (al.internal || (al.auto && !autoOnly)),
+        autoClassified: autoOnly,
+        multiProject: (al?.projectIds.length ?? 0) > 1,
+      })
+    }))
   } catch (e) {
     console.error('[payables/invoices]', e)
     res.status(500).json({ error: 'Błąd serwera' })
@@ -397,6 +444,24 @@ router.get('/invoices/:id/xml', async (req: Request, res: Response) => {
   } catch (err: any) {
     const msg = err?.response ? `KSeF HTTP ${err.response.status}` : err.message
     res.status(500).json({ error: msg })
+  }
+})
+
+// ── POST /api/payables/invoices/:id/assign-project { project_id, category?, notes?, reassign? } ─
+// Z Płatności: cała faktura jako koszt projektu (alokacja + CostItem), dla admina i księgowego.
+router.post('/invoices/:id/assign-project', async (req: Request, res: Response) => {
+  try {
+    const u: any = (req as any).user
+    const { project_id, category, notes, reassign } = req.body ?? {}
+    if (!project_id) { res.status(400).json({ error: 'Wybierz projekt' }); return }
+    const result = await assignInvoiceToProject(req.params.id,
+      { project_id: String(project_id), category, notes, reassign: reassign === true },
+      { user_id: u?.id ?? null, user_name: u?.display_name || u?.email || 'Płatności' })
+    res.json({ ok: true, ...result })
+  } catch (e: any) {
+    if (e instanceof AssignError) { res.status(e.status).json({ error: e.message }); return }
+    console.error('[payables/assign-project]', e)
+    res.status(500).json({ error: 'Błąd serwera' })
   }
 })
 

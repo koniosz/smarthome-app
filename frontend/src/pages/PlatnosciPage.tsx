@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, CheckCircle2, RotateCcw, Search, AlertTriangle, Banknote, CalendarClock, ListChecks, Eye, Download, X } from 'lucide-react'
-import { payablesApi } from '../api/client'
-import type { PayableSummary, PayableInvoice, PayableReviewItem, Mt940ImportResult } from '../types'
+import { Upload, CheckCircle2, RotateCcw, Search, AlertTriangle, Banknote, CalendarClock, ListChecks, Eye, Download, X, Folder } from 'lucide-react'
+import { payablesApi, projectsApi } from '../api/client'
+import type { PayableSummary, PayableInvoice, PayableReviewItem, Mt940ImportResult, Project } from '../types'
+import { PROJECT_STATUS_LABELS } from '../types'
 import { useAuth } from '../auth/AuthContext'
 
 function money(n: number, currency = 'PLN') {
@@ -32,6 +33,7 @@ export default function PlatnosciPage() {
   const [importError, setImportError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [previewInv, setPreviewInv] = useState<PayableInvoice | null>(null)
+  const [assignInv, setAssignInv] = useState<PayableInvoice | null>(null) // modal „Do projektu”
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Sekwencer żądań: odpowiedź, która przyszła po nowszym żądaniu, jest ignorowana
@@ -404,6 +406,16 @@ export default function PlatnosciPage() {
                     <td className="px-4 py-3">
                       <div className="text-gray-700 dark:text-gray-200">{inv.invoice_number ?? '—'}</div>
                       <div className="text-xs text-gray-400">wyst. {fmtDate(inv.invoice_date)}</div>
+                      {inv.multi_project ? (
+                        <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-[11px] font-semibold" title="Podział między projekty zmienisz w zakładce Faktury (KSeF)">
+                          <Folder size={11} /> rozpisana na kilka projektów
+                        </div>
+                      ) : inv.project_name && (
+                        <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 text-[11px] font-semibold max-w-[220px]" title={`Koszt w projekcie: ${inv.project_name}`}>
+                          <Folder size={11} /> <span className="truncate">{inv.project_name}</span>
+                          {inv.allocations_count > 0 && inv.allocated_amount + 0.01 < inv.gross_amount && <span className="text-amber-600 dark:text-amber-400">· częściowo</span>}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span className={inv.overdue ? 'font-bold text-red-600 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}>
@@ -418,6 +430,17 @@ export default function PlatnosciPage() {
                     </td>
                     <td className="px-4 py-3">{statusBadge(inv)}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => setAssignInv(inv)}
+                        disabled={inv.internal_allocation || inv.multi_project}
+                        title={inv.internal_allocation
+                          ? 'Faktura rozpisana ręcznie jako koszt firmowy — zmień w zakładce Faktury (KSeF)'
+                          : inv.multi_project ? 'Faktura rozpisana na kilka projektów — podział zmień w zakładce Faktury (KSeF)'
+                          : inv.project_name ? 'Przenieś koszt do innego projektu' : 'Przypisz całą fakturę jako koszt projektu'}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 mr-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-xs font-semibold text-violet-700 hover:bg-violet-50 dark:text-violet-300 dark:hover:bg-violet-900/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Folder size={13} /> {inv.project_name ? 'Zmień projekt' : 'Do projektu'}
+                      </button>
                       {inv.ksef_number && (
                         <button
                           onClick={() => setPreviewInv(inv)}
@@ -454,6 +477,142 @@ export default function PlatnosciPage() {
       )}
 
       {previewInv && <InvoicePreviewModal invoice={previewInv} onClose={() => setPreviewInv(null)} />}
+      {assignInv && (
+        <AssignProjectModal
+          invoice={assignInv}
+          onClose={async (saved) => {
+            setAssignInv(null)
+            if (saved) { try { await reload(tab, search) } catch { alert('Przypisano, ale nie udało się odświeżyć listy — odśwież stronę.') } }
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Modal: cała faktura jako koszt projektu ──────────────────────────────────
+const COST_CATEGORY_OPTIONS: Array<[string, string]> = [
+  ['materials', 'Materiały / sprzęt'],
+  ['subcontractor', 'Podwykonawca'],
+  ['other', 'Inne'],
+]
+const ACTIVE_FIRST: Record<string, number> = { installation: 0, ordering: 1, negotiation: 2, offer_submitted: 3, closing: 4, cancelled: 5 }
+
+function AssignProjectModal({ invoice, onClose }: { invoice: PayableInvoice; onClose: (saved: boolean) => void }) {
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [projectId, setProjectId] = useState<string>(invoice.project_id ?? '')
+  const [category, setCategory] = useState('materials')
+  const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const isMove = !!invoice.project_name && invoice.allocations_count > 0
+
+  useEffect(() => {
+    projectsApi.list()
+      .then(list => setProjects([...list].sort((a, b) =>
+        (ACTIVE_FIRST[a.status] ?? 9) - (ACTIVE_FIRST[b.status] ?? 9) || a.name.localeCompare(b.name, 'pl'))))
+      .catch(() => setError('Nie udało się pobrać listy projektów.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const q = query.trim().toLowerCase()
+  const visible = (q ? projects.filter(p => `${p.name} ${p.client_name ?? ''}`.toLowerCase().includes(q)) : projects).slice(0, 60)
+  const selected = projects.find(p => p.id === projectId)
+
+  const save = async () => {
+    if (!projectId) { setError('Wybierz projekt z listy.'); return }
+    setSaving(true); setError('')
+    try {
+      await payablesApi.assignProject(invoice.id, { project_id: projectId, category, notes: notes.trim() || undefined, reassign: isMove })
+      onClose(true)
+    } catch (e: any) {
+      setError(e?.response?.data?.error ?? 'Nie udało się przypisać faktury.')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => e.target === e.currentTarget && onClose(false)}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] flex flex-col">
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-bold text-gray-800 dark:text-gray-100">{isMove ? 'Przenieś koszt do innego projektu' : 'Przypisz fakturę do projektu'}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {invoice.seller_name ?? '—'} · {invoice.invoice_number ?? 'b/n'} · <span className="font-semibold text-gray-600 dark:text-gray-300">{money(invoice.gross_amount, invoice.currency)}</span>
+              {isMove && <> · obecnie: <span className="font-semibold">{invoice.project_name}</span>{invoice.allocations_count > 1 ? ` (${invoice.allocations_count} alok.)` : ''}</>}
+            </p>
+          </div>
+          <button onClick={() => onClose(false)} className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><X size={16} /></button>
+        </div>
+
+        <div className="px-6 py-4 space-y-3 overflow-y-auto">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {isMove
+              ? 'Koszt faktury (wszystkie jej pozycje) zostanie przeniesiony z obecnego projektu do wybranego. Podział na kilka projektów robisz w zakładce Faktury (KSeF).'
+              : 'Cała kwota faktury trafi do kosztów wybranego projektu (jako pozycja kosztowa) i do rentowności projektu. Podział na kilka projektów robisz w zakładce Faktury (KSeF).'}
+          </p>
+          {invoice.auto_classified && (
+            <div className="text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+              Ta faktura była automatycznie oznaczona jako koszt firmowy (bez projektu). Przypisanie do projektu zastąpi to oznaczenie.
+            </div>
+          )}
+          {isMove && invoice.allocated_amount + 0.01 < invoice.gross_amount && (
+            <div className="text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+              Faktura jest rozpisana częściowo ({money(invoice.allocated_amount, invoice.currency)} z {money(invoice.gross_amount, invoice.currency)}) — dokończ podział w zakładce Faktury (KSeF), przeniesienie z Płatności nie jest możliwe.
+            </div>
+          )}
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="Szukaj projektu lub klienta…"
+              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          </div>
+          <div className="border border-gray-200 dark:border-gray-700 rounded-lg max-h-56 overflow-y-auto">
+            {loading ? (
+              <div className="py-6 text-center text-xs text-gray-400">Ładowanie projektów…</div>
+            ) : visible.length === 0 ? (
+              <div className="py-6 text-center text-xs text-gray-400">{q ? `Brak projektów pasujących do „${query}”.` : 'Brak projektów.'}</div>
+            ) : visible.map(p => (
+              <button key={p.id} type="button" onClick={() => setProjectId(p.id)}
+                className={`w-full text-left px-3 py-2 text-sm border-b border-gray-50 dark:border-gray-800 last:border-0 flex items-center justify-between gap-2 ${p.id === projectId ? 'bg-violet-50 dark:bg-violet-950/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/60'}`}>
+                <span className="min-w-0">
+                  <span className="block truncate font-semibold text-gray-800 dark:text-gray-100">{p.name}</span>
+                  {p.client_name && <span className="block truncate text-xs text-gray-400">{p.client_name}</span>}
+                </span>
+                <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${p.status === 'cancelled' ? 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400' : 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'}`}>
+                  {PROJECT_STATUS_LABELS[p.status] ?? p.status}
+                </span>
+              </button>
+            ))}
+          </div>
+          {selected && <p className="text-xs text-violet-700 dark:text-violet-300">Wybrano: <span className="font-semibold">{selected.name}</span></p>}
+
+          {!isMove && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-xs text-gray-500 dark:text-gray-400">Rodzaj kosztu w projekcie
+                <select value={category} onChange={e => setCategory(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100">
+                  {COST_CATEGORY_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-gray-500 dark:text-gray-400">Notatka (opcjonalnie)
+                <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="np. oświetlenie salon"
+                  className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100" />
+              </label>
+            </div>
+          )}
+          {error && <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">{error}</div>}
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800 flex justify-end gap-2">
+          <button onClick={() => onClose(false)} className="px-4 py-2 text-sm font-semibold rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">Anuluj</button>
+          <button onClick={save} disabled={saving || !projectId || (isMove && projectId === invoice.project_id)}
+            className="px-4 py-2 text-sm font-semibold rounded-lg bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 inline-flex items-center gap-1.5">
+            <Folder size={14} /> {saving ? 'Zapisywanie…' : isMove ? 'Przenieś' : 'Przypisz do projektu'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
