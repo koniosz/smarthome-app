@@ -250,6 +250,7 @@ export const db = {
     find: (id: string) => prisma.leaveRequest.findUnique({ where: { id } }),
     insert: (item: any) => prisma.leaveRequest.create({ data: item }),
     update: (id: string, patch: any) => prisma.leaveRequest.update({ where: { id }, data: patch }),
+    remove: (id: string) => prisma.leaveRequest.delete({ where: { id } }),
   },
 
   work_time_entries: {

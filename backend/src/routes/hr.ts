@@ -252,6 +252,86 @@ router.post('/admin/leave-requests/:id/decide', requireAdmin, async (req: Reques
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
+// Dzisiejsza data wg Europe/Warsaw (serwer na Render działa w UTC)
+function warsawToday(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+}
+function addDaysIso(date: string, n: number): string { return isoDate(addDaysUTC(new Date(date + 'T00:00:00Z'), n)) }
+
+// POST /api/hr/admin/leave-requests/:id/cancel { reason?, effective_from?, force? }
+// Odwołanie pracownika z urlopu (zmienił zdanie / potrzebny w pracy — art. 167 KP).
+// - wniosek oczekujący → status „cancelled”
+// - urlop zatwierdzony, który jeszcze się nie zaczął → „cancelled” (wszystkie dni wracają do puli)
+// - urlop W TRAKCIE → SKRÓCENIE: date_to = effective_from − 1 dzień, status zostaje „approved”;
+//   dni już wykorzystane zostają w ewidencji jako urlop, reszta wraca do puli (saldo/ewidencja/auto-grafik
+//   liczą się z wniosków „approved”, więc nic więcej nie trzeba sprzątać)
+// - urlop ZAKOŃCZONY → 400, chyba że force=true (błędny wpis; wszystkie dni wracają — świadoma decyzja)
+// Ślad zatwierdzenia (decided_by/decided_at) zostaje; powód dopisywany do admin_comment (widoczny dla pracownika).
+router.post('/admin/leave-requests/:id/cancel', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const lr: any = await db.leave_requests.find(req.params.id)
+    if (!lr) { res.status(404).json({ error: 'Wniosek nie znaleziony' }); return }
+    if (!['approved', 'pending'].includes(lr.status)) {
+      res.status(400).json({ error: `Nie można anulować wniosku ze statusem „${lr.status}”` }); return
+    }
+    const reason = req.body?.reason ? String(req.body.reason).trim().slice(0, 500) : ''
+    const today = warsawToday()
+    const prevNote = lr.admin_comment ? ` · wcześniej: „${lr.admin_comment}”` : ''
+    const fullCancel = async (label: string) => {
+      await db.leave_requests.update(lr.id, {
+        status: 'cancelled',
+        admin_comment: `${label} ${today} przez administratora${reason ? ': ' + reason : ''}${prevNote}`,
+        ...(lr.status === 'pending' ? { decided_by: (req as any).user?.id || null, decided_at: now() } : {}),
+        updated_at: now(),
+      })
+      res.json({ ...(await db.leave_requests.find(lr.id)), action: 'cancelled', returned_days: lr.days_count })
+    }
+
+    if (lr.status === 'pending') { await fullCancel('Anulowano'); return }
+
+    const force = req.body?.force === true
+    if (lr.date_to < today && !force) {
+      res.status(400).json({ error: 'Ten urlop już się zakończył — dni zostały wykorzystane. Jeśli wpis jest błędny, anuluj z opcją „mimo to” (wszystkie dni wrócą do puli i znikną z ewidencji).' }); return
+    }
+    let eff = force ? lr.date_from : (req.body?.effective_from ? String(req.body.effective_from) : today)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(eff)) { res.status(400).json({ error: 'Podaj datę odwołania w formacie RRRR-MM-DD' }); return }
+    if (eff > lr.date_to) { res.status(400).json({ error: 'Data odwołania jest po zakończeniu urlopu' }); return }
+    if (eff < lr.date_from) eff = lr.date_from
+
+    if (eff <= lr.date_from) { await fullCancel('Anulowano'); return }
+
+    // Skrócenie: urlop trwa — dni przed datą odwołania zostają urlopem
+    const newTo = addDaysIso(eff, -1)
+    const days = workingDaysBetween(lr.date_from, newTo)
+    if (days <= 0) { await fullCancel('Anulowano'); return }
+    const returned = Math.max(0, Math.round((lr.days_count - days) * 100) / 100)
+    await db.leave_requests.update(lr.id, {
+      date_to: newTo, days_count: days,
+      admin_comment: `Odwołany z urlopu od ${eff} (skrócono z ${lr.date_to} do ${newTo}, do puli wróciło ${returned} dni)${reason ? ': ' + reason : ''}${prevNote}`,
+      updated_at: now(),
+    })
+    res.json({ ...(await db.leave_requests.find(lr.id)), action: 'shortened', new_date_to: newTo, returned_days: returned })
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// DELETE /api/hr/admin/leave-requests/:id — usuń wpis bez śladu. Tylko odrzucone/anulowane wpisy
+// wprowadzone ręcznie (błędny wpis). Zatwierdzony urlop można wyłącznie anulować (historia — art. 94 pkt 9b KP);
+// wpisu z importu Calamari nie usuwamy — wróciłby przy następnym imporcie (klucz deduplikacji).
+router.delete('/admin/leave-requests/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const lr: any = await db.leave_requests.find(req.params.id)
+    if (!lr) { res.status(404).json({ error: 'Wniosek nie znaleziony' }); return }
+    if (lr.status === 'approved' || lr.status === 'pending') {
+      res.status(400).json({ error: 'Zatwierdzony lub oczekujący wniosek można tylko anulować — zostaje w historii' }); return
+    }
+    if (lr.decided_by === 'import-calamari' || String(lr.admin_comment || '').startsWith('Import z Calamari')) {
+      res.status(400).json({ error: 'Wpis z importu Calamari — zostaw jako anulowany; usunięty wróciłby przy następnym imporcie' }); return
+    }
+    await db.leave_requests.remove(lr.id)
+    res.json({ ok: true, id: lr.id, status_before: lr.status })
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
 // PUT /api/hr/admin/balance/:employeeId/:year — ustaw wymiar początkowy / zaległy / korektę
 router.put('/admin/balance/:employeeId/:year', requireAdmin, async (req: Request, res: Response) => {
   try {

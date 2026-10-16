@@ -538,11 +538,21 @@ function AdminWnioski() {
     try { await hrApi.decide(r.id, decision, comment || undefined); load() }
     catch (e: any) { alert(e?.response?.data?.error || 'Błąd.') }
   }
+  // Odwołanie z urlopu (modal: od którego dnia, powód) — zatwierdzony urlop w trakcie jest SKRACANY,
+  // przyszły anulowany; dni wracają do puli, wpis zostaje w historii.
+  const [cancelReq, setCancelReq] = useState<HrLeaveRequest | null>(null)
+  const deleteLeave = async (r: HrLeaveRequest) => {
+    if (!window.confirm(`Usunąć wpis bez śladu (${r.employee?.name ?? ''}, ${fmtDate(r.date_from)} – ${fmtDate(r.date_to)})?`)) return
+    try { await hrApi.adminDeleteLeave(r.id); load() }
+    catch (e: any) { alert(e?.response?.data?.error || 'Błąd.') }
+  }
+  const canDelete = (r: HrLeaveRequest) =>
+    (r.status === 'rejected' || r.status === 'cancelled') && r.decided_by !== 'import-calamari' && !(r.admin_comment || '').startsWith('Import z Calamari')
   return (
     <div className="space-y-3">
       <select className={`${inputCls} w-56`} value={status} onChange={e => setStatus(e.target.value)}>
         <option value="pending">Oczekujące</option><option value="approved">Zatwierdzone</option>
-        <option value="rejected">Odrzucone</option><option value="all">Wszystkie</option>
+        <option value="rejected">Odrzucone</option><option value="cancelled">Anulowane</option><option value="all">Wszystkie</option>
       </select>
       {loading ? <div className="text-center py-8 text-gray-400">Ładowanie…</div>
         : list.length === 0 ? <div className="text-center py-8 text-gray-400 text-sm">Brak wniosków.</div>
@@ -555,19 +565,103 @@ function AdminWnioski() {
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-gray-800 dark:text-gray-100">{r.employee?.name ?? '—'} · {LEAVE_TYPE_LABELS[r.type] ?? r.type}</div>
                     <div className="text-xs text-gray-400">{fmtDate(r.date_from)} – {fmtDate(r.date_to)} · {fmt(r.days_count)} dni rob.{r.comment ? ` · „${r.comment}"` : ''}</div>
+                    {r.admin_comment && r.status !== 'pending' && <div className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">{r.admin_comment}</div>}
                   </div>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span>
-                  {r.status === 'pending' && (
-                    <div className="flex gap-1.5">
-                      <button onClick={() => decide(r, 'approved')} className="px-3 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-lg">✓ Zatwierdź</button>
-                      <button onClick={() => decide(r, 'rejected')} className="px-3 py-1.5 text-xs font-medium border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg">✗ Odrzuć</button>
-                    </div>
-                  )}
+                  <div className="flex gap-1.5">
+                    {r.status === 'pending' && (
+                      <>
+                        <button onClick={() => decide(r, 'approved')} className="px-3 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded-lg">✓ Zatwierdź</button>
+                        <button onClick={() => decide(r, 'rejected')} className="px-3 py-1.5 text-xs font-medium border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg">✗ Odrzuć</button>
+                      </>
+                    )}
+                    {r.status === 'approved' && (
+                      <button onClick={() => setCancelReq(r)} title="Pracownik zmienił zdanie lub jest potrzebny w pracy — niewykorzystane dni wracają do puli"
+                        className="px-3 py-1.5 text-xs font-medium border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg">
+                        {r.date_from <= todayIso() && r.date_to >= todayIso() ? '↩ Odwołaj z urlopu' : '↩ Anuluj urlop'}
+                      </button>
+                    )}
+                    {canDelete(r) && (
+                      <button onClick={() => deleteLeave(r)} title="Usuń błędny wpis bez śladu (tylko odrzucone/anulowane, nie z importu)"
+                        className="px-2.5 py-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-red-600 hover:border-red-300 dark:text-gray-400 dark:hover:text-red-400 rounded-lg">Usuń</button>
+                    )}
+                  </div>
                 </div>
               )
             })}
           </div>
         )}
+      {cancelReq && <CancelLeaveModal request={cancelReq} onClose={(saved) => { setCancelReq(null); if (saved) load() }} />}
+    </div>
+  )
+}
+
+function todayIso() { return new Date().toLocaleDateString('sv-SE') }
+
+// Odwołanie z urlopu: przyszły → anulowanie w całości; trwający → skrócenie od wybranego dnia;
+// zakończony → tylko świadomie („mimo to”, błędny wpis). Powód widzi pracownik.
+function CancelLeaveModal({ request: r, onClose }: { request: HrLeaveRequest; onClose: (saved: boolean) => void }) {
+  const today = todayIso()
+  const ended = r.date_to < today
+  const inProgress = !ended && r.date_from < today
+  const [effectiveFrom, setEffectiveFrom] = useState(inProgress ? today : r.date_from)
+  const [reason, setReason] = useState('')
+  const [force, setForce] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const fullCancel = !inProgress || effectiveFrom <= r.date_from
+
+  const save = async () => {
+    if (ended && !force) { setError('Zaznacz „anuluj mimo to”, jeśli wpis jest błędny.'); return }
+    setSaving(true); setError('')
+    try {
+      const res = await hrApi.adminCancelLeave(r.id, { reason: reason.trim() || undefined, effective_from: inProgress ? effectiveFrom : undefined, force: ended ? true : undefined })
+      alert(res.action === 'shortened'
+        ? `Urlop skrócony do ${fmtDate(res.new_date_to!)} — do puli wróciło ${fmt(res.returned_days)} dni.`
+        : `Urlop anulowany — do puli wróciło ${fmt(res.returned_days)} dni.`)
+      onClose(true)
+    } catch (e: any) { setError(e?.response?.data?.error || 'Nie udało się anulować.'); setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => e.target === e.currentTarget && onClose(false)}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+          <h2 className="text-base font-bold text-gray-800 dark:text-gray-100">{inProgress ? 'Odwołaj pracownika z urlopu' : 'Anuluj zatwierdzony urlop'}</h2>
+          <p className="text-xs text-gray-400 mt-0.5">{r.employee?.name ?? '—'} · {LEAVE_TYPE_LABELS[r.type] ?? r.type} · {fmtDate(r.date_from)} – {fmtDate(r.date_to)} · {fmt(r.days_count)} dni rob.</p>
+        </div>
+        <div className="px-6 py-4 space-y-3">
+          {ended ? (
+            <div className="text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 space-y-2">
+              <p>Ten urlop już się zakończył — dni zostały wykorzystane. Anulowanie zwróci wszystkie {fmt(r.days_count)} dni do puli i usunie je z ewidencji. Rób to tylko dla błędnego wpisu.</p>
+              <label className="flex items-center gap-2 font-semibold"><input type="checkbox" checked={force} onChange={e => setForce(e.target.checked)} /> Rozumiem — anuluj mimo to</label>
+            </div>
+          ) : inProgress ? (
+            <>
+              <label className="block text-xs text-gray-500 dark:text-gray-400">Odwołaj od dnia
+                <input type="date" value={effectiveFrom} min={r.date_from} max={r.date_to} onChange={e => setEffectiveFrom(e.target.value)} className={`${inputCls} mt-1`} />
+              </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                {fullCancel
+                  ? 'Cały urlop zostanie anulowany — wszystkie dni wrócą do puli.'
+                  : `Dni ${fmtDate(r.date_from)} – ${fmtDate(effectiveFrom)} (bez ostatniego) zostaną w ewidencji jako urlop. Od ${fmtDate(effectiveFrom)} pracownik jest w pracy, a niewykorzystane dni wracają do puli.`}
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-gray-500 dark:text-gray-400">Urlop jeszcze się nie zaczął — zostanie anulowany w całości, {fmt(r.days_count)} dni wróci do puli. Wpis zostanie w historii jako „Anulowany”.</p>
+          )}
+          <label className="block text-xs text-gray-500 dark:text-gray-400">Powód (opcjonalnie — pracownik zobaczy go przy swoim wniosku)
+            <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} placeholder="np. awaria u klienta, potrzebna obecność" className={`${inputCls} mt-1`} />
+          </label>
+          {error && <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">{error}</div>}
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800 flex justify-end gap-2">
+          <button onClick={() => onClose(false)} className="px-4 py-2 text-sm font-semibold rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">Zamknij</button>
+          <button onClick={save} disabled={saving || (ended && !force)} className="px-4 py-2 text-sm font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50">
+            {saving ? 'Zapisywanie…' : fullCancel ? 'Anuluj urlop' : 'Odwołaj od tego dnia'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

@@ -553,6 +553,7 @@ export interface HrLeaveRequest {
   status: 'pending' | 'approved' | 'rejected' | 'cancelled'
   comment: string | null
   admin_comment: string | null
+  decided_by: string | null   // id admina | 'import-calamari'
   decided_at: string | null
   created_at: string
   employee?: { id: string; name: string }
@@ -605,6 +606,11 @@ export const hrApi = {
   adminRequests: (status?: string) => api.get<HrLeaveRequest[]>('/hr/admin/leave-requests', { params: { status } }).then(r => r.data),
   decide: (id: string, decision: 'approved' | 'rejected', admin_comment?: string) =>
     api.post<HrLeaveRequest>(`/hr/admin/leave-requests/${id}/decide`, { decision, admin_comment }).then(r => r.data),
+  // Anuluj zatwierdzony/oczekujący urlop (zostaje w historii) / usuń wpis bez śladu
+  adminCancelLeave: (id: string, data: { reason?: string; effective_from?: string; force?: boolean }) =>
+    api.post<HrLeaveRequest & { action: 'cancelled' | 'shortened'; new_date_to?: string; returned_days: number }>(`/hr/admin/leave-requests/${id}/cancel`, data).then(r => r.data),
+  adminDeleteLeave: (id: string) =>
+    api.delete<{ ok: boolean }>(`/hr/admin/leave-requests/${id}`).then(r => r.data),
   setBalance: (employeeId: string, year: number, data: { entitlement_days?: number; carried_over_days?: number; adjustment_days?: number; adjustment_note?: string }) =>
     api.put<HrLeaveBalance>(`/hr/admin/balance/${employeeId}/${year}`, data).then(r => r.data),
   adminUpsertWorkTime: (employeeId: string, data: Partial<HrWorkTimeEntry> & { date: string }) =>
