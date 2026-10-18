@@ -46,6 +46,20 @@ export function polishHolidays(year: number): Set<string> {
   return new Set(days)
 }
 
+// Nazwy świąt (do podpowiedzi w kalendarzu)
+export function polishHolidayNames(year: number): Map<string, string> {
+  const easter = easterSunday(year)
+  const m = new Map<string, string>([
+    [`${year}-01-01`, 'Nowy Rok'], [`${year}-01-06`, 'Trzech Króli'], [`${year}-05-01`, 'Święto Pracy'], [`${year}-05-03`, 'Święto Konstytucji 3 Maja'],
+    [`${year}-08-15`, 'Wniebowzięcie NMP'], [`${year}-11-01`, 'Wszystkich Świętych'], [`${year}-11-11`, 'Święto Niepodległości'],
+    [`${year}-12-25`, 'Boże Narodzenie'], [`${year}-12-26`, 'Drugi dzień Bożego Narodzenia'],
+    [isoDate(easter), 'Wielkanoc'], [isoDate(addDaysUTC(easter, 1)), 'Poniedziałek Wielkanocny'],
+    [isoDate(addDaysUTC(easter, 49)), 'Zielone Świątki'], [isoDate(addDaysUTC(easter, 60)), 'Boże Ciało'],
+  ])
+  if (year >= 2025) m.set(`${year}-12-24`, 'Wigilia')
+  return m
+}
+
 export function workingDaysBetween(from: string, to: string): number {
   const start = new Date(from + 'T00:00:00Z')
   const end = new Date(to + 'T00:00:00Z')
@@ -138,6 +152,10 @@ router.post('/me/leave-requests', async (req: Request, res: Response) => {
     }
     const days = workingDaysBetween(date_from, date_to)
     if (days <= 0) { res.status(400).json({ error: 'Wybrany zakres nie zawiera dni roboczych' }); return }
+    const mine: any[] = await db.leave_requests.overlapping(String(date_from), String(date_to), ['approved', 'pending'], emp.id)
+    if (mine.length) {
+      res.status(400).json({ error: `Masz już ${mine[0].status === 'pending' ? 'wniosek' : 'urlop'} w tym terminie (${mine[0].date_from} – ${mine[0].date_to})` }); return
+    }
 
     const year = Number(String(date_from).slice(0, 4))
     if (POOL_TYPES.includes(type)) {
@@ -236,11 +254,10 @@ router.post('/admin/leave-requests/:id/decide', requireAdmin, async (req: Reques
     if (!lr) { res.status(404).json({ error: 'Wniosek nie znaleziony' }); return }
     if (lr.status !== 'pending') { res.status(400).json({ error: 'Wniosek został już rozpatrzony' }); return }
     const decision = req.body.decision === 'approved' ? 'approved' : 'rejected'
-    if (decision === 'approved' && POOL_TYPES.includes(lr.type)) {
-      const bal = await computeBalance(lr.employee_id, Number(lr.date_from.slice(0, 4)))
-      if (lr.days_count > bal.remaining_days) {
-        res.status(400).json({ error: `Wniosek (${lr.days_count} dni) przekracza dostępny urlop (${bal.remaining_days} dni) — skoryguj saldo lub odrzuć` }); return
-      }
+    if (decision === 'approved') {
+      // saldo, limit „na żądanie” i nakładanie z już zatwierdzonym urlopem (inny oczekujący nie blokuje)
+      const v = await validateLeaveRange(lr.employee_id, lr.type, lr.date_from, lr.date_to, { excludeId: lr.id, countsAgainstPool: true, overlapStatuses: ['approved'] })
+      if ('error' in v) { res.status(400).json({ error: `${v.error} — skoryguj saldo/termin lub odrzuć` }); return }
     }
     await db.leave_requests.update(lr.id, {
       status: decision,
@@ -248,7 +265,8 @@ router.post('/admin/leave-requests/:id/decide', requireAdmin, async (req: Reques
       decided_by: (req as any).user?.id || null,
       decided_at: now(), updated_at: now(),
     })
-    res.json(await db.leave_requests.find(lr.id))
+    const conflicting_entries = decision === 'approved' ? await reconcileWorkTime(lr.employee_id, lr.date_from, lr.date_to) : []
+    res.json({ ...(await db.leave_requests.find(lr.id)), conflicting_entries })
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
@@ -329,6 +347,154 @@ router.delete('/admin/leave-requests/:id', requireAdmin, async (req: Request, re
     }
     await db.leave_requests.remove(lr.id)
     res.json({ ok: true, id: lr.id, status_before: lr.status })
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// Walidacja zakresu urlopu (wspólna dla dodawania/edycji przez admina): format dat, dni robocze,
+// nakładanie się z innymi wnioskami pracownika (approved/pending), saldo i limit „na żądanie”
+// dla urlopów zatwierdzonych (z pominięciem edytowanego wniosku).
+async function validateLeaveRange(employeeId: string, type: string, from: string, to: string,
+  opts: { excludeId?: string; countsAgainstPool: boolean; overlapStatuses?: string[]; skipOverlap?: boolean }): Promise<{ days: number } | { error: string }> {
+  if (!(LEAVE_TYPES as readonly string[]).includes(type)) return { error: 'Nieprawidłowy typ nieobecności' }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return { error: 'Podaj daty w formacie RRRR-MM-DD' }
+  if (from > to) return { error: 'Data „od” jest po dacie „do”' }
+  const days = workingDaysBetween(from, to)
+  if (days <= 0) return { error: 'Wybrany zakres nie zawiera dni roboczych' }
+  const others = opts.skipOverlap ? [] : (await db.leave_requests.overlapping(from, to, opts.overlapStatuses ?? ['approved', 'pending'], employeeId)).filter((l: any) => l.id !== opts.excludeId)
+  if (others.length) {
+    const o: any = others[0]
+    return { error: `Nakłada się na inny wniosek (${o.date_from} – ${o.date_to}, ${o.status === 'pending' ? 'oczekujący' : 'zatwierdzony'})` }
+  }
+  if (opts.countsAgainstPool && POOL_TYPES.includes(type)) {
+    const year = Number(from.slice(0, 4))
+    const bal = await computeBalance(employeeId, year)
+    let remaining = bal.remaining_days, onDemandUsed = bal.on_demand_used
+    let prevDays = 0, prevOnDemand = 0 // dotychczasowe zużycie edytowanego wniosku (saldo ujemne nie blokuje skracania/przesuwania)
+    if (opts.excludeId) {
+      const cur: any = await db.leave_requests.find(opts.excludeId)
+      if (cur && cur.status === 'approved' && POOL_TYPES.includes(cur.type) && cur.date_from.startsWith(String(year))) {
+        remaining += cur.days_count; prevDays = cur.days_count
+        if (cur.type === 'na_zadanie') { onDemandUsed -= cur.days_count; prevOnDemand = cur.days_count }
+      }
+    }
+    if (days > prevDays && days > remaining) return { error: `Nieobecność (${days} dni) przekracza dostępny urlop (${remaining} dni) — skoryguj saldo` }
+    if (type === 'na_zadanie' && days > prevOnDemand && onDemandUsed + days > ON_DEMAND_LIMIT) return { error: `Urlop na żądanie: limit ${ON_DEMAND_LIMIT} dni/rok (wykorzystano ${onDemandUsed})` }
+  }
+  return { days }
+}
+
+// Po zatwierdzeniu/dodaniu/przesunięciu urlopu: dni urlopu nie mogą być jednocześnie „przepracowane”.
+// Wpisy z auto-grafiku (syntetyczne) usuwamy; wpisy ręczne z godzinami zwracamy jako konflikt do decyzji admina.
+async function reconcileWorkTime(employeeId: string, from: string, to: string): Promise<Array<{ date: string; hours_worked: number }>> {
+  const entries: any[] = await db.work_time_entries.forEmployeeRange(employeeId, from, to)
+  const conflicts: Array<{ date: string; hours_worked: number }> = []
+  for (const e of entries) {
+    if (e.created_by === 'auto-grafik') await db.work_time_entries.delete(e.id)
+    else if ((e.hours_worked || 0) > 0) conflicts.push({ date: e.date, hours_worked: e.hours_worked })
+  }
+  return conflicts
+}
+const isCalamariImport = (lr: any) => lr.decided_by === 'import-calamari' || String(lr.admin_comment || '').startsWith('Import z Calamari')
+
+// GET /api/hr/leave-calendar?month=YYYY-MM&include_cancelled=true — siatka pracownicy × dni.
+// Admin: pełne typy i statusy (approved/pending [+cancelled]); pracownik: tylko zatwierdzone,
+// typ zamaskowany (urlop wypoczynkowy/na żądanie = „wypoczynkowy”, reszta = „absence”) — bez danych wrażliwych (L4 itp.).
+router.get('/leave-calendar', async (req: Request, res: Response) => {
+  try {
+    const month = String(req.query.month ?? '').slice(0, 7) || warsawToday().slice(0, 7)
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) { res.status(400).json({ error: 'Podaj miesiąc RRRR-MM' }); return }
+    const isAdmin = (req as any).user?.role === 'admin'
+    const includeCancelled = isAdmin && String(req.query.include_cancelled) === 'true'
+    const year = Number(month.slice(0, 4)), mm = Number(month.slice(5, 7))
+    const daysInMonth = new Date(Date.UTC(year, mm, 0)).getUTCDate()
+    const from = `${month}-01`, to = `${month}-${String(daysInMonth).padStart(2, '0')}`
+    const holidays = polishHolidayNames(year)
+    const days = []
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = `${month}-${String(d).padStart(2, '0')}`
+      const dow = new Date(date + 'T00:00:00Z').getUTCDay()
+      const hn = holidays.get(date)
+      days.push({ date, dow, is_weekend: dow === 0 || dow === 6, is_holiday: !!hn, ...(hn ? { holiday_name: hn } : {}) })
+    }
+    const statuses = isAdmin ? ['approved', 'pending', ...(includeCancelled ? ['cancelled'] : [])] : ['approved']
+    const [emps, leaves] = await Promise.all([db.employees.all(), db.leave_requests.overlapping(from, to, statuses)])
+    const employees = (emps as any[])
+      .filter(e => (!e.end_date || e.end_date >= from) && (!e.start_date || e.start_date <= to))
+      .map(e => ({ id: e.id, name: e.name, position: e.position || null }))
+    const empIds = new Set(employees.map(e => e.id))
+    const absentSet: Record<string, Set<string>> = {}
+    for (const l of leaves as any[]) {
+      if (l.status !== 'approved' || !empIds.has(l.employee_id)) continue
+      for (const d of days) if (!d.is_weekend && !d.is_holiday && l.date_from <= d.date && l.date_to >= d.date) (absentSet[d.date] ??= new Set()).add(l.employee_id)
+    }
+    const absent: Record<string, number> = Object.fromEntries(Object.entries(absentSet).map(([k, v]) => [k, v.size]))
+    res.json({
+      month, from, to, today: warsawToday(), read_only: !isAdmin, days, employees,
+      leaves: (leaves as any[]).filter(l => empIds.has(l.employee_id)).map(l => ({
+        id: l.id, employee_id: l.employee_id,
+        type: isAdmin ? l.type : (POOL_TYPES.includes(l.type) ? 'wypoczynkowy' : 'absence'),
+        status: l.status, date_from: l.date_from, date_to: l.date_to, days_count: l.days_count,
+        comment: isAdmin ? (l.comment ?? null) : null, admin_comment: isAdmin ? (l.admin_comment ?? null) : null,
+      })),
+      absent_per_day: absent,
+    })
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// POST /api/hr/admin/leave-requests — admin dodaje nieobecność pracownikowi (domyślnie od razu zatwierdzona)
+router.post('/admin/leave-requests', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { employee_id, type, date_from, date_to, comment } = req.body ?? {}
+    const emp: any = employee_id ? await db.employees.find(String(employee_id)) : null
+    if (!emp) { res.status(404).json({ error: 'Pracownik nie znaleziony' }); return }
+    const status = req.body?.status === 'pending' ? 'pending' : 'approved'
+    // saldo/limit sprawdzamy także dla „oczekującego” — i tak ma zostać zatwierdzony
+    const v = await validateLeaveRange(emp.id, String(type), String(date_from), String(date_to), { countsAgainstPool: true })
+    if ('error' in v) { res.status(400).json({ error: v.error }); return }
+    const item = {
+      id: uuidv4(), employee_id: emp.id, type: String(type), date_from: String(date_from), date_to: String(date_to), days_count: v.days,
+      status, comment: comment ? String(comment).trim().slice(0, 500) : null,
+      admin_comment: 'Dodano przez administratora', decided_by: status === 'approved' ? ((req as any).user?.id || null) : null,
+      decided_at: status === 'approved' ? now() : null, created_at: now(), updated_at: now(),
+    }
+    await db.leave_requests.insert(item)
+    const conflicting_entries = status === 'approved' ? await reconcileWorkTime(emp.id, item.date_from, item.date_to) : []
+    res.status(201).json({ ...item, conflicting_entries })
+  } catch { res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// PUT /api/hr/admin/leave-requests/:id — zmiana terminu / typu / komentarza (tylko pending lub approved)
+router.put('/admin/leave-requests/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const lr: any = await db.leave_requests.find(req.params.id)
+    if (!lr) { res.status(404).json({ error: 'Wniosek nie znaleziony' }); return }
+    if (!['approved', 'pending'].includes(lr.status)) { res.status(400).json({ error: `Nie można edytować wniosku ze statusem „${lr.status}”` }); return }
+    const type = req.body?.type ? String(req.body.type) : lr.type
+    const from = req.body?.date_from ? String(req.body.date_from) : lr.date_from
+    const to = req.body?.date_to ? String(req.body.date_to) : lr.date_to
+    const rangeChanged = from !== lr.date_from || to !== lr.date_to
+    const changed = type !== lr.type || rangeChanged
+    if (changed && isCalamariImport(lr)) {
+      res.status(400).json({ error: 'Wpis z importu Calamari — zmiana terminu/typu wróciłaby przy następnym imporcie. Anuluj ten wpis (zostaje w historii) i dodaj nowy.' }); return
+    }
+    const today = warsawToday()
+    if (rangeChanged && lr.status === 'approved' && lr.date_from < today && req.body?.force !== true) {
+      res.status(400).json({ error: lr.date_to < today
+        ? 'Ten urlop już się zakończył — dni zostały wykorzystane. Zmiana terminu tylko dla błędnego wpisu (zaznacz „wpis jest błędny”).'
+        : 'Ten urlop już trwa. Żeby odwołać pracownika z urlopu, użyj „Odwołaj z urlopu”; zmiana terminu tylko dla błędnego wpisu (zaznacz „wpis jest błędny”).' }); return
+    }
+    const v = await validateLeaveRange(lr.employee_id, type, from, to, { excludeId: lr.id, countsAgainstPool: true, skipOverlap: !rangeChanged })
+    if ('error' in v) { res.status(400).json({ error: v.error }); return }
+    const note = changed ? `Zmieniono przez administratora ${warsawToday()}: ${lr.date_from} – ${lr.date_to} (${lr.type}) → ${from} – ${to} (${type})` : ''
+    const adminComment = req.body?.admin_comment !== undefined ? String(req.body.admin_comment).trim().slice(0, 500) : (lr.admin_comment ?? '')
+    await db.leave_requests.update(lr.id, {
+      type, date_from: from, date_to: to, days_count: v.days,
+      comment: req.body?.comment !== undefined ? (String(req.body.comment).trim().slice(0, 500) || null) : lr.comment,
+      admin_comment: [adminComment, note].filter(Boolean).join(' · ') || null,
+      updated_at: now(),
+    })
+    const conflicting_entries = lr.status === 'approved' && rangeChanged ? await reconcileWorkTime(lr.employee_id, from, to) : []
+    res.json({ ...(await db.leave_requests.find(lr.id)), conflicting_entries })
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
 })
 

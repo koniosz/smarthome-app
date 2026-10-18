@@ -247,6 +247,11 @@ export const db = {
         where: { status: 'approved', date_from: { lte: to }, date_to: { gte: from } },
         include: { employee: { select: { id: true, name: true } } },
       }),
+    overlapping: (from: string, to: string, statuses: string[], employeeId?: string) =>
+      prisma.leaveRequest.findMany({
+        where: { status: { in: statuses }, date_from: { lte: to }, date_to: { gte: from }, ...(employeeId ? { employee_id: employeeId } : {}) },
+        orderBy: { date_from: 'asc' },
+      }),
     find: (id: string) => prisma.leaveRequest.findUnique({ where: { id } }),
     insert: (item: any) => prisma.leaveRequest.create({ data: item }),
     update: (id: string, patch: any) => prisma.leaveRequest.update({ where: { id }, data: patch }),

@@ -558,6 +558,8 @@ export interface HrLeaveRequest {
   created_at: string
   employee?: { id: string; name: string }
 }
+// Ręczne wpisy czasu pracy w dniach nowo zatwierdzonego urlopu (wpisy auto-grafiku backend usuwa sam)
+export interface HrWorkTimeConflict { date: string; hours_worked: number }
 export interface HrWorkTimeEntry {
   id: string
   employee_id: string
@@ -592,6 +594,32 @@ export interface HrEwidencja {
     leave_days_by_type: Record<string, number>
   }
 }
+// Kalendarz urlopów (siatka pracownicy × dni miesiąca). Dla nie-admina read_only=true,
+// a typ nieobecności może być zamaskowany jako 'absence'.
+export interface HrLeaveCalendarDay { date: string; dow: number; is_weekend: boolean; is_holiday: boolean; holiday_name?: string }
+export interface HrLeaveCalendarEmployee { id: string; name: string; position?: string | null }
+export interface HrLeaveCalendarLeave {
+  id: string
+  employee_id: string
+  type: LeaveType | 'absence'
+  status: 'approved' | 'pending' | 'cancelled'
+  date_from: string
+  date_to: string
+  days_count: number
+  comment: string | null
+  admin_comment: string | null
+}
+export interface HrLeaveCalendar {
+  month: string          // YYYY-MM
+  from: string           // YYYY-MM-DD (pierwszy dzień miesiąca)
+  to: string             // YYYY-MM-DD (ostatni dzień miesiąca)
+  today: string          // YYYY-MM-DD
+  read_only: boolean     // true dla nie-admina: bez akcji, typy zamaskowane
+  days: HrLeaveCalendarDay[]
+  employees: HrLeaveCalendarEmployee[]           // aktywni w miesiącu, po nazwisku
+  leaves: HrLeaveCalendarLeave[]                 // mogą wykraczać poza miesiąc — rysować tylko dni w zakresie
+  absent_per_day: Record<string, number>         // data → liczba nieobecnych (approved, dni robocze)
+}
 export const hrApi = {
   me: () => api.get<{ employee: Employee | null; balance?: HrLeaveBalance; requests?: HrLeaveRequest[] }>('/hr/me').then(r => r.data),
   createLeave: (data: { type: LeaveType; date_from: string; date_to: string; comment?: string }) =>
@@ -605,12 +633,21 @@ export const hrApi = {
     api.get<{ year: number; rows: Array<{ employee: Employee; balance: HrLeaveBalance; pending_count: number }> }>('/hr/admin/overview', { params: { year } }).then(r => r.data),
   adminRequests: (status?: string) => api.get<HrLeaveRequest[]>('/hr/admin/leave-requests', { params: { status } }).then(r => r.data),
   decide: (id: string, decision: 'approved' | 'rejected', admin_comment?: string) =>
-    api.post<HrLeaveRequest>(`/hr/admin/leave-requests/${id}/decide`, { decision, admin_comment }).then(r => r.data),
+    api.post<HrLeaveRequest & { conflicting_entries?: HrWorkTimeConflict[] }>(`/hr/admin/leave-requests/${id}/decide`, { decision, admin_comment }).then(r => r.data),
   // Anuluj zatwierdzony/oczekujący urlop (zostaje w historii) / usuń wpis bez śladu
   adminCancelLeave: (id: string, data: { reason?: string; effective_from?: string; force?: boolean }) =>
     api.post<HrLeaveRequest & { action: 'cancelled' | 'shortened'; new_date_to?: string; returned_days: number }>(`/hr/admin/leave-requests/${id}/cancel`, data).then(r => r.data),
   adminDeleteLeave: (id: string) =>
     api.delete<{ ok: boolean }>(`/hr/admin/leave-requests/${id}`).then(r => r.data),
+  // Kalendarz urlopów (każdy zalogowany; admin pełne dane, pracownik zamaskowane)
+  leaveCalendar: (month: string, includeCancelled = false) =>
+    api.get<HrLeaveCalendar>('/hr/leave-calendar', { params: { month, include_cancelled: includeCancelled ? 'true' : 'false' } }).then(r => r.data),
+  // Admin dodaje nieobecność za pracownika (domyślnie od razu zatwierdzona)
+  adminCreateLeave: (data: { employee_id: string; type: LeaveType; date_from: string; date_to: string; comment?: string; status?: 'approved' | 'pending' }) =>
+    api.post<HrLeaveRequest & { conflicting_entries?: HrWorkTimeConflict[] }>('/hr/admin/leave-requests', data).then(r => r.data),
+  // Admin zmienia termin / typ / komentarze (tylko pending/approved)
+  adminUpdateLeave: (id: string, data: { date_from?: string; date_to?: string; type?: LeaveType; comment?: string; admin_comment?: string; force?: boolean }) =>
+    api.put<HrLeaveRequest & { conflicting_entries?: HrWorkTimeConflict[] }>(`/hr/admin/leave-requests/${id}`, data).then(r => r.data),
   setBalance: (employeeId: string, year: number, data: { entitlement_days?: number; carried_over_days?: number; adjustment_days?: number; adjustment_note?: string }) =>
     api.put<HrLeaveBalance>(`/hr/admin/balance/${employeeId}/${year}`, data).then(r => r.data),
   adminUpsertWorkTime: (employeeId: string, data: Partial<HrWorkTimeEntry> & { date: string }) =>
