@@ -528,10 +528,18 @@ function AdminGrafik() {
 
 function AdminWnioski() {
   const [status, setStatus] = useState('pending')
+  const [query, setQuery] = useState('') // szukaj po nazwisku / typie / dacie
   const [list, setList] = useState<HrLeaveRequest[]>([])
   const [loading, setLoading] = useState(true)
   const load = () => { setLoading(true); hrApi.adminRequests(status === 'all' ? undefined : status).then(setList).catch(() => setList([])).finally(() => setLoading(false)) }
   useEffect(() => { load() }, [status])
+
+  // Filtr tekstowy (nazwisko / typ / data w formacie DD.MM lub RRRR-MM-DD) + sortowanie od najnowszej daty urlopu
+  const q = query.trim().toLowerCase()
+  const visible = [...list]
+    .filter(r => !q || [r.employee?.name, LEAVE_TYPE_LABELS[r.type] ?? r.type, r.type, r.date_from, r.date_to, fmtDate(r.date_from), fmtDate(r.date_to), r.comment, r.admin_comment]
+      .some(v => (v || '').toLowerCase().includes(q)))
+    .sort((a, b) => b.date_from.localeCompare(a.date_from) || b.created_at.localeCompare(a.created_at))
 
   const decide = async (r: HrLeaveRequest, decision: 'approved' | 'rejected') => {
     const comment = decision === 'rejected' ? (window.prompt('Powód odrzucenia (opcjonalnie):') ?? '') : ''
@@ -550,15 +558,19 @@ function AdminWnioski() {
     (r.status === 'rejected' || r.status === 'cancelled') && r.decided_by !== 'import-calamari' && !(r.admin_comment || '').startsWith('Import z Calamari')
   return (
     <div className="space-y-3">
-      <select className={`${inputCls} w-56`} value={status} onChange={e => setStatus(e.target.value)}>
-        <option value="pending">Oczekujące</option><option value="approved">Zatwierdzone</option>
-        <option value="rejected">Odrzucone</option><option value="cancelled">Anulowane</option><option value="all">Wszystkie</option>
-      </select>
+      <div className="flex flex-wrap gap-2 items-center">
+        <select className={`${inputCls} w-56`} value={status} onChange={e => setStatus(e.target.value)}>
+          <option value="pending">Oczekujące</option><option value="approved">Zatwierdzone</option>
+          <option value="rejected">Odrzucone</option><option value="cancelled">Anulowane</option><option value="all">Wszystkie</option>
+        </select>
+        <input className={`${inputCls} w-72`} value={query} onChange={e => setQuery(e.target.value)} placeholder="Szukaj: nazwisko, typ, data (np. 18.09)…" />
+        <span className="text-xs text-gray-400">{visible.length} z {list.length} · najnowsze daty na górze</span>
+      </div>
       {loading ? <div className="text-center py-8 text-gray-400">Ładowanie…</div>
-        : list.length === 0 ? <div className="text-center py-8 text-gray-400 text-sm">Brak wniosków.</div>
+        : visible.length === 0 ? <div className="text-center py-8 text-gray-400 text-sm">{list.length ? 'Brak wniosków pasujących do wyszukiwania.' : 'Brak wniosków.'}</div>
         : (
           <div className="space-y-2">
-            {list.map(r => {
+            {visible.map(r => {
               const st = STATUS_BADGE[r.status] ?? STATUS_BADGE.pending
               return (
                 <div key={r.id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3.5 flex items-center gap-3 flex-wrap">
