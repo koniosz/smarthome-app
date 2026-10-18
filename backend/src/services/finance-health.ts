@@ -511,8 +511,8 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
     prisma.salesRecord.findMany({ where: { dedup_status: 'module_match', matched_id: { not: null } }, select: { matched_id: true } }),
     prisma.salesInvoice.findMany({
       where: { status: 'issued', OR: [{ ksef_number: null }, { ksef_number: '' }] },
-      select: { id: true, total_gross: true, due_date: true },
-    }),
+      select: { id: true, total_gross: true, due_date: true, company_id: true },
+    }).then(async rows => { const { moduleInvoiceScope } = await import('../routes/companies'); const inScope = await moduleInvoiceScope(); return rows.filter(r => inScope(r)) }),
     prisma.ksefInvoice.findMany({
       where: { invoice_direction: 'incoming', OR: [{ payment_status: null }, { payment_status: { not: 'paid' } }] },
       select: { gross_amount: true, payment_due_date: true },

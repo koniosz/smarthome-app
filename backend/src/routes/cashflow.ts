@@ -268,7 +268,7 @@ router.get('/', async (req: Request, res: Response) => {
       }),
       prisma.salesInvoice.findMany({
         where: { status: 'issued' },
-        select: { id: true, number: true, buyer_name: true, issue_date: true, sale_date: true, due_date: true, total_gross: true },
+        select: { id: true, number: true, buyer_name: true, issue_date: true, sale_date: true, due_date: true, total_gross: true, company_id: true },
       }),
       prisma.ksefInvoice.findMany({
         where: { invoice_direction: 'incoming', OR: [{ payment_status: null }, { payment_status: { not: 'paid' } }] },
@@ -303,7 +303,10 @@ router.get('/', async (req: Request, res: Response) => {
       const due = isoDate(r.due_date) || addDays(isoDate(r.sale_date), 14)
       receivables.push({ label: [r.invoice_number, r.buyer_name].filter(Boolean).join(' · '), amount: r.gross, due_date: due })
     }
+    const { moduleInvoiceScope } = await import('./companies')
+    const inScope = await moduleInvoiceScope() // należności innej spółki nie wpływają na konto SHC
     for (const inv of salesInvoices) {
+      if (!inScope(inv)) continue
       if (dedupedModuleIds.has(inv.id)) continue
       if (inv.number && firmaoNumbers.has(alnum(inv.number))) continue
       const base = isoDate(inv.sale_date) || isoDate(inv.issue_date)

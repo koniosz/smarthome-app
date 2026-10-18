@@ -459,6 +459,36 @@ export interface HandoverProtocol {
   accepted_at: string | null
   created_at: string
 }
+// ─── Firmy‑sprzedawcy (dane na fakturach, logo, stopka, osobna numeracja) ──────
+export type CompanyBusinessUnit = 'shc' | 'gatelynk' | 'shared'
+export interface Company {
+  id: string
+  name: string
+  short_name: string
+  nip: string
+  address: string
+  bank_account: string
+  bank_name: string
+  email: string
+  invoice_prefix: string            // np. 'FV' → numer FV/2026/10/001 (numeracja osobna per firma)
+  invoice_logo: string              // data URL (PNG/JPG/SVG/WEBP ≤ ~700 KB) lub ''
+  invoice_footer: string
+  business_unit: CompanyBusinessUnit
+  is_default: boolean
+  active: boolean
+  invoices_count?: number           // tylko w odpowiedzi admina (?all=true)
+  created_at: string
+  updated_at: string
+}
+export type CompanyInput = Omit<Company, 'id' | 'created_at' | 'updated_at' | 'invoices_count'>
+export const companiesApi = {
+  /** Aktywne firmy (każdy zalogowany); `all=true` (admin) → wszystkie, z `invoices_count`. */
+  list: (all = false) => api.get<Company[]>('/companies', { params: all ? { all: 'true' } : undefined }).then(r => r.data),
+  create: (data: CompanyInput) => api.post<Company>('/companies', data).then(r => r.data),
+  update: (id: string, data: Partial<CompanyInput>) => api.put<Company>(`/companies/${id}`, data).then(r => r.data),
+  remove: (id: string) => api.delete(`/companies/${id}`).then(r => r.data),
+}
+
 // ─── Faktury sprzedażowe (beta) ─────────────────────────────────────────────────
 export interface SalesInvoiceItem {
   name: string
@@ -470,10 +500,21 @@ export interface SalesInvoiceItem {
   total_vat: number
   total_gross: number
 }
+/** Snapshot sprzedawcy zapisywany przy wystawieniu faktury (szkic ma `seller: null`). */
+export interface SalesInvoiceSeller {
+  name: string
+  address: string
+  nip: string
+  bank_account: string
+  bank_name: string
+  footer?: string   // stopka z chwili wystawienia
+}
 export interface SalesInvoice {
   id: string
   number: string | null
   status: 'draft' | 'issued' | 'paid' | 'cancelled'
+  company_id: string | null
+  seller: SalesInvoiceSeller | null
   issue_date: string | null
   sale_date: string | null
   due_date: string | null

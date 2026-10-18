@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import Modal from '../ui/Modal'
-import { salesInvoicesApi, quotesApi, warehouseApi, projectsApi, projectWarehouseApi, companySettingsApi } from '../../api/client'
-import type { SalesInvoice, SalesInvoiceItem, WarehouseDoc, ProjectWarehouseDoc, ProjectWarehouseDocLine, CompanySettings } from '../../api/client'
+import { salesInvoicesApi, quotesApi, warehouseApi, projectsApi, projectWarehouseApi, companiesApi } from '../../api/client'
+import type { SalesInvoice, SalesInvoiceItem, WarehouseDoc, ProjectWarehouseDoc, ProjectWarehouseDocLine, Company } from '../../api/client'
 import type { AiQuote, Project } from '../../types'
 import { COMPANY_INFO } from '../../constants/company'
 import { useAuth } from '../../auth/AuthContext'
+import CompaniesManagerModal from './CompaniesManagerModal'
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500'
 const lblCls = 'block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1'
@@ -28,56 +29,46 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
   const [loading, setLoading] = useState(true)
   const [editInv, setEditInv] = useState<SalesInvoice | 'new' | null>(null)
   const [previewInv, setPreviewInv] = useState<SalesInvoice | null>(null)
-  const [company, setCompany] = useState<CompanySettings>({ invoice_logo: '', invoice_footer: '', updated_at: '' })
-  const [logoBusy, setLogoBusy] = useState(false)
+  // Firmy‑sprzedawcy: admin widzi też nieaktywne (żeby logo/stopka starych faktur nadal się rozwiązywały)
+  const [companies, setCompanies] = useState<Company[]>([])
+  const [showCompanies, setShowCompanies] = useState(false)
+  const [sellerFilter, setSellerFilter] = useState('')
 
   const load = () => { setLoading(true); salesInvoicesApi.list().then(setList).catch(() => setList([])).finally(() => setLoading(false)) }
-  useEffect(() => { load(); companySettingsApi.get().then(setCompany).catch(() => {}) }, [])
+  // także nieaktywne — stare faktury wystawione przez dezaktywowaną firmę muszą drukować się z jej logo
+  const loadCompanies = () => companiesApi.list(true).then(setCompanies).catch(() => setCompanies([]))
+  useEffect(() => { load() }, [])
+  useEffect(() => { loadCompanies() }, [isAdmin])
 
   const act = async (fn: () => Promise<any>, confirmMsg?: string) => {
     if (confirmMsg && !window.confirm(confirmMsg)) return
     try { await fn(); load() } catch (e: any) { alert(e?.response?.data?.error || 'Błąd operacji.') }
   }
 
-  // Logo firmy na fakturze — plik → data URL → ustawienia (tylko admin)
-  const uploadLogo = async (file: File) => {
-    if (file.size > 700 * 1024) { alert('Logo jest za duże — maksymalnie 700 KB (najlepiej PNG/SVG ~300×100 px).'); return }
-    setLogoBusy(true)
-    try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = reject; r.readAsDataURL(file)
-      })
-      setCompany(await companySettingsApi.update({ invoice_logo: dataUrl }))
-    } catch (e: any) { alert(e?.response?.data?.error || 'Nie udało się zapisać logo.') }
-    finally { setLogoBusy(false) }
+  const defaultCompany = companies.find(c => c.is_default) ?? companies[0]
+  const multiCompany = companies.length > 1
+  // stare faktury (company_id = null) traktujemy jak faktury firmy domyślnej
+  const effectiveCompanyId = (inv: SalesInvoice) => inv.company_id ?? defaultCompany?.id ?? ''
+  const sellerLabel = (inv: SalesInvoice) => {
+    const c = companies.find(x => x.id === effectiveCompanyId(inv))
+    return c ? (c.short_name || c.name) : (inv.seller?.name ?? '')
   }
-  const removeLogo = async () => {
-    if (!confirm('Usunąć logo z faktur?')) return
-    setLogoBusy(true)
-    try { setCompany(await companySettingsApi.update({ invoice_logo: '' })) } finally { setLogoBusy(false) }
-  }
+  const visible = sellerFilter ? list.filter(inv => effectiveCompanyId(inv) === sellerFilter) : list
 
   return (
     <div className="p-6 max-w-5xl mx-auto min-h-screen bg-[#f8fafc] dark:bg-gray-950">
       <div className="flex items-start justify-between mb-1 flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-50">Faktury sprzedażowe <span className="text-xs font-semibold align-middle bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 px-2 py-0.5 rounded-full">BETA</span></h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Szkic → wystawienie (numer FV) → podgląd / wydruk / PDF · numeracja FV/RRRR/MM/NNN</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Szkic → wystawienie (numer wg prefiksu firmy) → podgląd / wydruk / PDF · numeracja PREFIKS/RRRR/MM/NNN, osobna dla każdej firmy</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isAdmin && (
-            <label className={`inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg cursor-pointer ${logoBusy ? 'opacity-60' : ''}`}
-              title="Logo drukowane w nagłówku faktury">
-              {company.invoice_logo
-                ? <img src={company.invoice_logo} alt="logo" className="h-5 max-w-[80px] object-contain" />
-                : <span>🖼</span>}
-              {company.invoice_logo ? 'Zmień logo' : 'Dodaj logo firmy'}
-              <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) uploadLogo(f); e.target.value = '' }} />
-            </label>
-          )}
-          {isAdmin && company.invoice_logo && (
-            <button onClick={removeLogo} disabled={logoBusy} className="px-2 py-2 text-xs text-gray-400 hover:text-red-500" title="Usuń logo">✕</button>
+            <button onClick={() => setShowCompanies(true)}
+              title="Rejestr firm‑sprzedawców: dane, logo, stopka i prefiks numeracji na fakturach"
+              className="px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">
+              🏢 Firmy (sprzedawcy)
+            </button>
           )}
           <button onClick={onBack} className="px-3 py-2 text-sm font-medium border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg">← Wróć</button>
           <button onClick={() => setEditInv('new')} className="px-4 py-2 text-sm font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">+ Nowa faktura</button>
@@ -87,16 +78,33 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
         ⚠️ Wysyłka do KSeF jest <strong>przygotowana, ale wyłączona</strong> — od 04.2026 KSeF jest obowiązkowy dla faktur B2B; włączenie wysyłki wymaga osobnej decyzji.
       </p>
 
+      {multiCompany && (
+        <div className="flex items-center gap-2 mb-3">
+          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Sprzedawca:</label>
+          <select value={sellerFilter} onChange={e => setSellerFilter(e.target.value)}
+            className="px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <option value="">wszystkie</option>
+            {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}{c.active ? '' : ' (nieaktywna)'}</option>)}
+          </select>
+          {sellerFilter && <span className="text-xs text-gray-400">{visible.length} z {list.length}</span>}
+        </div>
+      )}
+
       {loading ? <div className="text-center py-14 text-gray-400">Ładowanie…</div>
         : list.length === 0 ? <div className="text-center py-14 text-gray-400"><div className="text-4xl mb-3">🧾</div><p className="text-sm">Brak faktur. Utwórz pierwszą — ręcznie, z wyceny albo z WZ.</p></div>
+        : visible.length === 0 ? <div className="text-center py-14 text-gray-400 text-sm">Brak faktur wybranego sprzedawcy.</div>
         : (
           <div className="space-y-2">
-            {list.map(inv => {
+            {visible.map(inv => {
               const st = STATUS_BADGE[inv.status] ?? STATUS_BADGE.draft
+              const seller = multiCompany ? sellerLabel(inv) : ''
               return (
                 <div key={inv.id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3.5 flex items-center gap-3 flex-wrap">
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-gray-800 dark:text-gray-100">{inv.number || 'Szkic (bez numeru)'} · {inv.buyer_name}</div>
+                    <div className="font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2 flex-wrap">
+                      {seller && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 whitespace-nowrap" title="Sprzedawca">{seller}</span>}
+                      <span>{inv.number || 'Szkic (bez numeru)'} · {inv.buyer_name}</span>
+                    </div>
                     <div className="text-xs text-gray-400">
                       {inv.issue_date ? `wyst. ${fmtDate(inv.issue_date)}` : `utw. ${fmtDate(inv.created_at)}`}
                       {inv.due_date ? ` · termin ${fmtDate(inv.due_date)}` : ''} · {inv.items?.length ?? 0} poz.
@@ -115,11 +123,11 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
                       <button onClick={() => act(() => salesInvoicesApi.delete(inv.id), 'Usunąć szkic?')} className="px-2 py-1 text-xs border border-red-200 dark:border-red-900 text-red-500 rounded hover:bg-red-50 dark:hover:bg-red-950/30">🗑</button>
                     </>}
                     {inv.status === 'issued' && <>
-                      <button onClick={() => printInvoice(inv, company)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj / PDF</button>
+                      <button onClick={() => printInvoice(inv, companies)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj / PDF</button>
                       <button onClick={() => act(() => salesInvoicesApi.markPaid(inv.id))} className="px-2.5 py-1 text-xs font-medium bg-green-600 hover:bg-green-700 text-white rounded">Opłacona</button>
                       <button onClick={() => act(() => salesInvoicesApi.cancel(inv.id), 'Anulować fakturę? Pozostanie w rejestrze jako anulowana.')} className="px-2 py-1 text-xs border border-red-200 dark:border-red-900 text-red-500 rounded hover:bg-red-50 dark:hover:bg-red-950/30">Anuluj</button>
                     </>}
-                    {inv.status === 'paid' && <button onClick={() => printInvoice(inv, company)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj / PDF</button>}
+                    {inv.status === 'paid' && <button onClick={() => printInvoice(inv, companies)} className="px-2.5 py-1 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-100 dark:hover:bg-gray-800">🖨 Drukuj / PDF</button>}
                   </div>
                 </div>
               )
@@ -127,15 +135,35 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
           </div>
         )}
 
-      {editInv && <InvoiceBuilderModal invoice={editInv === 'new' ? null : editInv} onClose={() => setEditInv(null)} onSaved={() => { setEditInv(null); load() }} />}
-      {previewInv && <InvoicePreviewModal invoice={previewInv} company={company} onClose={() => setPreviewInv(null)} />}
+      {editInv && <InvoiceBuilderModal invoice={editInv === 'new' ? null : editInv} companies={companies} onClose={() => setEditInv(null)} onSaved={() => { setEditInv(null); load() }} />}
+      {previewInv && <InvoicePreviewModal invoice={previewInv} companies={companies} onClose={() => setPreviewInv(null)} />}
+      {showCompanies && <CompaniesManagerModal onClose={() => { setShowCompanies(false); loadCompanies() }} onChanged={loadCompanies} />}
     </div>
   )
 }
 
+// ── Dane sprzedawcy do wydruku ──
+// wystawiona: snapshot `inv.seller` · szkic: firma z `company_id` · brak → firma domyślna · brak firm z backendu → stała COMPANY_INFO
+interface SellerInfo { name: string; address: string; nip: string; bank_account: string; bank_name: string; logo: string; footer: string }
+function resolveSeller(inv: SalesInvoice, companies: Company[]): SellerInfo {
+  const defaultCompany = companies.find(c => c.is_default) ?? companies[0]
+  const byId = inv.company_id ? companies.find(c => c.id === inv.company_id) : undefined
+  // Wystawiona faktura NIGDY nie bierze danych „aktualnie domyślnej” firmy — tylko snapshot / jej własna firma /
+  // stała SHC (faktury sprzed rejestru); szkic bez firmy = firma domyślna
+  const company = byId ?? (inv.status === 'draft' ? defaultCompany : undefined)
+  const base = inv.seller ?? company ?? COMPANY_INFO
+  return {
+    name: base.name ?? '', address: base.address ?? '', nip: base.nip ?? '',
+    bank_account: base.bank_account ?? '', bank_name: base.bank_name ?? '',
+    logo: company?.invoice_logo ?? '', footer: inv.seller?.footer ?? company?.invoice_footer ?? '',
+  }
+}
+const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const nl2br = (s: string) => s.replace(/\n/g, '<br>')
+
 // ── Podgląd faktury (ta sama treść co wydruk, w oknie aplikacji) ──
-function InvoicePreviewModal({ invoice, company, onClose }: { invoice: SalesInvoice; company: CompanySettings; onClose: () => void }) {
-  const html = buildInvoiceHtml(invoice, company, false)
+function InvoicePreviewModal({ invoice, companies, onClose }: { invoice: SalesInvoice; companies: Company[]; onClose: () => void }) {
+  const html = buildInvoiceHtml(invoice, resolveSeller(invoice, companies), false)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden">
@@ -145,7 +173,7 @@ function InvoicePreviewModal({ invoice, company, onClose }: { invoice: SalesInvo
             <div className="text-xs text-gray-400">{invoice.buyer_name} · {fmt(invoice.total_gross)} PLN brutto</div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => printInvoice(invoice, company)} className="px-3 py-1.5 text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">🖨 Drukuj / zapisz PDF</button>
+            <button onClick={() => printInvoice(invoice, companies)} className="px-3 py-1.5 text-xs font-semibold bg-violet-600 hover:bg-violet-700 text-white rounded-lg">🖨 Drukuj / zapisz PDF</button>
             <button onClick={onClose} className="px-3 py-1.5 text-xs font-medium border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">Zamknij</button>
           </div>
         </div>
@@ -157,14 +185,15 @@ function InvoicePreviewModal({ invoice, company, onClose }: { invoice: SalesInvo
 }
 
 // ── Wydruk faktury (okno drukowania — Ctrl+P → PDF) ──
-function printInvoice(inv: SalesInvoice, company?: CompanySettings) {
-  const html = buildInvoiceHtml(inv, company ?? { invoice_logo: '', invoice_footer: '', updated_at: '' }, true)
+function printInvoice(inv: SalesInvoice, companies: Company[]) {
+  const html = buildInvoiceHtml(inv, resolveSeller(inv, companies), true)
   const w = window.open('', '_blank')
   if (w) { w.document.write(html); w.document.close() }
 }
 
 // ── HTML faktury (wspólny dla podglądu i wydruku) ──
-function buildInvoiceHtml(inv: SalesInvoice, company: CompanySettings, autoPrint: boolean): string {
+function buildInvoiceHtml(inv: SalesInvoice, seller: SellerInfo, autoPrint: boolean): string {
+  const sellerAddr = nl2br(esc(seller.address))
   const rows = (inv.items || []).map((i, idx) => `<tr>
     <td>${idx + 1}</td><td>${i.name}</td>
     <td style="text-align:right">${fmt(i.qty)}</td><td>${i.unit}</td>
@@ -187,15 +216,15 @@ function buildInvoiceHtml(inv: SalesInvoice, company: CompanySettings, autoPrint
   .lbl{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px}</style></head><body>
   <div class="hdr">
     <div style="display:flex;align-items:center;gap:14px">
-      ${company.invoice_logo ? `<img src="${company.invoice_logo}" alt="logo" style="max-height:64px;max-width:200px;object-fit:contain">` : ''}
-      <div><div style="font-weight:800;font-size:14px">${COMPANY_INFO.name}</div>
-      <div style="font-size:11px;color:#475569">${COMPANY_INFO.address}<br>NIP: ${COMPANY_INFO.nip}</div></div>
+      ${seller.logo ? `<img src="${seller.logo}" alt="logo" style="max-height:64px;max-width:200px;object-fit:contain">` : ''}
+      <div><div style="font-weight:800;font-size:14px">${esc(seller.name)}</div>
+      <div style="font-size:11px;color:#475569">${sellerAddr}${seller.nip ? `<br>NIP: ${esc(seller.nip)}` : ''}</div></div>
     </div>
     <div style="text-align:right"><h1>Faktura ${inv.number ?? '(szkic)'}</h1>
     <div style="font-size:11px;color:#475569">Data wystawienia: ${fmtDate(inv.issue_date)}<br>Data sprzedaży: ${fmtDate(inv.sale_date)}${inv.due_date ? `<br>Termin płatności: ${fmtDate(inv.due_date)}` : ''}</div></div>
   </div>
   <div style="display:flex;gap:14px;margin-bottom:14px">
-    <div class="box" style="flex:1"><div class="lbl">Sprzedawca</div><strong>${COMPANY_INFO.name}</strong><br>${COMPANY_INFO.address}<br>NIP: ${COMPANY_INFO.nip}</div>
+    <div class="box" style="flex:1"><div class="lbl">Sprzedawca</div><strong>${esc(seller.name)}</strong>${sellerAddr ? `<br>${sellerAddr}` : ''}${seller.nip ? `<br>NIP: ${esc(seller.nip)}` : ''}</div>
     <div class="box" style="flex:1"><div class="lbl">Nabywca</div><strong>${inv.buyer_name}</strong>${inv.buyer_nip ? `<br>NIP: ${inv.buyer_nip}` : ''}${inv.buyer_address ? `<br>${String(inv.buyer_address).replace(/\n/g, '<br>')}` : ''}</div>
   </div>
   <table><thead><tr><th>Lp.</th><th>Nazwa towaru / usługi</th><th>Ilość</th><th>Jm.</th><th>Cena netto</th><th>Wartość netto</th><th>VAT</th><th>Kwota VAT</th><th>Wartość brutto</th></tr></thead>
@@ -205,7 +234,7 @@ function buildInvoiceHtml(inv: SalesInvoice, company: CompanySettings, autoPrint
     <tfoot><tr style="font-weight:700"><td>Razem</td><td style="text-align:right">${fmt(inv.total_net)}</td><td style="text-align:right">${fmt(inv.total_vat)}</td><td style="text-align:right">${fmt(inv.total_gross)}</td></tr></tfoot></table>
     <div style="flex:1;text-align:right">
       <div style="font-size:15px;font-weight:800;margin-bottom:6px">Do zapłaty: ${fmt(inv.total_gross)} PLN</div>
-      <div style="font-size:11px;color:#475569">Forma płatności: ${inv.payment_method || 'przelew'}<br>Konto: ${COMPANY_INFO.bank_account} (${COMPANY_INFO.bank_name})</div>
+      <div style="font-size:11px;color:#475569">Forma płatności: ${inv.payment_method || 'przelew'}${seller.bank_account ? `<br>Konto: ${esc(seller.bank_account)}${seller.bank_name ? ` (${esc(seller.bank_name)})` : ''}` : ''}</div>
     </div>
   </div>
   ${inv.notes ? `<div style="margin-top:12px;font-size:11px;color:#475569"><strong>Uwagi:</strong> ${inv.notes}</div>` : ''}
@@ -213,7 +242,7 @@ function buildInvoiceHtml(inv: SalesInvoice, company: CompanySettings, autoPrint
     <div style="border-top:1px solid #999;padding-top:4px;width:40%">Osoba upoważniona do wystawienia</div>
     <div style="border-top:1px solid #999;padding-top:4px;width:40%">Osoba upoważniona do odbioru</div>
   </div>
-  ${company.invoice_footer ? `<div style="margin-top:28px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:10px;color:#64748b;text-align:center">${company.invoice_footer}</div>` : ''}
+  ${seller.footer ? `<div style="margin-top:28px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:10px;color:#64748b;text-align:center">${nl2br(esc(seller.footer))}</div>` : ''}
   ${inv.status === 'draft' ? `<div style="position:fixed;top:40%;left:0;right:0;text-align:center;font-size:64px;font-weight:800;color:rgba(220,38,38,0.12);transform:rotate(-20deg);pointer-events:none">SZKIC</div>` : ''}
   ${autoPrint ? '<script>window.print()</script>' : ''}</body></html>`
   return html
@@ -222,9 +251,18 @@ function buildInvoiceHtml(inv: SalesInvoice, company: CompanySettings, autoPrint
 // ── Kreator / edycja faktury ──
 const EMPTY_LINE: SalesInvoiceItem = { name: '', qty: 1, unit: 'szt.', unit_price: 0, vat_rate: 23, total_net: 0, total_vat: 0, total_gross: 0 }
 
-function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvoice | null; onClose: () => void; onSaved: () => void }) {
+function InvoiceBuilderModal({ invoice, companies, onClose, onSaved }: { invoice: SalesInvoice | null; companies: Company[]; onClose: () => void; onSaved: () => void }) {
   const editing = !!invoice
   const todayIso = new Date().toISOString().slice(0, 10)
+  // Sprzedawca: aktywne firmy (+ firma edytowanego szkicu, nawet jeśli już nieaktywna); domyślnie firma `is_default`
+  const sellerOptions = companies.filter(c => c.active || c.id === invoice?.company_id)
+  const defaultSellerId = sellerOptions.find(c => c.is_default)?.id ?? sellerOptions[0]?.id ?? ''
+  const [companyId, setCompanyId] = useState<string>(
+    invoice?.company_id && sellerOptions.some(c => c.id === invoice.company_id) ? invoice.company_id : defaultSellerId,
+  )
+  const seller = sellerOptions.find(c => c.id === companyId)
+  // gdy lista firm dotarła już po otwarciu modala — ustaw domyślną (tylko dla NOWEJ faktury; szkicu nie przepinamy po cichu)
+  useEffect(() => { if (!invoice && !seller && defaultSellerId) setCompanyId(defaultSellerId) }, [invoice, seller, defaultSellerId])
   const [buyerName, setBuyerName] = useState(invoice?.buyer_name ?? '')
   const [buyerNip, setBuyerNip] = useState(invoice?.buyer_nip ?? '')
   const [buyerAddress, setBuyerAddress] = useState(invoice?.buyer_address ?? '')
@@ -339,6 +377,8 @@ function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvo
       quote_id: quoteRef || undefined, warehouse_doc_id: wzRef || undefined,
       project_id: projectRef || undefined,
       linked_mm_line_ids: [...mmInserted],
+      // sprzedawcę wysyłamy tylko gdy go zmieniono (szkic firmy nieaktywnej da się zapisać bez przepinania)
+      ...(companyId && companyId !== (invoice?.company_id ?? '') ? { company_id: companyId } : {}),
     }
     try {
       if (editing && invoice) await salesInvoicesApi.update(invoice.id, payload as any)
@@ -350,6 +390,26 @@ function InvoiceBuilderModal({ invoice, onClose, onSaved }: { invoice: SalesInvo
   return (
     <Modal title={editing ? `Edycja szkicu faktury` : 'Nowa faktura sprzedażowa (szkic)'} onClose={onClose} wide>
       <div className="space-y-4">
+        {/* Sprzedawca (firma wystawiająca) — dane, logo, stopka i prefiks numeracji z rejestru firm */}
+        {sellerOptions.length > 0 && (
+          <div className="border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20 rounded-lg p-3">
+            <label className={lblCls}>Sprzedawca (firma wystawiająca) *</label>
+            <div className="flex items-center gap-3 flex-wrap">
+              <select className={`${inputCls} max-w-md`} value={companyId} onChange={e => setCompanyId(e.target.value)}>
+                {sellerOptions.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}{c.is_default ? ' ★' : ''}{c.active ? '' : ' (nieaktywna)'}</option>
+                ))}
+              </select>
+              {seller?.invoice_logo && <img src={seller.invoice_logo} alt="logo" className="h-8 max-w-[110px] object-contain bg-white rounded px-1" />}
+            </div>
+            {seller && (
+              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+                NIP {seller.nip || '—'}{seller.address ? ` · ${seller.address.replace(/\n/g, ', ')}` : ''} · numer przy wystawieniu: <span className="font-mono font-semibold text-gray-700 dark:text-gray-200">{seller.invoice_prefix || 'FV'}/RRRR/MM/NNN</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {!editing && (
           <div className="grid grid-cols-2 gap-3">
             <div><label className={lblCls}>Importuj pozycje z wyceny</label>

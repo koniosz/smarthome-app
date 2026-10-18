@@ -41,6 +41,7 @@ import warehouseRouter from './routes/warehouse'
 import handoverRouter, { handoverSignPage, handoverSubmitSign } from './routes/handover'
 import hrRouter, { fillScheduleEntries } from './routes/hr'
 import salesInvoicesRouter from './routes/sales-invoices'
+import companiesRouter, { ensureDefaultCompany } from './routes/companies'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -113,6 +114,7 @@ app.use('/api/warehouse', warehouseRouter)     // magazyn (dostęp: admin lub ca
 app.use('/api/hr/calamari', hrCalamariRouter) // HR: import historii z Calamari (admin, klucz API per żądanie)
 app.use('/api/hr', hrRouter)                   // HR: urlopy + ewidencja czasu pracy
 app.use('/api/sales-invoices', salesInvoicesRouter) // faktury sprzedażowe (beta, admin)
+app.use('/api/companies', companiesRouter)          // rejestr firm-sprzedawców (wybór: każdy; zmiany: admin)
 app.use('/api/payables', payablesRouter)       // panel Płatności (dostęp: admin lub can_view_payments)
 // Automatyzacja rentowności — routery szczegółowe PRZED /api/finance (własne requirePayments):
 app.use('/api/finance/bank-rules', bankRulesRouter)          // reguły bankowe MT940 + nierozpoznane przelewy
@@ -217,6 +219,9 @@ const server = app.listen(Number(PORT), '0.0.0.0', () => {
   }
   console.log()
 })
+
+// Firma domyślna (Smart Home Center) — zasiew przy starcie, żeby wybór sprzedawcy nigdy nie był pusty
+ensureDefaultCompany().catch(e => console.error('[Firmy] Zasiew firmy domyślnej:', e?.message))
 
 // SCHEDULERS=off (lokalny smoke test) — wyłącza wszystkie harmonogramy (przypomnienia, KSeF, raporty, IMAP)
 const SCHEDULERS_ON = process.env.SCHEDULERS !== 'off'

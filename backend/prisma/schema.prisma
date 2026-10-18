@@ -397,6 +397,8 @@ model SalesInvoice {
   ksef_status    String  @default("not_sent") // not_sent | pending | sent | error
   ksef_number    String?
   paid_at        String?
+  company_id     String?  // sprzedawca (Company); null = firma domyślna
+  seller         Json?    // snapshot sprzedawcy z chwili wystawienia {name,address,nip,bank_account,bank_name}
   created_by     String?
   created_at     String
   updated_at     String?
@@ -775,6 +777,28 @@ model ClientSurveyAttachment {
 
 // ─── SMTP / Email configuration ───────────────────────────────────────────────
 // ─── Dane firmy do dokumentów (logo na fakturze itd.) — jeden rekord "default" ─
+// ── Rejestr firm-sprzedawców (faktury sprzedażowe mogą być wystawiane z kilku spółek) ──
+model Company {
+  id             String  @id
+  name           String                      // pełna nazwa, np. "GateLynk Sp. z o.o."
+  short_name     String  @default("")        // do chipów w listach
+  nip            String  @default("")
+  address        String  @default("")        // wielowierszowy
+  bank_account   String  @default("")
+  bank_name      String  @default("")
+  email          String  @default("")
+  invoice_prefix String  @default("FV")      // numer: <prefix>/RRRR/MM/NNN — numeracja osobna per firma
+  invoice_logo   String  @default("")        // data URL (≤ ~700 KB) lub pusty
+  invoice_footer String  @default("")
+  business_unit  String  @default("shc")     // shc | gatelynk | shared — do RZiS per jednostka
+  is_default     Boolean @default(false)
+  active         Boolean @default(true)
+  created_at     String
+  updated_at     String  @default("")
+
+  @@map("companies")
+}
+
 model CompanySettings {
   id             String @id @default("default")
   invoice_logo   String @default("")   // data URL (PNG/JPG/SVG, max ~500 KB) — pusty = bez logo

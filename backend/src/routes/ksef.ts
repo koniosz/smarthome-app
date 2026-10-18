@@ -767,11 +767,13 @@ router.get('/pnl', requireAdmin, async (req: Request, res: Response) => {
       if (dateTo)   df.lte = String(dateTo)
       moduleWhere.issue_date = df
     }
-    const moduleInvoices = await prisma.salesInvoice.findMany({
+    const { moduleInvoiceScope } = await import('./companies')
+    const inScope = await moduleInvoiceScope()
+    const moduleInvoices = (await prisma.salesInvoice.findMany({
       where: moduleWhere,
-      select: { id: true, number: true, buyer_name: true, buyer_nip: true, total_net: true, total_gross: true, issue_date: true, status: true },
+      select: { id: true, number: true, buyer_name: true, buyer_nip: true, total_net: true, total_gross: true, issue_date: true, status: true, company_id: true },
       orderBy: { issue_date: 'desc' },
-    })
+    })).filter(inv => inScope(inv)) // tylko faktury spółki (nie innej firmy-sprzedawcy)
     const revenue_module_invoices = moduleInvoices.reduce((s, i) => s + (i.total_net ?? 0), 0)
     for (const inv of moduleInvoices) {
       const month = (inv.issue_date ?? '').slice(0, 7) || 'brak daty'

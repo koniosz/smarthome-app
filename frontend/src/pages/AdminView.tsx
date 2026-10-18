@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { useAuth } from '../auth/AuthContext'
+import { companiesApi } from '../api/client'
+import type { Company } from '../api/client'
+import CompaniesManagerModal, { BUSINESS_UNIT_LABELS } from '../components/invoices/CompaniesManagerModal'
 
 // ─── SMTP helpers ────────────────────────────────────────────────────────────
 const SMTP_PRESETS = [
@@ -66,8 +69,12 @@ export default function AdminView() {
   const [resetPassword, setResetPassword] = useState('')
   const [resetting, setResetting] = useState(false)
 
+  // Firmy‑sprzedawcy (dane na fakturach)
+  const [companies, setCompanies] = useState<Company[]>([])
+  const [showCompanies, setShowCompanies] = useState(false)
+
   // SMTP settings state
-  const [activeTab, setActiveTab] = useState<'users' | 'smtp'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'smtp' | 'companies'>('users')
   const [smtpForm, setSmtpForm] = useState<SmtpForm>(SMTP_DEFAULT)
   const [smtpSource, setSmtpSource] = useState<'database' | 'env' | 'none'>('none')
   const [smtpConfigured, setSmtpConfigured] = useState(false)
@@ -250,6 +257,15 @@ export default function AdminView() {
     if (activeTab === 'smtp') loadSmtp()
   }, [activeTab, loadSmtp])
 
+  // ─── Firmy‑sprzedawcy ──────────────────────────────────────────────────────
+  const loadCompanies = useCallback(() => {
+    companiesApi.list(true).then(setCompanies).catch(() => { /* endpoint może jeszcze nie istnieć — pokaż pustą listę */ })
+  }, [])
+
+  useEffect(() => {
+    if (activeTab === 'companies') loadCompanies()
+  }, [activeTab, loadCompanies])
+
   async function saveSmtp(e: React.FormEvent) {
     e.preventDefault()
     setSmtpSaving(true)
@@ -338,6 +354,16 @@ export default function AdminView() {
           {smtpConfigured && activeTab !== 'smtp' && (
             <span className="w-2 h-2 rounded-full bg-green-500 inline-block" title="Poczta skonfigurowana" />
           )}
+        </button>
+        <button
+          onClick={() => setActiveTab('companies')}
+          className={`px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-colors border-b-2 -mb-px ${
+            activeTab === 'companies'
+              ? 'border-violet-600 text-violet-600 dark:text-violet-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+        >
+          🏢 Firmy
         </button>
       </div>
 
@@ -675,6 +701,67 @@ export default function AdminView() {
           </div>
         </div>
       )} {/* end activeTab === 'smtp' */}
+
+      {/* ═══ TAB: Firmy (sprzedawcy na fakturach) ═══ */}
+      {activeTab === 'companies' && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+          {/* Lista firm (3/5) */}
+          <div className="xl:col-span-3 bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">🏢 Firmy (sprzedawcy na fakturach)</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Każda firma ma własne dane, logo, stopkę i numerację faktur.</p>
+              </div>
+              <button
+                onClick={() => setShowCompanies(true)}
+                className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+              >
+                Zarządzaj firmami
+              </button>
+            </div>
+            <div className="divide-y divide-gray-100 dark:divide-gray-800">
+              {companies.length === 0 && (
+                <p className="px-5 py-6 text-sm text-gray-400 text-center">Brak firm — kliknij „Zarządzaj firmami”, aby dodać pierwszą.</p>
+              )}
+              {companies.map(c => (
+                <div key={c.id} className={`px-5 py-3 flex items-center gap-3 ${c.active ? '' : 'opacity-60'}`}>
+                  <div className="w-10 h-8 rounded bg-white border border-gray-200 dark:border-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {c.invoice_logo
+                      ? <img src={c.invoice_logo} alt="logo" className="max-h-7 max-w-[36px] object-contain" />
+                      : <span className="text-gray-400 text-sm">🏢</span>}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-sm font-medium truncate ${c.active ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 line-through'}`}>{c.name}</span>
+                      {c.is_default && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">★ domyślna</span>}
+                      {!c.active && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-400">nieaktywna</span>}
+                    </div>
+                    <div className="text-xs text-gray-400 truncate">
+                      NIP {c.nip || '—'} · prefiks <span className="font-mono">{c.invoice_prefix || 'FV'}</span> · {BUSINESS_UNIT_LABELS[c.business_unit] ?? c.business_unit}
+                      {typeof c.invoices_count === 'number' ? ` · faktur: ${c.invoices_count}` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Jak to działa (2/5) */}
+          <div className="xl:col-span-2 bg-blue-50 dark:bg-blue-950/30 rounded-2xl border border-blue-100 dark:border-blue-900 p-5 text-xs text-blue-700 dark:text-blue-300 space-y-2 self-start">
+            <p className="font-semibold text-sm">ℹ️ Jak to działa</p>
+            <ul className="list-disc list-inside space-y-1 ml-1">
+              <li>Przy wystawianiu faktury wybierasz <strong>sprzedawcę</strong> — domyślnie podpowiadana jest firma oznaczona ★.</li>
+              <li>Na wydruku pojawiają się dane, logo i stopka wybranej firmy.</li>
+              <li>Numer faktury zaczyna się od <strong>prefiksu firmy</strong> (np. FV/2026/10/001); każda firma ma osobną numerację.</li>
+              <li>Firmy z fakturami nie można usunąć — można ją <strong>dezaktywować</strong> (znika z wyboru, stare faktury zostają).</li>
+            </ul>
+          </div>
+        </div>
+      )} {/* end activeTab === 'companies' */}
+
+      {showCompanies && (
+        <CompaniesManagerModal onClose={() => { setShowCompanies(false); loadCompanies() }} onChanged={loadCompanies} />
+      )}
 
       {/* Reset password modal */}
       {resetUserId && (

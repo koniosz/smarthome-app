@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import axios from 'axios'
 import db, { prisma } from '../db'
 import { createWarehouseDoc, ensureProjectsWarehouse, DocError } from './warehouse'
+import { ensureDefaultCompany, sellerSnapshot } from './companies'
 
 // Faktury sprzedażowe (BETA).
 // Szkic → wystawienie (numer FV/RRRR/MM/NNN) → opłacona / anulowana.
@@ -96,14 +97,26 @@ router.get('/', async (_req: Request, res: Response) => {
 })
 
 // POST /api/sales-invoices — utwórz szkic
+// Sprzedawca: wskazana aktywna firma albo domyślna (szkice bez company_id = firma domyślna)
+async function resolveCompany(companyId: any): Promise<{ company: any } | { error: string }> {
+  if (companyId) {
+    const c: any = await db.companies.find(String(companyId))
+    if (!c || !c.active) return { error: 'Wybrana firma-sprzedawca nie istnieje lub jest nieaktywna' }
+    return { company: c }
+  }
+  return { company: await ensureDefaultCompany() }
+}
+
 router.post('/', async (req: Request, res: Response) => {
   try {
     const items = normalizeItems(req.body.items)
     if (!String(req.body.buyer_name || '').trim()) { res.status(400).json({ error: 'Nazwa nabywcy jest wymagana' }); return }
     if (items.length === 0) { res.status(400).json({ error: 'Dodaj przynajmniej jedną pozycję' }); return }
     const totals = computeTotals(items)
+    const rc = await resolveCompany(req.body.company_id)
+    if ('error' in rc) { res.status(400).json({ error: rc.error }); return }
     const inv = {
-      id: uuidv4(), number: null, status: 'draft',
+      id: uuidv4(), number: null, status: 'draft', company_id: rc.company.id, seller: null,
       issue_date: req.body.issue_date || null,
       sale_date: req.body.sale_date || null,
       due_date: req.body.due_date || null,
@@ -149,6 +162,12 @@ router.put('/:id', async (req: Request, res: Response) => {
         ? req.body.linked_mm_line_ids.map(String) : []
     }
     if (req.body.project_id !== undefined) patch.project_id = req.body.project_id || null
+    // zmiana sprzedawcy wymaga aktywnej firmy; pozostawienie dotychczasowej (nawet nieaktywnej) — nie
+    if (req.body.company_id !== undefined && String(req.body.company_id || '') !== String(inv.company_id || '')) {
+      const rc = await resolveCompany(req.body.company_id)
+      if ('error' in rc) { res.status(400).json({ error: rc.error }); return }
+      patch.company_id = rc.company.id
+    }
     await db.sales_invoices.update(inv.id, patch)
     res.json(await db.sales_invoices.find(inv.id))
   } catch { res.status(500).json({ error: 'Błąd serwera' }) }
@@ -162,7 +181,11 @@ router.post('/:id/issue', async (req: Request, res: Response) => {
     const inv: any = await db.sales_invoices.find(req.params.id)
     if (!inv) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
     if (inv.status !== 'draft') { res.status(400).json({ error: 'Faktura została już wystawiona' }); return }
-    const issueDate = inv.issue_date || now().slice(0, 10)
+    const issueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(inv.issue_date || '')) ? inv.issue_date : now().slice(0, 10)
+    // Sprzedawca rozstrzygany PRZED jakimkolwiek efektem ubocznym (WZ) — nieaktywna firma nie zostawi wydanego towaru bez faktury
+    const rc = await resolveCompany(inv.company_id)
+    if ('error' in rc) { res.status(400).json({ error: rc.error }); return }
+    const company = rc.company
 
     // ── WZ z pozycji MM (przed nadaniem numeru — brak stanu magazynowego blokuje wystawienie) ──
     let wzId: string | null = inv.warehouse_doc_id ?? null
@@ -214,12 +237,14 @@ router.post('/:id/issue', async (req: Request, res: Response) => {
       await db.sales_invoices.update(inv.id, { warehouse_doc_id: wzId, updated_at: now() })
     }
 
-    const d = new Date()
-    const prefix = `FV/${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/`
-    const count = await db.sales_invoices.countForPrefix(prefix)
-    const number = `${prefix}${String(count + 1).padStart(3, '0')}`
+    // Numer z prefiksem firmy-sprzedawcy wg DATY WYSTAWIENIA, numeracja osobna per firma;
+    // gdyby numer już istniał (stare dane / wyścig) — bierzemy kolejny wolny
+    const prefix = `${company.invoice_prefix || 'FV'}/${issueDate.slice(0, 4)}/${issueDate.slice(5, 7)}/`
+    let seq = (await db.sales_invoices.countForPrefix(prefix, company.id)) + 1
+    let number = `${prefix}${String(seq).padStart(3, '0')}`
+    while (await db.sales_invoices.numberExists(number)) { seq++; number = `${prefix}${String(seq).padStart(3, '0')}` }
     await db.sales_invoices.update(inv.id, {
-      number, status: 'issued',
+      number, status: 'issued', company_id: company.id, seller: sellerSnapshot(company),
       issue_date: issueDate,
       sale_date: inv.sale_date || issueDate,
       due_date: inv.due_date || null,

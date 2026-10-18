@@ -17,6 +17,7 @@ import * as XLSX from 'xlsx'
 import { requirePayments } from './payables'
 import db, { prisma } from '../db'
 import { inventoryChangeByMonth } from '../services/inventory-valuation'
+import { moduleInvoiceScope } from './companies'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -226,10 +227,11 @@ router.post('/import-sales', upload.single('file'), async (req: Request, res: Re
       where: { invoice_direction: 'outgoing' },
       select: { id: true, invoice_number: true, gross_amount: true, invoice_date: true, buyer_name: true },
     })
-    const moduleInvoices = await prisma.salesInvoice.findMany({
+    const inScope = await moduleInvoiceScope()
+    const moduleInvoices = (await prisma.salesInvoice.findMany({
       where: { status: { in: ['issued', 'paid'] } },
-      select: { id: true, number: true, total_gross: true, sale_date: true, issue_date: true, buyer_name: true },
-    })
+      select: { id: true, number: true, total_gross: true, sale_date: true, issue_date: true, buyer_name: true, company_id: true },
+    })).filter(inv => inScope(inv)) // Firmao to księgowość SHC — deduplikujemy tylko z fakturami spółki
     const existing = await prisma.salesRecord.findMany({ select: { id: true, invoice_number: true, period: true } })
     const existingByKey = new Map(existing.map(e => [`${alnum(e.invoice_number)}|${e.period}`, e.id]))
 
@@ -598,7 +600,7 @@ export async function computePnlYear(year: number, bu = 'all'): Promise<PnlYear>
       }),
       prisma.salesInvoice.findMany({
         where: { status: { in: ['issued', 'paid'] } },
-        select: { id: true, total_net: true, sale_date: true, issue_date: true, ksef_number: true },
+        select: { id: true, total_net: true, sale_date: true, issue_date: true, ksef_number: true, company_id: true },
       }),
       prisma.ksefInvoiceAllocation.findMany({
         where: bu !== 'all' ? { business_unit: bu } : {},
@@ -631,9 +633,11 @@ export async function computePnlYear(year: number, bu = 'all'): Promise<PnlYear>
       l.revenue_ksef += inv.net_amount
       l.revenue += inv.net_amount
     }
+    const inScope = await moduleInvoiceScope() // faktury innej spółki (np. GateLynk Sp. z o.o.) nie są przychodem SHC
     for (const inv of moduleInvoices as any[]) {
       const m = ((inv.sale_date || inv.issue_date) || '').slice(0, 7)
       const l = L(m); if (!l) continue
+      if (!inScope(inv, bu)) continue
       if (inv.ksef_number) continue                 // trafiła do KSeF — nie liczymy drugi raz
       if (matchedModuleIds.has(inv.id)) continue    // jest w Firmao — nie liczymy drugi raz
       l.revenue_module += inv.total_net

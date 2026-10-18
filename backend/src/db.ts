@@ -161,10 +161,26 @@ export const db = {
     delete: (id: string) => prisma.warehouseItem.delete({ where: { id } }),
   },
 
+  companies: {
+    all: () => prisma.company.findMany({ orderBy: [{ is_default: 'desc' }, { name: 'asc' }] }),
+    active: () => prisma.company.findMany({ where: { active: true }, orderBy: [{ is_default: 'desc' }, { name: 'asc' }] }),
+    find: (id: string) => prisma.company.findUnique({ where: { id } }),
+    findDefault: () => prisma.company.findFirst({ where: { is_default: true } }),
+    insert: (item: any) => prisma.company.create({ data: item }),
+    update: (id: string, patch: any) => prisma.company.update({ where: { id }, data: patch }),
+    delete: (id: string) => prisma.company.delete({ where: { id } }),
+    clearDefault: () => prisma.company.updateMany({ where: { is_default: true }, data: { is_default: false } }),
+  },
+
   sales_invoices: {
     all: () => prisma.salesInvoice.findMany({ orderBy: { created_at: 'desc' } }),
     find: (id: string) => prisma.salesInvoice.findUnique({ where: { id } }),
-    countForPrefix: (prefix: string) => prisma.salesInvoice.count({ where: { number: { startsWith: prefix } } }),
+    // numeracja osobna per firma (stare faktury bez company_id są przypisane do SHC przy starcie — backfillLegacyInvoices)
+    countForPrefix: (prefix: string, companyId?: string | null) => prisma.salesInvoice.count({
+      where: { number: { startsWith: prefix }, ...(companyId ? { company_id: companyId } : {}) },
+    }),
+    numberExists: (number: string) => prisma.salesInvoice.count({ where: { number } }).then(n => n > 0),
+    countForCompany: (companyId: string) => prisma.salesInvoice.count({ where: { company_id: companyId } }),
     insert: (item: any) => prisma.salesInvoice.create({ data: item }),
     update: (id: string, patch: any) => prisma.salesInvoice.update({ where: { id }, data: patch }),
     delete: (id: string) => prisma.salesInvoice.delete({ where: { id } }),
