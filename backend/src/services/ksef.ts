@@ -8,15 +8,103 @@
 
 import axios from 'axios'
 import crypto from 'crypto'
-import { PrismaClient } from '@prisma/client'
 import { v4 as uuidv4 } from 'uuid'
-
-const prisma = new PrismaClient()
-
-const KSEF_NIP   = (process.env.KSEF_NIP  || '').replace(/[-\s]/g, '')
-const KSEF_TOKEN = process.env.KSEF_TOKEN || ''
+import { prisma, basePrisma } from '../db'
+import { currentCompanyId, getDefaultCompanyId } from '../tenant'
+import { forEachCompany } from '../middleware/tenant'
 
 const BASE_URL = 'https://api.ksef.mf.gov.pl/v2'
+
+// ── Konfiguracja KSeF per firma (tenant) ─────────────────────────────────────
+// Każda firma (Company) ma własne ksef_nip/ksef_token. Firma domyślna bez własnego tokenu
+// korzysta ze zmiennych środowiskowych KSEF_NIP/KSEF_TOKEN (zgodność wstecz — Smart Home Center).
+// Sesje (KsefSession) i faktury (KsefInvoice) są zakresowane po aktywnej firmie przez rozszerzenie
+// Prisma (tenant.ts); dodatkowo zapytania o sesję jawnie filtrują po company_id, żeby działały
+// poprawnie także bez kontekstu żądania (skrypty → firma domyślna). Nie ma cache sesji w pamięci.
+
+export const KSEF_NOT_CONFIGURED_MSG =
+  'KSeF nie jest skonfigurowany dla tej firmy (uzupełnij NIP i token w Panel admina → Firmy)'
+
+/** Brak konfiguracji KSeF dla aktywnej firmy — trasy mapują na HTTP 400 (nie 500). */
+export class KsefNotConfiguredError extends Error {
+  constructor(message: string = KSEF_NOT_CONFIGURED_MSG) {
+    super(message)
+    this.name = 'KsefNotConfiguredError'
+  }
+}
+
+export type KsefConfigSource = 'company' | 'env'
+export interface KsefConfig {
+  companyId: string
+  nip: string
+  token: string
+  source: KsefConfigSource
+}
+
+function normalizeNip(nip: string | null | undefined): string {
+  return (nip ?? '').replace(/[-\s]/g, '')
+}
+
+/** Firma, dla której działa KSeF: aktywna z kontekstu; bez kontekstu (skrypty, start) — firma domyślna. */
+async function resolveCompanyId(): Promise<string | null> {
+  const ctx = currentCompanyId() ?? getDefaultCompanyId()
+  if (ctx) return ctx
+  const def = await basePrisma.company.findFirst({ where: { is_default: true }, select: { id: true } })
+  return def?.id ?? null
+}
+
+export interface KsefCompanyFields {
+  id: string
+  nip?: string | null
+  ksef_nip?: string | null
+  ksef_token?: string | null
+  is_default?: boolean | null
+}
+
+/**
+ * Czysta reguła wyboru konfiguracji (bez bazy — testowalna):
+ *  - firma ma własny ksef_token → jej ksef_nip (gdy pusty — nip firmy) + ksef_token  (source: 'company'),
+ *  - firma domyślna bez tokenu  → KSEF_NIP/KSEF_TOKEN ze środowiska                  (source: 'env'),
+ *  - inaczej null (brak integracji KSeF dla tej firmy).
+ */
+export function resolveKsefConfig(
+  company: KsefCompanyFields | null | undefined,
+  env: { KSEF_NIP?: string; KSEF_TOKEN?: string } = process.env,
+): KsefConfig | null {
+  if (!company) return null
+  if (company.ksef_token) {
+    const nip = normalizeNip(company.ksef_nip) || normalizeNip(company.nip)
+    if (nip) return { companyId: company.id, nip, token: company.ksef_token, source: 'company' }
+  }
+  if (company.is_default) {
+    const nip   = normalizeNip(env.KSEF_NIP)
+    const token = env.KSEF_TOKEN || ''
+    if (nip && token) return { companyId: company.id, nip, token, source: 'env' }
+  }
+  return null
+}
+
+/** Konfiguracja KSeF aktywnej firmy (zob. resolveKsefConfig); null = brak integracji. */
+export async function ksefConfig(): Promise<KsefConfig | null> {
+  const companyId = await resolveCompanyId()
+  if (!companyId) return null
+  const company = await basePrisma.company.findUnique({
+    where:  { id: companyId },
+    select: { id: true, nip: true, ksef_nip: true, ksef_token: true, is_default: true },
+  })
+  return resolveKsefConfig(company)
+}
+
+/** Jak ksefConfig(), ale rzuca KsefNotConfiguredError, gdy firma nie ma konfiguracji. */
+export async function requireKsefConfig(): Promise<KsefConfig> {
+  const cfg = await ksefConfig()
+  if (!cfg) throw new KsefNotConfiguredError()
+  return cfg
+}
+
+function maskNip(nip: string): string {
+  return nip ? `${nip.slice(0, 3)}***${nip.slice(-3)}` : ''
+}
 
 function now() { return new Date().toISOString() }
 
@@ -86,7 +174,7 @@ function encryptTokenRsa(apiToken: string, timestampMs: number | string, publicK
 /**
  * Odśwież accessToken używając refreshToken
  */
-async function refreshAccessToken(refreshToken: string): Promise<string> {
+async function refreshAccessToken(companyId: string, refreshToken: string): Promise<string> {
   const res = await axios.post(
     `${BASE_URL}/auth/token/refresh`,
     {},
@@ -96,7 +184,7 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
   if (!accessToken) throw new Error('Brak accessToken w refresh response')
 
   const expiresAt = parseJwtExpiry(accessToken)
-  await prisma.ksefSession.updateMany({ data: { session_token: accessToken, expires_at: expiresAt } })
+  await prisma.ksefSession.updateMany({ where: { company_id: companyId }, data: { session_token: accessToken, expires_at: expiresAt } })
   console.log('[KSeF] Token odświeżony, ważny do:', expiresAt)
   return accessToken
 }
@@ -105,7 +193,8 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
  * Pobierz aktywny accessToken (z bazy lub utwórz nowy)
  */
 export async function getActiveSession(): Promise<string> {
-  const existing = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+  const cfg = await requireKsefConfig()
+  const existing = await prisma.ksefSession.findFirst({ where: { company_id: cfg.companyId }, orderBy: { created_at: 'desc' } })
 
   if (existing) {
     const expiresAt = new Date(existing.expires_at)
@@ -118,14 +207,14 @@ export async function getActiveSession(): Promise<string> {
     // Spróbuj odświeżyć przez refreshToken
     if (existing.refresh_token) {
       try {
-        return await refreshAccessToken(existing.refresh_token)
+        return await refreshAccessToken(cfg.companyId, existing.refresh_token)
       } catch (err: any) {
         console.warn('[KSeF] Refresh token nieważny, tworzę nową sesję:', err.message)
       }
     }
   }
 
-  return await createSession()
+  return await createSession(cfg)
 }
 
 /**
@@ -135,11 +224,7 @@ export async function getActiveSession(): Promise<string> {
  * 3. Poll GET /auth/{referenceNumber} do czasu zakończenia
  * 4. POST /auth/token/redeem → accessToken + refreshToken
  */
-async function createSession(): Promise<string> {
-  if (!KSEF_NIP || !KSEF_TOKEN) {
-    throw new Error('Brak konfiguracji KSeF (KSEF_NIP lub KSEF_TOKEN nie ustawione)')
-  }
-
+async function createSession(cfg: KsefConfig): Promise<string> {
   // ── Krok 1: Pobierz klucz publiczny ───────────────────────────────────────
   let publicKey: crypto.KeyObject
   try {
@@ -162,7 +247,7 @@ async function createSession(): Promise<string> {
   }
 
   // ── Krok 3: Zaszyfruj token i zainicjuj autoryzację ───────────────────────
-  const encryptedToken = encryptTokenRsa(KSEF_TOKEN, challengeData.timestampMs, publicKey)
+  const encryptedToken = encryptTokenRsa(cfg.token, challengeData.timestampMs, publicKey)
 
   let referenceNumber: string
   let authenticationToken: string
@@ -171,7 +256,7 @@ async function createSession(): Promise<string> {
       `${BASE_URL}/auth/ksef-token`,
       {
         challenge:         challengeData.challenge,
-        contextIdentifier: { type: 'Nip', value: KSEF_NIP },
+        contextIdentifier: { type: 'Nip', value: cfg.nip },
         encryptedToken,
       },
       { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
@@ -230,10 +315,11 @@ async function createSession(): Promise<string> {
 
   const expiresAt = parseJwtExpiry(accessToken)
 
-  await prisma.ksefSession.deleteMany()
+  await prisma.ksefSession.deleteMany({ where: { company_id: cfg.companyId } })
   await prisma.ksefSession.create({
     data: {
       id:            uuidv4(),
+      company_id:    cfg.companyId,
       session_token: accessToken,
       refresh_token: refreshToken ?? null,
       expires_at:    expiresAt,
@@ -241,7 +327,7 @@ async function createSession(): Promise<string> {
     },
   })
 
-  console.log('[KSeF v2] Nowa sesja utworzona, ważna do:', expiresAt)
+  console.log(`[KSeF v2] Nowa sesja utworzona (firma ${cfg.companyId}, źródło: ${cfg.source}), ważna do:`, expiresAt)
   return accessToken
 }
 
@@ -249,7 +335,10 @@ async function createSession(): Promise<string> {
  * Zamknij sesję KSeF
  */
 export async function terminateSession(): Promise<void> {
-  const existing = await prisma.ksefSession.findFirst()
+  // Działa też bez konfiguracji (sprzątanie po usunięciu tokenu) — kluczem jest tylko firma.
+  const companyId = await resolveCompanyId()
+  const where = companyId ? { company_id: companyId } : {}
+  const existing = await prisma.ksefSession.findFirst({ where })
   if (!existing) return
 
   try {
@@ -260,7 +349,7 @@ export async function terminateSession(): Promise<void> {
   } catch {
     // Ignoruj błąd — sesja mogła już wygasnąć
   }
-  await prisma.ksefSession.deleteMany()
+  await prisma.ksefSession.deleteMany({ where })
 }
 
 /**
@@ -401,12 +490,12 @@ async function fetchInvoices(
  *   Subject1 = my jako sprzedawca (Podmiot1) → outgoing (sprzedażowa)
  *   Subject2 = my jako nabywca    (Podmiot2) → incoming (zakupowa)
  *
- * Fallback: porównanie seller_nip z naszym KSEF_NIP (mniej niezawodne,
+ * Fallback: porównanie seller_nip z NIP firmy z konfiguracji KSeF (mniej niezawodne,
  * bo KSeF metadata nie zawsze zwraca nip sprzedawcy).
  */
-function mapInvoice(inv: any) {
-  const sellerNip = (inv.seller?.nip ?? '').replace(/[-\s]/g, '')
-  const ourNip    = KSEF_NIP.replace(/[-\s]/g, '')
+function mapInvoice(inv: any, ourNipRaw: string) {
+  const sellerNip = normalizeNip(inv.seller?.nip)
+  const ourNip    = normalizeNip(ourNipRaw)
 
   // Priorytet: _subjectType ustawiony przez fetchInvoicesChunk
   let invoice_direction: 'outgoing' | 'incoming'
@@ -597,10 +686,22 @@ export async function tryAutoClassifyFromHistory(
   return true
 }
 
+export interface KsefSyncResult { fetched: number; saved: number; errors: string[] }
+export interface KsefCompanySyncResult extends KsefSyncResult {
+  company_id: string
+  company_name: string
+  source: KsefConfigSource | null
+  skipped: boolean   // true = firma bez konfiguracji KSeF (pominięta)
+}
+
 /**
- * Główna funkcja synchronizacji — wywołana co 30 min przez cron
+ * Synchronizacja faktur AKTYWNEJ firmy (kontekst tenant z żądania albo forEachCompany).
+ * Rzuca KsefNotConfiguredError, gdy firma nie ma konfiguracji; pozostałe błędy trafiają do `errors`.
+ * Używana przez POST /api/ksef/sync (ręczna synchronizacja) i przez syncInvoices() dla każdej firmy.
  */
-export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: number; saved: number; errors: string[] }> {
+export async function syncInvoicesForCurrentCompany(forceDateFrom?: Date): Promise<KsefSyncResult> {
+  const cfg = await requireKsefConfig()
+  const sessionWhere = { company_id: cfg.companyId }
   const errors: string[] = []
   let fetched = 0
   let saved   = 0
@@ -609,7 +710,7 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
     const accessToken = await getActiveSession()
 
     // Pobierz faktury od ostatniej synchronizacji
-    const lastSession = await prisma.ksefSession.findFirst()
+    const lastSession = await prisma.ksefSession.findFirst({ where: sessionWhere })
     let dateFrom: Date
     if (forceDateFrom) {
       dateFrom = forceDateFrom
@@ -646,7 +747,7 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
 
     for (const inv of invoices) {
       try {
-        const mapped = mapInvoice(inv)
+        const mapped = mapInvoice(inv, cfg.nip)
         if (!mapped.ksef_number) continue
 
         const exists = await prisma.ksefInvoice.findUnique({ where: { ksef_number: mapped.ksef_number } })
@@ -693,7 +794,7 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
     // Zaktualizuj czas ostatniej synchronizacji
     // Jeśli były błędy przy pobieraniu chunków (np. 422 z API) — zapisz je też jako last_sync_error
     const chunkErrorMsg = errors.length > 0 ? errors.join(' | ') : null
-    await prisma.ksefSession.updateMany({ data: { last_sync_at: now(), last_sync_error: chunkErrorMsg } })
+    await prisma.ksefSession.updateMany({ where: sessionWhere, data: { last_sync_at: now(), last_sync_error: chunkErrorMsg } })
 
     console.log(`[KSeF] Zapisano ${saved} nowych faktur. Błędy: ${errors.length}`)
   } catch (err: any) {
@@ -704,14 +805,15 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
     errors.push(msg)
     // Zapisz błąd do bazy danych — widoczny w UI bez potrzeby przeglądania logów Render
     try {
-      const sessionCount = await prisma.ksefSession.count()
+      const sessionCount = await prisma.ksefSession.count({ where: sessionWhere })
       if (sessionCount > 0) {
-        await prisma.ksefSession.updateMany({ data: { last_sync_error: msg } })
+        await prisma.ksefSession.updateMany({ where: sessionWhere, data: { last_sync_error: msg } })
       } else {
-        // Brak sesji — utwórz rekord-placeholder żeby błąd był widoczny
+        // Brak sesji — utwórz rekord-placeholder żeby błąd był widoczny (id per firma — @id jest globalnie unikalne)
         await prisma.ksefSession.create({
           data: {
-            id:            'error-status',
+            id:            `error-status-${cfg.companyId}`,
+            company_id:    cfg.companyId,
             session_token: '',
             expires_at:    new Date(0).toISOString(),
             last_sync_error: msg,
@@ -723,6 +825,35 @@ export async function syncInvoices(forceDateFrom?: Date): Promise<{ fetched: num
   }
 
   return { fetched, saved, errors }
+}
+
+/**
+ * Główna funkcja synchronizacji — wołana z index.ts (harmonogram, bez kontekstu firmy).
+ * Iteruje wszystkie aktywne firmy (forEachCompany) i dla każdej z konfiguracją KSeF uruchamia
+ * syncInvoicesForCurrentCompany() w jej kontekście; firmy bez konfiguracji pomija z logiem.
+ * Firmy są synchronizowane sekwencyjnie (każda ma własny token i własny limit KSeF).
+ */
+export async function syncInvoices(forceDateFrom?: Date): Promise<KsefSyncResult & { companies: KsefCompanySyncResult[] }> {
+  const total: KsefSyncResult & { companies: KsefCompanySyncResult[] } = { fetched: 0, saved: 0, errors: [], companies: [] }
+
+  await forEachCompany(async (company) => {
+    const cfg = await ksefConfig()
+    if (!cfg) {
+      console.log(`[KSeF] ${company.name}: brak konfiguracji KSeF — pomijam`)
+      total.companies.push({ company_id: company.id, company_name: company.name, source: null, skipped: true, fetched: 0, saved: 0, errors: [] })
+      return
+    }
+    console.log(`[KSeF] ${company.name}: synchronizacja (NIP ${maskNip(cfg.nip)}, źródło: ${cfg.source})`)
+    const r = await syncInvoicesForCurrentCompany(forceDateFrom)
+    total.fetched += r.fetched
+    total.saved   += r.saved
+    total.errors.push(...r.errors.map(e => `${company.name}: ${e}`))
+    total.companies.push({ company_id: company.id, company_name: company.name, source: cfg.source, skipped: false, ...r })
+  })
+
+  const synced = total.companies.filter(c => !c.skipped).length
+  console.log(`[KSeF] Synchronizacja zakończona: ${synced} firm(y), pobrano ${total.fetched}, zapisano ${total.saved}, błędów: ${total.errors.length}`)
+  return total
 }
 
 /** Testuje zapytanie o faktury używając podanego tokenu. Wyniki zapisuje do result. */
@@ -790,24 +921,28 @@ async function testInvoiceQuery(token: string, result: Record<string, any>): Pro
  * Przy pełnym teście łącznie do ~6 zapytań.
  */
 export async function debugAuth(): Promise<Record<string, any>> {
+  const cfg = await ksefConfig()
   const result: Record<string, any> = {
     config: {
       base_url:     BASE_URL,
-      nip_set:      !!KSEF_NIP,
-      nip_length:   KSEF_NIP.length,
-      token_set:    !!KSEF_TOKEN,
-      token_length: KSEF_TOKEN.length,
+      company_id:   cfg?.companyId ?? (await resolveCompanyId()),
+      source:       cfg?.source ?? 'none',
+      nip_set:      !!cfg?.nip,
+      nip_length:   cfg?.nip.length ?? 0,
+      token_set:    !!cfg?.token,
+      token_length: cfg?.token.length ?? 0,
     },
     warning: 'Diagnostyka zużywa ~4–6 z 20 zapytań/h limitu KSeF API. Nie uruchamiaj wielokrotnie.',
   }
 
-  if (!KSEF_NIP || !KSEF_TOKEN) {
-    result.error = 'Brak konfiguracji KSEF_NIP lub KSEF_TOKEN'
+  if (!cfg) {
+    result.error = KSEF_NOT_CONFIGURED_MSG
     return result
   }
+  const sessionWhere = { company_id: cfg.companyId }
 
   // ── Sprawdź aktualną sesję w bazie — bez zużywania limitu ────────────────────
-  const existingSession = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+  const existingSession = await prisma.ksefSession.findFirst({ where: sessionWhere, orderBy: { created_at: 'desc' } })
   if (existingSession) {
     const expiresAt = new Date(existingSession.expires_at)
     const isValid = expiresAt > new Date(Date.now() + 2 * 60 * 1000)
@@ -853,14 +988,14 @@ export async function debugAuth(): Promise<Record<string, any>> {
     // Szyfrowanie
     try {
       const pk = await getEncryptionPublicKey()
-      const enc = encryptTokenRsa(KSEF_TOKEN, timestampMs, pk)
+      const enc = encryptTokenRsa(cfg.token, timestampMs, pk)
       result.encrypted_token_length = enc.length
 
       // Auth init (1 zapytanie)
       try {
         const authRes = await axios.post(
           `${BASE_URL}/auth/ksef-token`,
-          { challenge, contextIdentifier: { type: 'Nip', value: KSEF_NIP }, encryptedToken: enc },
+          { challenge, contextIdentifier: { type: 'Nip', value: cfg.nip }, encryptedToken: enc },
           { timeout: 15000 },
         )
         result.auth_init = { status: authRes.status, data: authRes.data }
@@ -877,7 +1012,7 @@ export async function debugAuth(): Promise<Record<string, any>> {
 
   // ── Test zapytania o faktury używa nowo uzyskanego tokenu z auth_init ─────────
   // Nie mamy pełnego accessToken (redeem nie był wywoływany) — użyj istniejącego z bazy
-  const freshSession = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+  const freshSession = await prisma.ksefSession.findFirst({ where: sessionWhere, orderBy: { created_at: 'desc' } })
   if (freshSession?.session_token) {
     await testInvoiceQuery(freshSession.session_token, result)
   } else {
@@ -892,8 +1027,10 @@ export async function debugAuth(): Promise<Record<string, any>> {
  */
 export async function getStatus(): Promise<{
   configured: boolean
+  source: KsefConfigSource | 'none'
+  company_id: string | null
   env: string
-  nip: string
+  nip: string | null
   has_session: boolean
   session_expires_at: string | null
   last_sync_at: string | null
@@ -901,14 +1038,20 @@ export async function getStatus(): Promise<{
   invoice_count: number
   unassigned_count: number
 }> {
-  const session       = await prisma.ksefSession.findFirst({ orderBy: { created_at: 'desc' } })
+  const cfg           = await ksefConfig()
+  const companyId     = cfg?.companyId ?? (await resolveCompanyId())
+  const session       = companyId
+    ? await prisma.ksefSession.findFirst({ where: { company_id: companyId }, orderBy: { created_at: 'desc' } })
+    : null
   const invoiceCount  = await prisma.ksefInvoice.count()
   const unassignedCnt = await prisma.ksefInvoice.count({ where: { project_id: null } })
 
   return {
-    configured:         !!(KSEF_NIP && KSEF_TOKEN),
+    configured:         !!cfg,
+    source:             cfg?.source ?? 'none',
+    company_id:         companyId,
     env:                'prod (v2)',
-    nip:                KSEF_NIP ? `${KSEF_NIP.slice(0, 3)}***${KSEF_NIP.slice(-3)}` : '',
+    nip:                cfg ? maskNip(cfg.nip) : null,   // zamaskowany (jak dotąd); null = brak konfiguracji
     has_session:        !!session && !!session.session_token,
     session_expires_at: session?.expires_at ?? null,
     last_sync_at:       session?.last_sync_at ?? null,

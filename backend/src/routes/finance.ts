@@ -18,6 +18,7 @@ import { requirePayments } from './payables'
 import db, { prisma } from '../db'
 import { inventoryChangeByMonth } from '../services/inventory-valuation'
 import { moduleInvoiceScope } from './companies'
+import { getCompanySettings } from '../settings-store'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -682,7 +683,7 @@ export async function computePnlYear(year: number, bu = 'all'): Promise<PnlYear>
     // Magazyn nie ma podziału na jednostki (WarehouseItem/StockMovement bez business_unit),
     // więc zmiana stanu wchodzi do RZiS TYLKO w widoku całej spółki — w widoku jednostki
     // odejmowałaby zapasy całej firmy od zakupów jednej jednostki (ujemny COGS, potrójne liczenie).
-    const settings = await prisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null)
+    const settings = await getCompanySettings().catch(() => null)
     const inventoryInPnl = (settings ? settings.inventory_in_pnl !== false : true) && bu === 'all'
     if (inventoryInPnl) {
       const inv = await inventoryChangeByMonth(months)

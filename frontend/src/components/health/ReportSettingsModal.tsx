@@ -78,7 +78,7 @@ export default function ReportSettingsModal({ isAdmin, onClose }: { isAdmin: boo
           <div className="grid md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
               <label className={labelCls}>Nazwa firmy (w nagłówku raportu)</label>
-              <input value={form.company_name} onChange={e => set('company_name', e.target.value)} disabled={!isAdmin} placeholder="np. Smart Home Center sp. z o.o." className={inputCls} />
+              <input value={form.company_name} onChange={e => set('company_name', e.target.value)} disabled={!isAdmin} placeholder="np. Nazwa firmy sp. z o.o." className={inputCls} />
             </div>
             <label className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-200 md:col-span-2 cursor-pointer">
               <input type="checkbox" checked={form.reports_enabled} onChange={e => set('reports_enabled', e.target.checked)} disabled={!isAdmin} className="mt-0.5 accent-violet-600" />

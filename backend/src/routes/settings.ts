@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer'
 import db, { prisma } from '../db'
 import { requireAdmin } from '../middleware/auth'
 import { getSmtpConfig } from '../services/mailer'
+import { getCompanySettings, saveCompanySettings } from '../settings-store'
 
 const router = Router()
 
@@ -14,7 +15,7 @@ const LOGO_MAX_BYTES = 700 * 1024
 
 router.get('/company', async (_req: Request, res: Response) => {
   try {
-    const s = await prisma.companySettings.findUnique({ where: { id: 'default' } })
+    const s = await getCompanySettings()
     res.json({ invoice_logo: s?.invoice_logo ?? '', invoice_footer: s?.invoice_footer ?? '', updated_at: s?.updated_at ?? '' })
   } catch (e) {
     console.error('[settings/company GET]', e)
@@ -36,11 +37,7 @@ router.put('/company', requireAdmin, async (req: Request, res: Response) => {
       patch.invoice_logo = logo
     }
     if (req.body.invoice_footer !== undefined) patch.invoice_footer = String(req.body.invoice_footer ?? '').slice(0, 500)
-    const s = await prisma.companySettings.upsert({
-      where: { id: 'default' },
-      create: { id: 'default', ...patch },
-      update: patch,
-    })
+    const s = await saveCompanySettings(patch)
     res.json({ invoice_logo: s.invoice_logo, invoice_footer: s.invoice_footer, updated_at: s.updated_at })
   } catch (e) {
     console.error('[settings/company PUT]', e)

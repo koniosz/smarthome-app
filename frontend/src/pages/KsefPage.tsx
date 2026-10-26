@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, X, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug, Building2, Users } from 'lucide-react'
 import { ksefApi, bankApi, projectsApi } from '../api/client'
+import { useCompany, companyLabel } from '../company/CompanyContext'
 import type { KsefInvoice, KsefStatus, Project } from '../types'
 import AllocationPanel from '../components/ksef/AllocationPanel'
 import PaymentVerificationModal from '../components/ksef/PaymentVerificationModal'
@@ -943,6 +944,8 @@ function FullInvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
 export default function KsefPage() {
+  const { company } = useCompany()
+  const companyName = companyLabel(company, 'aktywną firmę')
   const [status, setStatus]     = useState<KsefStatus | null>(null)
   const [invoices, setInvoices] = useState<KsefInvoice[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -1082,7 +1085,7 @@ export default function KsefPage() {
                 Faktury kosztowe
               </h1>
               <p style={{ fontSize: 14, color: '#64748b', margin: '6px 0 0' }}>
-                Pobrane z KSeF · wystawione na Smart Home Center · przypisz każdą fakturę do projektu jako koszt
+                Pobrane z KSeF · wystawione na {companyName} · przypisz każdą fakturę do projektu jako koszt
               </p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>

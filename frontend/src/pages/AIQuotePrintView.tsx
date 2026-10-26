@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom'
 import type { AiQuote } from '../types'
 import { QUOTE_BRANDS, QUOTE_STATUS_LABELS } from '../types'
 import { aiQuotesApi } from '../api/client'
+import { useCompany } from '../company/CompanyContext'
+import { APP_NEUTRAL_TITLE } from '../constants/app'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -22,6 +24,7 @@ function itemTotal(item: AiQuote['items'][0], globalDiscountPct = 0) {
 
 export default function AIQuotePrintView() {
   const { id: projectId, quoteId } = useParams<{ id: string; quoteId: string }>()
+  const { company } = useCompany()
   const [quote, setQuote] = useState<AiQuote | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -77,7 +80,7 @@ export default function AIQuotePrintView() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', borderBottom: '2px solid #7c3aed', paddingBottom: '10px' }}>
         <div>
-          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#7c3aed' }}>Smart Home Manager</div>
+          <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#7c3aed' }}>{company?.name || APP_NEUTRAL_TITLE}</div>
           <div style={{ fontSize: '13px', fontWeight: 'bold', marginTop: '3px' }}>Oferta / Wycena instalacji smart home</div>
           {fileNames.length > 0 && (
             <div style={{ fontSize: '9px', color: '#9ca3af', marginTop: '3px' }}>

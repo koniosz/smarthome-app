@@ -439,7 +439,7 @@ function ProjectDocumentsTab({ projectId, project }: { projectId: string; projec
                 className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Przedstawiciel SHC</label>
+              <label className="block text-xs text-gray-500 mb-1">Przedstawiciel wykonawcy</label>
               <input type="text" value={cf.shc_representative} onChange={e => setCf(p => ({ ...p, shc_representative: e.target.value }))}
                 className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200" />
             </div>

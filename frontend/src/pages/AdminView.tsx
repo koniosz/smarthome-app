@@ -30,6 +30,7 @@ interface User {
   can_view_warehouse?: boolean
   can_view_invoices?: boolean
   can_view_payments?: boolean
+  company_id?: string | null        // firma domowa pracownika (null = domyślna)
   azure_oid: string | null
   created_at: string
 }
@@ -155,6 +156,17 @@ export default function AdminView() {
     } catch { alert('Nie udało się zapisać uprawnienia.') }
   }
 
+  // Firma domowa pracownika: nie‑admin widzi wyłącznie tę firmę (nagłówek X-Company-Id jest dla niego ignorowany)
+  async function setUserCompany(userId: string, company_id: string | null) {
+    try {
+      await client.put(`/api/users/${userId}`, { company_id })
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, company_id } : u))
+      flash('success', 'Firma pracownika zapisana')
+    } catch (err: any) {
+      flash('error', err.response?.data?.error || 'Nie udało się zapisać firmy pracownika')
+    }
+  }
+
   async function changeRole(userId: string, role: 'admin' | 'employee') {
     try {
       await client.put(`/api/users/${userId}`, { role })
@@ -265,6 +277,8 @@ export default function AdminView() {
   useEffect(() => {
     if (activeTab === 'companies') loadCompanies()
   }, [activeTab, loadCompanies])
+  // lista firm potrzebna też w zakładce Użytkownicy (select „Firma” przy pracowniku)
+  useEffect(() => { loadCompanies() }, [loadCompanies])
 
   async function saveSmtp(e: React.FormEvent) {
     e.preventDefault()
@@ -374,6 +388,9 @@ export default function AdminView() {
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Użytkownicy</h2>
+            <p className="text-xs text-gray-400 mt-1">
+              <strong className="font-semibold text-gray-500 dark:text-gray-400">Firma:</strong> pracownik widzi tylko tę firmę; admin przełącza dowolnie (w nagłówku). Puste = firma domyślna.
+            </p>
           </div>
           <div className="divide-y divide-gray-100 dark:divide-gray-800">
             {users.length === 0 && (
@@ -421,6 +438,20 @@ export default function AdminView() {
                     />
                     💳
                   </label>
+                  {u.role !== 'admin' && (
+                    <select
+                      value={u.company_id ?? ''}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => setUserCompany(u.id, e.target.value || null)}
+                      title="Firma: pracownik widzi tylko tę firmę; admin przełącza dowolnie"
+                      className="text-xs px-2 py-1 max-w-[150px] rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                    >
+                      <option value="">Firma: domyślna</option>
+                      {companies
+                        .filter(c => c.active || c.id === u.company_id)
+                        .map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}{c.active ? '' : ' (nieaktywna)'}</option>)}
+                    </select>
+                  )}
                   <select
                     value={u.role}
                     onClick={e => e.stopPropagation()}
@@ -641,7 +672,7 @@ export default function AdminView() {
                         type="text"
                         value={smtpForm.from_name}
                         onChange={e => setSmtpForm(f => ({ ...f, from_name: e.target.value }))}
-                        placeholder="np. SHC Manager"
+                        placeholder="np. Panel firmy"
                         className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm text-gray-800 dark:text-gray-100 outline-none focus:border-violet-400 dark:focus:border-violet-600"
                       />
                     </div>

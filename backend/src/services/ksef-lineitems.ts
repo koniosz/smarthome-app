@@ -3,10 +3,11 @@
 // dla dobrze zdefiniowanej struktury FA(2)/FA(3).
 
 import axios from 'axios'
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../db'
 import { getActiveSession } from './ksef'
 
-const prisma = new PrismaClient()
+// Wspólny klient Prisma z zakresem aktywnej firmy (tenant). Token KSeF bierzemy przez
+// getActiveSession(), które korzysta z konfiguracji per firma (ksefConfig w ./ksef).
 
 export interface InvoiceLineItem {
   nr: string

@@ -4,6 +4,7 @@ import axios from 'axios'
 import db, { prisma } from '../db'
 import { createWarehouseDoc, ensureProjectsWarehouse, DocError } from './warehouse'
 import { ensureDefaultCompany, sellerSnapshot } from './companies'
+import { currentCompanyId } from '../tenant'
 
 // Faktury sprzedażowe (BETA).
 // Szkic → wystawienie (numer FV/RRRR/MM/NNN) → opłacona / anulowana.
@@ -99,6 +100,9 @@ router.get('/', async (_req: Request, res: Response) => {
 // POST /api/sales-invoices — utwórz szkic
 // Sprzedawca: wskazana aktywna firma albo domyślna (szkice bez company_id = firma domyślna)
 async function resolveCompany(companyId: any): Promise<{ company: any } | { error: string }> {
+  // Wielofirmowość: sprzedawcą jest ZAWSZE aktywna firma (kontekst żądania); company_id z payloadu ignorujemy
+  const ctx = currentCompanyId()
+  if (ctx) companyId = ctx
   if (companyId) {
     const c: any = await db.companies.find(String(companyId))
     if (!c || !c.active) return { error: 'Wybrana firma-sprzedawca nie istnieje lub jest nieaktywna' }

@@ -64,6 +64,13 @@ router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
     if (req.body.can_view_warehouse !== undefined) patch.can_view_warehouse = Boolean(req.body.can_view_warehouse)
     if (req.body.can_view_invoices !== undefined) patch.can_view_invoices = Boolean(req.body.can_view_invoices)
     if (req.body.can_view_payments !== undefined) patch.can_view_payments = Boolean(req.body.can_view_payments)
+    if (req.body.company_id !== undefined) {
+      // firma „domowa”: nie-admin widzi tylko ją (null = firma domyślna)
+      const cid = req.body.company_id ? String(req.body.company_id) : null
+      if (cid && !(await db.companies.find(cid))) { res.status(400).json({ error: 'Firma nie istnieje' }); return }
+      patch.company_id = cid
+      const { invalidateCompanyCache } = await import('../middleware/tenant'); invalidateCompanyCache()
+    }
     if (req.body.password) patch.password_hash = await bcrypt.hash(req.body.password, 10)
 
     await db.users.update(req.params.id, patch)

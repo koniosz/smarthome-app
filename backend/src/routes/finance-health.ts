@@ -13,6 +13,7 @@ import { requireAdmin } from '../middleware/auth'
 import { requirePayments } from './payables'
 import { computeHealth, parsePeriod, type HealthKind } from '../services/finance-health'
 import { buildReportEmail, sendReport, parseEmails } from '../services/finance-report'
+import { getCompanySettings, saveCompanySettings } from '../settings-store'
 
 const router = Router()
 router.use(requirePayments)
@@ -53,7 +54,7 @@ router.get('/health/report-preview', async (req: Request, res: Response) => {
   try {
     const [health, settings] = await Promise.all([
       computeHealth(period),
-      prisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null),
+      getCompanySettings().catch(() => null),
     ])
     const companyName = settings?.company_name || process.env.COMPANY_NAME || 'SHC Manager'
     const { subject, html } = buildReportEmail(health, companyName)
@@ -81,9 +82,7 @@ router.post('/health/report-send', async (req: Request, res: Response) => {
 
 // ── Ustawienia raportu ────────────────────────────────────────────────────────
 async function settingsPayload() {
-  const s = await prisma.companySettings.upsert({
-    where: { id: 'default' }, update: {}, create: { id: 'default', updated_at: now() },
-  })
+  const s = (await getCompanySettings()) ?? await saveCompanySettings({ updated_at: now() })
   const log = await prisma.reportDispatch.findMany({ orderBy: { created_at: 'desc' }, take: 12 })
   return {
     company_name: s.company_name,
@@ -132,11 +131,7 @@ router.put('/health/report-settings', requireAdmin, async (req: Request, res: Re
 
     if (!Object.keys(data).length) { res.status(400).json({ error: 'Brak pól do zapisania' }); return }
     data.updated_at = now()
-    await prisma.companySettings.upsert({
-      where: { id: 'default' },
-      update: data,
-      create: { id: 'default', ...data },
-    })
+    await saveCompanySettings(data)
     res.json(await settingsPayload())
   } catch (e: any) {
     console.error('[finance/health/report-settings PUT]', e)

@@ -12,9 +12,11 @@ const btnSecondary = 'px-2.5 py-1 text-xs border border-gray-200 dark:border-gra
 const LOGO_MAX_BYTES = 700 * 1024
 export const BUSINESS_UNIT_LABELS: Record<CompanyBusinessUnit, string> = { shc: 'Smart Home Center', gatelynk: 'GateLynk', shared: 'Wspólne' }
 
+// `ksef_token` NIE jest częścią formularza — backend zwraca tylko maskę; wysyłamy go wyłącznie, gdy wpisano nową wartość
 const EMPTY_FORM: CompanyInput = {
   name: '', short_name: '', nip: '', address: '', bank_account: '', bank_name: '', email: '',
   invoice_prefix: 'FV', invoice_logo: '', invoice_footer: '', business_unit: 'shc', is_default: false, active: true,
+  ksef_nip: '',
 }
 
 // NIP: 10 cyfr; dozwolony prefiks „PL” oraz spacje/myślniki — zapisujemy tak, jak wpisano
@@ -29,6 +31,7 @@ function toForm(c: Company): CompanyInput {
     bank_account: c.bank_account ?? '', bank_name: c.bank_name ?? '', email: c.email ?? '',
     invoice_prefix: c.invoice_prefix || 'FV', invoice_logo: c.invoice_logo ?? '', invoice_footer: c.invoice_footer ?? '',
     business_unit: c.business_unit || 'shc', is_default: !!c.is_default, active: c.active !== false,
+    ksef_nip: c.ksef_nip ?? '',
   }
 }
 
@@ -142,6 +145,11 @@ function CompanyForm({ company, others, onCancel, onSaved }: { company: Company 
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const set = <K extends keyof CompanyInput>(k: K, v: CompanyInput[K]) => setForm(f => ({ ...f, [k]: v }))
+  // KSeF: token trzymany osobno — backend zwraca maskę '••••••••' (lub ''), więc wysyłamy go tylko gdy wpisano nową wartość
+  const hasKsefToken = !!company?.ksef_token
+  const [ksefToken, setKsefToken] = useState('')
+  const [showKsefToken, setShowKsefToken] = useState(false)
+  const [clearKsefToken, setClearKsefToken] = useState(false)
 
   const wasDefault = !!company?.is_default
   const prefixClash = others.find(o => o.active && (o.invoice_prefix || 'FV').trim().toUpperCase() === (form.invoice_prefix || 'FV').trim().toUpperCase())
@@ -158,11 +166,15 @@ function CompanyForm({ company, others, onCancel, onSaved }: { company: Company 
   const save = async () => {
     if (!form.name.trim()) { setErr('Nazwa firmy jest wymagana.'); return }
     if (!isValidNip(form.nip)) { setErr('NIP musi mieć 10 cyfr (dozwolony prefiks PL, np. PL1234567890).'); return }
+    const newToken = ksefToken.trim()
     const payload: CompanyInput = {
       ...form,
       name: form.name.trim(), short_name: form.short_name.trim(), nip: form.nip.trim(), address: form.address.trim(),
       bank_account: form.bank_account.trim(), bank_name: form.bank_name.trim(), email: form.email.trim(),
       invoice_prefix: form.invoice_prefix.trim() || 'FV', invoice_footer: form.invoice_footer.trim(),
+      ksef_nip: form.ksef_nip.trim(),
+      // token: tylko nowa wartość albo jawne usunięcie ('') — w innym razie klucz pomijamy (backend zachowa obecny)
+      ...(newToken ? { ksef_token: newToken } : clearKsefToken ? { ksef_token: '' } : {}),
     }
     setSaving(true); setErr('')
     try {
@@ -237,6 +249,42 @@ function CompanyForm({ company, others, onCancel, onSaved }: { company: Company 
 
       <div><label className={lblCls}>Stopka faktury</label>
         <textarea className={`${inputCls} min-h-[56px]`} rows={2} value={form.invoice_footer} onChange={e => set('invoice_footer', e.target.value)} placeholder="np. KRS 0000000000 · Kapitał zakładowy 5 000 zł · Sąd Rejonowy dla m.st. Warszawy" /></div>
+
+      {/* KSeF — dane dostępowe tej firmy (pobieranie faktur kosztowych / wysyłka sprzedażowych) */}
+      <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 space-y-3 bg-gray-50/60 dark:bg-gray-800/40">
+        <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">KSeF</div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={lblCls}>NIP do KSeF</label>
+            <input className={`${inputCls} font-mono`} value={form.ksef_nip} onChange={e => set('ksef_nip', e.target.value)} placeholder={form.nip.trim() ? `np. ${nipDigits(form.nip)}` : 'np. 1234567890'} autoComplete="off" />
+            <p className="text-[11px] text-gray-400 mt-1">Zwykle taki sam jak NIP firmy (bez prefiksu PL).</p>
+          </div>
+          <div><label className={lblCls}>Token KSeF</label>
+            <div className="flex gap-2">
+              <input
+                type={showKsefToken ? 'text' : 'password'}
+                className={`${inputCls} font-mono`}
+                value={ksefToken}
+                onChange={e => { setKsefToken(e.target.value); if (e.target.value) setClearKsefToken(false) }}
+                placeholder={clearKsefToken ? 'token zostanie usunięty' : hasKsefToken ? '•••••••• (zapisany — wpisz, aby zmienić)' : 'brak tokenu — wklej, aby ustawić'}
+                autoComplete="new-password"
+                spellCheck={false}
+              />
+              <button type="button" onClick={() => setShowKsefToken(s => !s)} className={btnSecondary} title={showKsefToken ? 'Ukryj' : 'Pokaż'}>{showKsefToken ? '🙈' : '👁'}</button>
+            </div>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <p className="text-[11px] text-gray-400">
+                {hasKsefToken ? <>Token <span className="text-green-600 dark:text-green-400 font-semibold">zapisany</span> — pole puste zostawia go bez zmian.</> : 'Brak zapisanego tokenu.'}
+              </p>
+              {hasKsefToken && !ksefToken && (
+                <button type="button" onClick={() => setClearKsefToken(v => !v)} className={`text-[11px] ${clearKsefToken ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 hover:text-red-500'}`}>
+                  {clearKsefToken ? '↩ Nie usuwaj' : '✕ Usuń token'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        <p className="text-[11px] text-gray-400">Firma domyślna bez tokenu używa konfiguracji serwera (zmienne środowiskowe KSeF). Pozostałe firmy muszą mieć własny token.</p>
+      </div>
 
       <div className="flex items-center gap-5 flex-wrap">
         <label className={`flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200 ${wasDefault ? 'opacity-60' : 'cursor-pointer'}`}

@@ -6,8 +6,10 @@
  */
 import { Router, Request, Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
-import db, { prisma } from '../db'
+import db, { prisma, basePrisma } from '../db'
 import { requireAdmin } from '../middleware/auth'
+import { SCOPED_MODELS, setDefaultCompanyId, currentCompanyId } from '../tenant'
+import { companiesForUser, invalidateCompanyCache } from '../middleware/tenant'
 
 const router = Router()
 const now = () => new Date().toISOString()
@@ -39,12 +41,30 @@ async function backfillLegacyInvoices(): Promise<void> {
   legacyBackfilled = true
 }
 
+// Dane sprzed wielofirmowości (company_id = null we wszystkich modelach z zakresem) → firma domyślna (SHC).
+// Idempotentne; wołane przy starcie i po zasiewie. Także rekordy tworzone bez kontekstu (np. zagnieżdżone) dostają firmę.
+let tenantBackfillDone = false
+export async function backfillTenantNulls(): Promise<void> {
+  const def: any = await basePrisma.company.findFirst({ where: { is_default: true } })
+  if (!def) return
+  setDefaultCompanyId(def.id)
+  let total = 0
+  for (const model of SCOPED_MODELS) {
+    const delegate = (basePrisma as any)[model.charAt(0).toLowerCase() + model.slice(1)]
+    if (!delegate?.updateMany) continue
+    try { const r = await delegate.updateMany({ where: { company_id: null }, data: { company_id: def.id } }); total += r.count }
+    catch (e: any) { console.error(`[Firmy] backfill ${model}:`, e?.message) }
+  }
+  if (total && !tenantBackfillDone) console.log(`[Firmy] Przypisano ${total} rekordów bez firmy do: ${def.name}`)
+  tenantBackfillDone = true
+}
+
 export async function ensureDefaultCompany(): Promise<any> {
   const existing = await db.companies.findDefault()
-  if (existing) { await backfillLegacyInvoices(); return existing }
+  if (existing) { setDefaultCompanyId(existing.id); await backfillLegacyInvoices(); return existing }
   const any = await db.companies.all()
   if (any.length) { await db.companies.update(any[0].id, { is_default: true, updated_at: now() }); await backfillLegacyInvoices(); return db.companies.find(any[0].id) }
-  const settings = await prisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null)
+  const settings = await basePrisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null)
   const item = {
     id: uuidv4(), ...LEGACY_DEFAULT, email: '', invoice_prefix: 'FV',
     invoice_logo: settings?.invoice_logo ?? '', invoice_footer: settings?.invoice_footer ?? '',
@@ -52,8 +72,17 @@ export async function ensureDefaultCompany(): Promise<any> {
   }
   await db.companies.insert(item)
   console.log('[Firmy] Zasiano firmę domyślną:', item.name)
+  setDefaultCompanyId(item.id)
+  invalidateCompanyCache()
   await backfillLegacyInvoices()
+  await backfillTenantNulls()
   return item
+}
+
+// Token KSeF nie wychodzi z serwera — w odpowiedziach maska
+const MASK = '••••••••'
+export function publicCompany(c: any) {
+  return c ? { ...c, ksef_token: c.ksef_token ? MASK : '' } : c
 }
 
 // Snapshot sprzedawcy zapisywany na fakturze przy wystawieniu (dane + stopka; logo z firmy po company_id)
@@ -69,8 +98,9 @@ export async function moduleInvoiceScope(): Promise<(inv: { company_id?: string 
   const defaultBu = companies.find(c => c.is_default)?.business_unit ?? 'shc'
   const buOf = new Map(companies.map(c => [c.id, c.business_unit]))
   return (inv, bu = 'all') => {
+    // zakres firmy zapewnia tenant (zapytania są już filtrowane po aktywnej firmie) — tu tylko filtr jednostki (BU)
+    if (bu === 'all') return true
     const invBu = inv.company_id ? (buOf.get(inv.company_id) ?? defaultBu) : defaultBu
-    if (bu === 'all') return invBu === 'shc' || invBu === 'shared'
     return invBu === bu || invBu === 'shared'
   }
 }
@@ -93,6 +123,8 @@ function readPatch(body: any, partial: boolean): { patch: any } | { error: strin
   const str = (k: string, max = 300) => { if (body[k] !== undefined) patch[k] = String(body[k] ?? '').trim().slice(0, max) }
   str('name', 200); str('short_name', 60); str('nip', 20); str('address', 500); str('bank_account', 60); str('bank_name', 100); str('email', 120)
   str('invoice_prefix', 20); str('invoice_footer', 500)
+  if (body.ksef_nip !== undefined) patch.ksef_nip = String(body.ksef_nip ?? '').replace(/\D/g, '').slice(0, 10)
+  if (body.ksef_token !== undefined && String(body.ksef_token) !== MASK) patch.ksef_token = String(body.ksef_token ?? '').trim().slice(0, 500)
   if (body.invoice_logo !== undefined) {
     const logo = String(body.invoice_logo ?? '')
     const err = validateLogo(logo); if (err) return { error: err }
@@ -125,8 +157,19 @@ router.get('/', async (req: Request, res: Response) => {
     if (all && isAdmin) {
       for (const c of list) c.invoices_count = await db.sales_invoices.countForCompany(c.id)
     }
-    res.json(list)
+    res.json(list.map(publicCompany))
   } catch (e) { console.error('[companies GET]', e); res.status(500).json({ error: 'Błąd serwera' }) }
+})
+
+// GET /api/companies/me — aktywna firma (wg X-Company-Id / przypięcia) + firmy, na które można się przełączyć
+router.get('/me', async (req: Request, res: Response) => {
+  try {
+    await ensureDefaultCompany()
+    const { companies, home } = await companiesForUser(req.user as any)
+    const activeId = currentCompanyId() ?? home?.id
+    const company = companies.find(c => c.id === activeId) ?? home
+    res.json({ company: publicCompany(company), companies: companies.map(publicCompany), can_switch: companies.length > 1 })
+  } catch (e) { console.error('[companies/me]', e); res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
 // POST /api/companies — nowa firma (admin)
@@ -144,7 +187,8 @@ router.post('/', requireAdmin, async (req: Request, res: Response) => {
       ...r.patch, is_default: makeDefault, created_at: now(), updated_at: now(),
     }
     await db.companies.insert(item)
-    res.status(201).json(item)
+    invalidateCompanyCache()
+    res.status(201).json(publicCompany(item))
   } catch (e) { console.error('[companies POST]', e); res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
@@ -164,7 +208,9 @@ router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
     if (req.body?.is_default === false && c.is_default) { res.status(400).json({ error: 'Ustaw inną firmę jako domyślną — jedna musi nią być' }); return }
     if (patch.active === false && c.is_default) { res.status(400).json({ error: 'Firma domyślna nie może być nieaktywna — najpierw ustaw inną jako domyślną' }); return }
     await db.companies.update(c.id, patch)
-    res.json(await db.companies.find(c.id))
+    invalidateCompanyCache()
+    if (patch.is_default) setDefaultCompanyId(c.id)
+    res.json(publicCompany(await db.companies.find(c.id)))
   } catch (e) { console.error('[companies PUT]', e); res.status(500).json({ error: 'Błąd serwera' }) }
 })
 
@@ -174,9 +220,19 @@ router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
     const c: any = await db.companies.find(req.params.id)
     if (!c) { res.status(404).json({ error: 'Firma nie znaleziona' }); return }
     if (c.is_default) { res.status(409).json({ error: 'Nie można usunąć firmy domyślnej — najpierw ustaw inną jako domyślną' }); return }
-    const n = await db.sales_invoices.countForCompany(c.id)
-    if (n > 0) { res.status(409).json({ error: `Firma ma ${n} faktur — zamiast usuwać, oznacz ją jako nieaktywną` }); return }
+    // Firma z jakimikolwiek danymi (projekty, pracownicy, faktury, KSeF, koszty, magazyn) — tylko dezaktywacja
+    const checks: Array<[string, number]> = [
+      ['faktur', await basePrisma.salesInvoice.count({ where: { company_id: c.id } })],
+      ['projektów', await basePrisma.project.count({ where: { company_id: c.id } })],
+      ['pracowników', await basePrisma.employee.count({ where: { company_id: c.id } })],
+      ['faktur KSeF', await basePrisma.ksefInvoice.count({ where: { company_id: c.id } })],
+      ['kosztów', await basePrisma.manualCost.count({ where: { company_id: c.id } })],
+      ['pozycji magazynu', await basePrisma.warehouseItem.count({ where: { company_id: c.id } })],
+    ]
+    const used = checks.filter(([, n]) => n > 0)
+    if (used.length) { res.status(409).json({ error: `Firma ma dane (${used.map(([k, n]) => `${n} ${k}`).join(', ')}) — zamiast usuwać, oznacz ją jako nieaktywną` }); return }
     await db.companies.delete(c.id)
+    invalidateCompanyCache()
     res.json({ ok: true })
   } catch (e) { console.error('[companies DELETE]', e); res.status(500).json({ error: 'Błąd serwera' }) }
 })

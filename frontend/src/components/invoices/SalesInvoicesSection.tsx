@@ -5,6 +5,7 @@ import type { SalesInvoice, SalesInvoiceItem, WarehouseDoc, ProjectWarehouseDoc,
 import type { AiQuote, Project } from '../../types'
 import { COMPANY_INFO } from '../../constants/company'
 import { useAuth } from '../../auth/AuthContext'
+import { useCompany } from '../../company/CompanyContext'
 import CompaniesManagerModal from './CompaniesManagerModal'
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-violet-500'
@@ -32,7 +33,8 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
   // Firmy‑sprzedawcy: admin widzi też nieaktywne (żeby logo/stopka starych faktur nadal się rozwiązywały)
   const [companies, setCompanies] = useState<Company[]>([])
   const [showCompanies, setShowCompanies] = useState(false)
-  const [sellerFilter, setSellerFilter] = useState('')
+  // Sprzedawca = aktywna firma (kontekst X-Company-Id) — backend zwraca tylko faktury tej firmy, bez filtra po sprzedawcy
+  const { company: activeCompany } = useCompany()
 
   const load = () => { setLoading(true); salesInvoicesApi.list().then(setList).catch(() => setList([])).finally(() => setLoading(false)) }
   // także nieaktywne — stare faktury wystawione przez dezaktywowaną firmę muszą drukować się z jej logo
@@ -46,6 +48,7 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
   }
 
   const defaultCompany = companies.find(c => c.is_default) ?? companies[0]
+  const sellerCompany = activeCompany ?? defaultCompany
   const multiCompany = companies.length > 1
   // stare faktury (company_id = null) traktujemy jak faktury firmy domyślnej
   const effectiveCompanyId = (inv: SalesInvoice) => inv.company_id ?? defaultCompany?.id ?? ''
@@ -53,14 +56,17 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
     const c = companies.find(x => x.id === effectiveCompanyId(inv))
     return c ? (c.short_name || c.name) : (inv.seller?.name ?? '')
   }
-  const visible = sellerFilter ? list.filter(inv => effectiveCompanyId(inv) === sellerFilter) : list
+  const visible = list
 
   return (
     <div className="p-6 max-w-5xl mx-auto min-h-screen bg-[#f8fafc] dark:bg-gray-950">
       <div className="flex items-start justify-between mb-1 flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-gray-50">Faktury sprzedażowe <span className="text-xs font-semibold align-middle bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 px-2 py-0.5 rounded-full">BETA</span></h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Szkic → wystawienie (numer wg prefiksu firmy) → podgląd / wydruk / PDF · numeracja PREFIKS/RRRR/MM/NNN, osobna dla każdej firmy</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            {sellerCompany && <>Sprzedawca: <strong className="text-gray-700 dark:text-gray-200">{sellerCompany.short_name || sellerCompany.name}</strong> (aktywna firma) · </>}
+            Szkic → wystawienie (numer <span className="font-mono">{(sellerCompany?.invoice_prefix || 'FV')}/RRRR/MM/NNN</span>) → podgląd / wydruk / PDF
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isAdmin && (
@@ -78,21 +84,8 @@ export default function SalesInvoicesSection({ onBack }: { onBack: () => void })
         ⚠️ Wysyłka do KSeF jest <strong>przygotowana, ale wyłączona</strong> — od 04.2026 KSeF jest obowiązkowy dla faktur B2B; włączenie wysyłki wymaga osobnej decyzji.
       </p>
 
-      {multiCompany && (
-        <div className="flex items-center gap-2 mb-3">
-          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">Sprzedawca:</label>
-          <select value={sellerFilter} onChange={e => setSellerFilter(e.target.value)}
-            className="px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <option value="">wszystkie</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.short_name || c.name}{c.active ? '' : ' (nieaktywna)'}</option>)}
-          </select>
-          {sellerFilter && <span className="text-xs text-gray-400">{visible.length} z {list.length}</span>}
-        </div>
-      )}
-
       {loading ? <div className="text-center py-14 text-gray-400">Ładowanie…</div>
-        : list.length === 0 ? <div className="text-center py-14 text-gray-400"><div className="text-4xl mb-3">🧾</div><p className="text-sm">Brak faktur. Utwórz pierwszą — ręcznie, z wyceny albo z WZ.</p></div>
-        : visible.length === 0 ? <div className="text-center py-14 text-gray-400 text-sm">Brak faktur wybranego sprzedawcy.</div>
+        : visible.length === 0 ? <div className="text-center py-14 text-gray-400"><div className="text-4xl mb-3">🧾</div><p className="text-sm">Brak faktur{sellerCompany ? ` firmy ${sellerCompany.short_name || sellerCompany.name}` : ''}. Utwórz pierwszą — ręcznie, z wyceny albo z WZ.</p></div>
         : (
           <div className="space-y-2">
             {visible.map(inv => {
@@ -254,15 +247,11 @@ const EMPTY_LINE: SalesInvoiceItem = { name: '', qty: 1, unit: 'szt.', unit_pric
 function InvoiceBuilderModal({ invoice, companies, onClose, onSaved }: { invoice: SalesInvoice | null; companies: Company[]; onClose: () => void; onSaved: () => void }) {
   const editing = !!invoice
   const todayIso = new Date().toISOString().slice(0, 10)
-  // Sprzedawca: aktywne firmy (+ firma edytowanego szkicu, nawet jeśli już nieaktywna); domyślnie firma `is_default`
-  const sellerOptions = companies.filter(c => c.active || c.id === invoice?.company_id)
-  const defaultSellerId = sellerOptions.find(c => c.is_default)?.id ?? sellerOptions[0]?.id ?? ''
-  const [companyId, setCompanyId] = useState<string>(
-    invoice?.company_id && sellerOptions.some(c => c.id === invoice.company_id) ? invoice.company_id : defaultSellerId,
-  )
-  const seller = sellerOptions.find(c => c.id === companyId)
-  // gdy lista firm dotarła już po otwarciu modala — ustaw domyślną (tylko dla NOWEJ faktury; szkicu nie przepinamy po cichu)
-  useEffect(() => { if (!invoice && !seller && defaultSellerId) setCompanyId(defaultSellerId) }, [invoice, seller, defaultSellerId])
+  // Sprzedawca = ZAWSZE aktywna firma (backend bierze ją z kontekstu X-Company-Id i ignoruje company_id z payloadu).
+  // Do podglądu: edytowany szkic pokazuje swoją firmę (jeśli ją znamy), nowa faktura — aktywną; fallback: firma domyślna.
+  const { company: activeCompany } = useCompany()
+  const draftCompany = invoice?.company_id ? companies.find(c => c.id === invoice.company_id) : undefined
+  const seller = draftCompany ?? activeCompany ?? companies.find(c => c.is_default) ?? companies[0]
   const [buyerName, setBuyerName] = useState(invoice?.buyer_name ?? '')
   const [buyerNip, setBuyerNip] = useState(invoice?.buyer_nip ?? '')
   const [buyerAddress, setBuyerAddress] = useState(invoice?.buyer_address ?? '')
@@ -377,8 +366,7 @@ function InvoiceBuilderModal({ invoice, companies, onClose, onSaved }: { invoice
       quote_id: quoteRef || undefined, warehouse_doc_id: wzRef || undefined,
       project_id: projectRef || undefined,
       linked_mm_line_ids: [...mmInserted],
-      // sprzedawcę wysyłamy tylko gdy go zmieniono (szkic firmy nieaktywnej da się zapisać bez przepinania)
-      ...(companyId && companyId !== (invoice?.company_id ?? '') ? { company_id: companyId } : {}),
+      // company_id NIE jest wysyłane — sprzedawcą jest zawsze aktywna firma (kontekst backendu)
     }
     try {
       if (editing && invoice) await salesInvoicesApi.update(invoice.id, payload as any)
@@ -390,23 +378,20 @@ function InvoiceBuilderModal({ invoice, companies, onClose, onSaved }: { invoice
   return (
     <Modal title={editing ? `Edycja szkicu faktury` : 'Nowa faktura sprzedażowa (szkic)'} onClose={onClose} wide>
       <div className="space-y-4">
-        {/* Sprzedawca (firma wystawiająca) — dane, logo, stopka i prefiks numeracji z rejestru firm */}
-        {sellerOptions.length > 0 && (
+        {/* Sprzedawca = aktywna firma (bez wyboru) — dane, logo, stopka i prefiks numeracji z rejestru firm */}
+        {seller && (
           <div className="border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20 rounded-lg p-3">
-            <label className={lblCls}>Sprzedawca (firma wystawiająca) *</label>
             <div className="flex items-center gap-3 flex-wrap">
-              <select className={`${inputCls} max-w-md`} value={companyId} onChange={e => setCompanyId(e.target.value)}>
-                {sellerOptions.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}{c.is_default ? ' ★' : ''}{c.active ? '' : ' (nieaktywna)'}</option>
-                ))}
-              </select>
-              {seller?.invoice_logo && <img src={seller.invoice_logo} alt="logo" className="h-8 max-w-[110px] object-contain bg-white rounded px-1" />}
-            </div>
-            {seller && (
-              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-                NIP {seller.nip || '—'}{seller.address ? ` · ${seller.address.replace(/\n/g, ', ')}` : ''} · numer przy wystawieniu: <span className="font-mono font-semibold text-gray-700 dark:text-gray-200">{seller.invoice_prefix || 'FV'}/RRRR/MM/NNN</span>
+              {seller.invoice_logo && <img src={seller.invoice_logo} alt="logo" className="h-8 max-w-[110px] object-contain bg-white rounded px-1" />}
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Sprzedawca{draftCompany ? '' : ' (aktywna firma)'}</div>
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100 truncate">{seller.name}{!seller.active ? ' (nieaktywna)' : ''}</div>
               </div>
-            )}
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+              NIP {seller.nip || '—'}{seller.address ? ` · ${seller.address.replace(/\n/g, ', ')}` : ''} · numer przy wystawieniu: <span className="font-mono font-semibold text-gray-700 dark:text-gray-200">{seller.invoice_prefix || 'FV'}/RRRR/MM/NNN</span>
+            </div>
+            <div className="text-[11px] text-gray-400 mt-1">Żeby wystawić fakturę w imieniu innej firmy, przełącz firmę w nagłówku aplikacji.</div>
           </div>
         )}
 

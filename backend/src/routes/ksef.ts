@@ -1,12 +1,20 @@
 import { Router, Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
 import { v4 as uuidv4 } from 'uuid'
 import { requireAdmin, requireAuth } from '../middleware/auth'
-import { syncInvoices, getStatus, debugAuth, tryAutoClassifyFromHistory, terminateSession } from '../services/ksef'
-import db from '../db'
+import {
+  syncInvoicesForCurrentCompany, getStatus, debugAuth, tryAutoClassifyFromHistory, terminateSession,
+  ksefConfig, KsefNotConfiguredError, KSEF_NOT_CONFIGURED_MSG,
+} from '../services/ksef'
+import db, { prisma } from '../db'
 
-const prisma = new PrismaClient()
 const router = Router()
+
+/** Błąd KSeF → odpowiedź: brak konfiguracji aktywnej firmy = 400 (do uzupełnienia w panelu), reszta = 500. */
+function sendKsefError(res: Response, err: any): void {
+  if (err instanceof KsefNotConfiguredError) { res.status(400).json({ error: err.message, configured: false }); return }
+  const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : (err?.message ?? String(err))
+  res.status(500).json({ error: msg })
+}
 
 function auditUser(req: Request) {
   const u = (req as any).user
@@ -157,17 +165,17 @@ router.get('/debug-auth', requireAdmin, async (_req: Request, res: Response) => 
   try { res.json(await debugAuth()) } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
-// GET /api/ksef/status
+// GET /api/ksef/status — stan KSeF aktywnej firmy ({ configured, nip, source: 'company'|'env'|'none', … })
 router.get('/status', requireAdmin, async (_req: Request, res: Response) => {
   try { res.json(await getStatus()) } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
-// POST /api/ksef/sync
+// POST /api/ksef/sync — ręczna synchronizacja AKTYWNEJ firmy (400, gdy firma nie ma konfiguracji KSeF)
 router.post('/sync', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { dateFrom } = req.body
-    res.json(await syncInvoices(dateFrom ? new Date(dateFrom) : undefined))
-  } catch (err: any) { res.status(500).json({ error: err.message }) }
+    res.json(await syncInvoicesForCurrentCompany(dateFrom ? new Date(dateFrom) : undefined))
+  } catch (err: any) { sendKsefError(res, err) }
 })
 
 // POST /api/ksef/session/reset — wyczyść sesję i utwórz nową (przydatne gdy token wygasł)
@@ -179,10 +187,7 @@ router.post('/session/reset', requireAdmin, async (_req: Request, res: Response)
     const { getActiveSession } = await import('../services/ksef')
     const token = await getActiveSession()
     res.json({ success: true, message: 'Sesja zresetowana i odtworzona', token_length: token.length })
-  } catch (err: any) {
-    const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message
-    res.status(500).json({ success: false, error: msg })
-  }
+  } catch (err: any) { sendKsefError(res, err) }
 })
 
 // GET /api/ksef/invoices (admin — all invoices)
@@ -240,10 +245,7 @@ router.get('/invoices/:id/xml', requireAdmin, async (req: Request, res: Response
     res.setHeader('Content-Type', 'application/xml; charset=utf-8')
     res.setHeader('Content-Disposition', `inline; filename="faktura-${invoice.invoice_number ?? invoice.ksef_number}.xml"`)
     res.send(xmlRes.data)
-  } catch (err: any) {
-    const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message
-    res.status(500).json({ error: msg })
-  }
+  } catch (err: any) { sendKsefError(res, err) }
 })
 
 // GET /api/ksef/invoices/:id/line-items — pozycje faktury (cache w DB, admin)
@@ -500,13 +502,14 @@ router.post('/invoices/learn-classify', requireAdmin, async (_req: Request, res:
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
-// POST /api/ksef/invoices/fix-directions — napraw kierunek faktur w bazie
-// Subject1 = sprzedażowa (seller_nip === KSEF_NIP lub seller_name zawiera "Smart Home")
-// Subject2 = zakupowa (seller_nip ≠ KSEF_NIP)
+// POST /api/ksef/invoices/fix-directions — napraw kierunek faktur w bazie (aktywna firma)
+// Subject1 = sprzedażowa (seller_nip === NIP firmy z konfiguracji KSeF)
+// Subject2 = zakupowa (seller_nip ≠ NIP firmy)
 router.post('/invoices/fix-directions', requireAdmin, async (_req: Request, res: Response) => {
   try {
-    const ourNip = (process.env.KSEF_NIP || '').replace(/[-\s]/g, '')
-    if (!ourNip) return res.status(400).json({ error: 'Brak KSEF_NIP w konfiguracji' })
+    const cfg = await ksefConfig()
+    if (!cfg) return res.status(400).json({ error: KSEF_NOT_CONFIGURED_MSG, configured: false })
+    const ourNip = cfg.nip
 
     // Pobierz WSZYSTKIE faktury
     const all = await prisma.ksefInvoice.findMany({
@@ -604,10 +607,7 @@ router.get('/shared/:id/xml', requireAuth, async (req: Request, res: Response) =
     res.setHeader('Content-Type', 'application/xml; charset=utf-8')
     res.setHeader('Content-Disposition', `inline; filename="faktura-${invoice.invoice_number ?? invoice.ksef_number}.xml"`)
     res.send(xmlRes.data)
-  } catch (err: any) {
-    const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : err.message
-    res.status(500).json({ error: msg })
-  }
+  } catch (err: any) { sendKsefError(res, err) }
 })
 
 // PATCH /api/ksef/shared/:id/assign — user przypisuje fakturę do swojego projektu

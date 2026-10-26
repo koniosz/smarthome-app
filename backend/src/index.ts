@@ -41,7 +41,7 @@ import warehouseRouter from './routes/warehouse'
 import handoverRouter, { handoverSignPage, handoverSubmitSign } from './routes/handover'
 import hrRouter, { fillScheduleEntries } from './routes/hr'
 import salesInvoicesRouter from './routes/sales-invoices'
-import companiesRouter, { ensureDefaultCompany } from './routes/companies'
+import companiesRouter, { ensureDefaultCompany, backfillTenantNulls } from './routes/companies'
 import accessRequestsRouter from './routes/access-requests'
 import notificationsRouter from './routes/notifications'
 import aiQuoteExamplesRouter from './routes/ai-quote-examples'
@@ -53,8 +53,9 @@ import projectDocumentsRouter from './routes/project-documents'
 import surveysRouter, { publicGetSurvey, publicSubmitSurvey, publicAddAttachment } from './routes/surveys'
 import { syncInvoices } from './services/ksef'
 import { sendDueInvoicesEmail, sendEmployeeExpiryReminderEmail, type EmployeeExpiryItem } from './services/mailer'
-import { PrismaClient } from '@prisma/client'
 import { requireAuth } from './middleware/auth'
+import { tenantMiddleware, forEachCompany } from './middleware/tenant'
+import { prisma as _prismaIndex } from './db'
 
 const app = express()
 const PORT = process.env.PORT || 4001
@@ -100,6 +101,7 @@ app.post('/api/surveys/public/:token/attachments', publicAddAttachment)
 
 // All routes below require authentication
 app.use('/api', requireAuth)
+app.use('/api', tenantMiddleware) // aktywna firma (X-Company-Id) → zakres wszystkich zapytań
 
 // Dashboard
 app.use('/api/dashboard', dashboardRouter)
@@ -221,14 +223,13 @@ const server = app.listen(Number(PORT), '0.0.0.0', () => {
 })
 
 // Firma domyślna (Smart Home Center) — zasiew przy starcie, żeby wybór sprzedawcy nigdy nie był pusty
-ensureDefaultCompany().catch(e => console.error('[Firmy] Zasiew firmy domyślnej:', e?.message))
+ensureDefaultCompany().then(() => backfillTenantNulls()).catch(e => console.error('[Firmy] Zasiew firmy domyślnej / backfill:', e?.message))
 
 // SCHEDULERS=off (lokalny smoke test) — wyłącza wszystkie harmonogramy (przypomnienia, KSeF, raporty, IMAP)
 const SCHEDULERS_ON = process.env.SCHEDULERS !== 'off'
 if (!SCHEDULERS_ON) console.log('[Harmonogramy] WYŁĄCZONE (SCHEDULERS=off)')
 
 // ── Dzienna wysyłka przypomnień o płatnościach ────────────────────────────────
-const _prismaIndex = new PrismaClient()
 async function sendDailyPaymentReminder() {
   try {
     const todayStr = new Date().toISOString().split('T')[0]
@@ -248,23 +249,26 @@ async function sendDailyPaymentReminder() {
   }
 }
 // Run once after 3 minutes from startup, then every 24 hours
+const paymentRemindersAllCompanies = () => forEachCompany(() => sendDailyPaymentReminder())
 if (SCHEDULERS_ON) setTimeout(async () => {
-  await sendDailyPaymentReminder()
-  setInterval(sendDailyPaymentReminder, 24 * 60 * 60 * 1000)
+  await paymentRemindersAllCompanies()
+  setInterval(paymentRemindersAllCompanies, 24 * 60 * 60 * 1000)
 }, 3 * 60 * 1000)
 if (SCHEDULERS_ON) console.log('[Płatności] Dzienna wysyłka przypomnień włączona')
 
 // ── HR: auto-wypełnianie ewidencji z grafiku (pracownicy z auto_time_enabled) ──
 if (SCHEDULERS_ON) setTimeout(async () => {
-  await fillScheduleEntries(7)
-  setInterval(() => fillScheduleEntries(7), 24 * 60 * 60 * 1000)
+  await forEachCompany(() => fillScheduleEntries(7))
+  setInterval(() => forEachCompany(() => fillScheduleEntries(7)), 24 * 60 * 60 * 1000)
 }, 4 * 60 * 1000)
 if (SCHEDULERS_ON) console.log('[HR grafik] Dzienne auto-uzupełnianie ewidencji włączone')
 
 // ── KSeF — automatyczna synchronizacja 3x dziennie (co 8 godzin) ────────────
 // KSeF API limit: 20 requestów/godzinę. Pełna sync robi ~2 req (krótki zakres)
 // lub ~14+ req (historyczna). 3x/dzień = bezpieczny margines.
-if (SCHEDULERS_ON && process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
+// Synchronizacja działa per firma (token z rejestru firm albo KSEF_NIP/KSEF_TOKEN ze środowiska dla firmy
+// domyślnej); syncInvoices() sam pomija firmy bez konfiguracji.
+if (SCHEDULERS_ON) {
   const KSEF_INTERVAL = 8 * 60 * 60 * 1000 // 8 godzin (3x dziennie)
   // Pierwsze uruchomienie po 3 minutach od startu
   setTimeout(async () => {
@@ -277,8 +281,6 @@ if (SCHEDULERS_ON && process.env.KSEF_NIP && process.env.KSEF_TOKEN) {
     }, KSEF_INTERVAL)
   }, 3 * 60 * 1000)
   console.log('[KSeF] Automatyczna synchronizacja 3x dziennie (co 8h) włączona')
-} else {
-  console.log('[KSeF] Brak konfiguracji (KSEF_NIP/KSEF_TOKEN) — synchronizacja wyłączona')
 }
 
 // ── Codzienny raport wygasających badań lekarskich i BHP ────────────────────
@@ -339,9 +341,10 @@ async function sendEmployeeExpiryReminders() {
 }
 
 // Uruchom raz po 5 minutach od startu, potem co 24 godziny (ok. 06:00 każdego dnia)
+const expiryAllCompanies = () => forEachCompany(() => sendEmployeeExpiryReminders())
 if (SCHEDULERS_ON) setTimeout(async () => {
-  await sendEmployeeExpiryReminders()
-  setInterval(sendEmployeeExpiryReminders, 24 * 60 * 60 * 1000)
+  await expiryAllCompanies()
+  setInterval(expiryAllCompanies, 24 * 60 * 60 * 1000)
 }, 5 * 60 * 1000)
 if (SCHEDULERS_ON) console.log('[HR] Codzienny raport wygasających badań włączony (biuro@smarthomecenter.pl)')
 

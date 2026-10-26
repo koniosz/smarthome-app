@@ -16,9 +16,13 @@ import {
   Bell,
   ChevronDown,
   Activity,
+  Check,
 } from 'lucide-react'
 import { useAuth } from '../../auth/AuthContext'
+import { useCompany, companyLabel } from '../../company/CompanyContext'
+import { APP_NEUTRAL_TITLE } from '../../constants/app'
 import { notificationsApi, accessRequestsApi } from '../../api/client'
+import type { Company } from '../../api/client'
 import type { AppNotification } from '../../types'
 import GlobalSearch from './GlobalSearch'
 
@@ -137,6 +141,33 @@ function NotificationsPanel({
   )
 }
 
+// ─── Znak firmy: logo z rejestru firm albo kolorowy kwadrat z inicjałem ───────
+const MARK_COLORS = ['#0f1b2d', '#1d4ed8', '#7c3aed', '#047857', '#b45309', '#be123c', '#0e7490']
+function markColor(seed: string) {
+  let h = 0
+  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return MARK_COLORS[h % MARK_COLORS.length]
+}
+function CompanyMark({ company, size = 34 }: { company: Company | null; size?: number }) {
+  const label = companyLabel(company, APP_NEUTRAL_TITLE)
+  if (company?.invoice_logo) {
+    return (
+      <span className="flex items-center justify-center rounded-[9px] bg-white overflow-hidden flex-shrink-0" style={{ height: size, maxWidth: size * 3.5 }}>
+        <img src={company.invoice_logo} alt={label} className="object-contain" style={{ height: size, maxWidth: size * 3.5 }} />
+      </span>
+    )
+  }
+  const initial = label.trim().charAt(0).toUpperCase()
+  return (
+    <span
+      className="flex items-center justify-center rounded-[9px] text-white font-bold flex-shrink-0"
+      style={{ width: size, height: size, background: company ? markColor(company.id || label) : '#0f1b2d', fontSize: Math.round(size * 0.47) }}
+    >
+      {company && initial ? initial : <Zap size={Math.round(size * 0.53)} strokeWidth={2} className="text-[#60a5fa]" />}
+    </span>
+  )
+}
+
 // ─── Nav items config ─────────────────────────────────────────────────────────
 const NAV_ITEMS: { view: NavView; label: string; Icon: typeof Zap }[] = [
   { view: 'dashboard',       label: 'Dashboard', Icon: LayoutDashboard },
@@ -154,10 +185,16 @@ const NAV_ITEMS: { view: NavView; label: string; Icon: typeof Zap }[] = [
 // ─── Main AppHeader ───────────────────────────────────────────────────────────
 export default function AppHeader({ darkMode, onToggleDark, activeView, onNavigate }: AppHeaderProps) {
   const { user, token, logout } = useAuth()
+  const { company, companies, canSwitch, switchCompany } = useCompany()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  // Przełącznik firmy (admin, gdy jest więcej niż jedna firma)
+  const [companyMenuOpen, setCompanyMenuOpen] = useState(false)
+  const companyRef = useRef<HTMLDivElement>(null)
+  const canSwitchCompany = canSwitch && companies.length > 1
+  const companyName = companyLabel(company, APP_NEUTRAL_TITLE)
 
   // ⌘K / Ctrl+K otwiera wyszukiwarkę globalną z każdego miejsca
   useEffect(() => {
@@ -214,6 +251,7 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
     const handler = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false)
+      if (companyRef.current && !companyRef.current.contains(e.target as Node)) setCompanyMenuOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -272,12 +310,56 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
   return (
     <>
       <header className="flex items-center gap-7 px-8 py-0 bg-white border-b border-[#e2e8f0] sticky top-0 z-40 flex-shrink-0" style={{ minHeight: '61px' }}>
-        {/* Logo */}
-        <div className="flex items-center gap-2.5 flex-shrink-0">
-          <div className="flex items-center justify-center rounded-[9px] text-[#60a5fa]" style={{ width: 34, height: 34, background: '#0f1b2d' }}>
-            <Zap size={18} strokeWidth={2} />
-          </div>
-          <span className="text-[15px] font-bold tracking-tight text-[#0f1b2d]">Smart Home Center</span>
+        {/* Logo / nazwa aktywnej firmy (+ przełącznik firm dla admina) */}
+        <div ref={companyRef} className="relative flex-shrink-0">
+          {canSwitchCompany ? (
+            <button
+              onClick={() => { setCompanyMenuOpen(o => !o); setMenuOpen(false); setNotifOpen(false) }}
+              title="Przełącz firmę"
+              className="flex items-center gap-2.5 -ml-1.5 px-1.5 py-1 rounded-lg hover:bg-[#f1f5f9] transition-colors"
+            >
+              <CompanyMark company={company} />
+              <span className="text-[15px] font-bold tracking-tight text-[#0f1b2d] max-w-[240px] truncate">{companyName}</span>
+              <ChevronDown size={14} strokeWidth={2} className={`text-[#94a3b8] transition-transform ${companyMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+          ) : (
+            <div className="flex items-center gap-2.5">
+              <CompanyMark company={company} />
+              <span className="text-[15px] font-bold tracking-tight text-[#0f1b2d] max-w-[240px] truncate">{companyName}</span>
+            </div>
+          )}
+
+          {companyMenuOpen && canSwitchCompany && (
+            <div className="absolute left-0 top-full mt-1 w-72 bg-white border border-[#e2e8f0] rounded-xl z-50 overflow-hidden" style={{ boxShadow: '0 8px 24px rgba(15,23,42,0.14)' }}>
+              <div className="px-4 py-2.5 border-b border-[#f1f5f9] text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">Przełącz firmę</div>
+              {companies.map(c => {
+                const active = c.id === company?.id
+                return (
+                  <button
+                    key={c.id}
+                    onClick={() => { setCompanyMenuOpen(false); switchCompany(c.id) }}
+                    disabled={active}
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
+                      active ? 'bg-[#eff6ff] text-[#1d4ed8] font-semibold cursor-default' : 'text-[#475569] hover:bg-[#f8fafc]'
+                    }`}
+                  >
+                    <CompanyMark company={c} size={28} />
+                    <span className="flex-1 min-w-0">
+                      <span className="block truncate">{companyLabel(c)}</span>
+                      {c.short_name && c.short_name !== c.name && (
+                        <span className="block text-[11px] font-normal text-[#94a3b8] truncate">{c.name}</span>
+                      )}
+                    </span>
+                    {c.is_default && <span className="text-amber-500 text-xs" title="Firma domyślna">★</span>}
+                    {active && <Check size={15} strokeWidth={2.5} className="text-[#1d4ed8]" />}
+                  </button>
+                )
+              })}
+              <div className="px-4 py-2 border-t border-[#f1f5f9] text-[11px] text-[#94a3b8]">
+                Po przełączeniu wszystkie moduły pokazują wyłącznie dane wybranej firmy.
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Nav */}
@@ -363,7 +445,16 @@ export default function AppHeader({ darkMode, onToggleDark, activeView, onNaviga
                   <div className="px-4 py-3 border-b border-[#f1f5f9]">
                     <div className="text-sm font-semibold text-[#0f172a] truncate">{user.display_name}</div>
                     <div className="text-xs text-[#94a3b8] truncate mt-0.5">{user.email}</div>
+                    {company && <div className="text-xs text-[#64748b] truncate mt-1" title="Aktywna firma">🏢 {companyName}</div>}
                   </div>
+                  {canSwitchCompany && (
+                    <button
+                      onClick={() => { setMenuOpen(false); setCompanyMenuOpen(true) }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-[#475569] hover:bg-[#f8fafc] transition-colors border-b border-[#f1f5f9]"
+                    >
+                      Przełącz firmę
+                    </button>
+                  )}
                   {(user.role === 'admin' || user.can_view_payments) && (
                     <>
                       <button

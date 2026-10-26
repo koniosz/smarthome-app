@@ -15,6 +15,7 @@
 import { prisma } from '../db'
 import { computeHealth, warsawToday, type HealthKind } from './finance-health'
 import { sendReport, logFailed, sendingInProgress } from './finance-report'
+import { forEachCompany } from '../middleware/tenant'
 
 export type DueReport = { kind: HealthKind; period: string }
 
@@ -80,9 +81,11 @@ export async function runReportScheduler(nowDate: Date = new Date()): Promise<vo
 }
 
 export function startReportScheduler(): void {
+  // każda aktywna firma osobno (własne ustawienia, dane, odbiorcy)
+  const tick = () => { void forEachCompany(() => runReportScheduler()) }
   setTimeout(() => {
-    runReportScheduler()
-    setInterval(() => { runReportScheduler() }, 60 * 60 * 1000)
+    tick()
+    setInterval(tick, 60 * 60 * 1000)
   }, 6 * 60 * 1000)
   console.log('[Raport] Harmonogram raportów „Kondycja firmy" włączony (pierwszy przebieg za 6 min, potem co 60 min)')
 }

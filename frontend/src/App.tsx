@@ -29,6 +29,8 @@ import SurveyPage from './pages/SurveyPage'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import AdminRoute from './components/auth/AdminRoute'
 import { AuthProvider, useAuth } from './auth/AuthContext'
+import { CompanyProvider, useCompany, companyLabel } from './company/CompanyContext'
+import { APP_NEUTRAL_TITLE } from './constants/app'
 
 function pathToView(pathname: string): NavView {
   if (pathname.startsWith('/projects')) return 'projects'
@@ -57,11 +59,20 @@ function AppContent() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useAuth()
+  const { company } = useCompany()
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
     localStorage.setItem('shm-dark', String(darkMode))
   }, [darkMode])
+
+  // Tytuł karty = nazwa aktywnej firmy (bez wzmianki o konkretnej spółce w kodzie).
+  // Widoki wydruku (/…/print) i logowanie ustawiają własny tytuł — nie nadpisujemy.
+  const isPrintRoute = location.pathname.endsWith('/print')
+  useEffect(() => {
+    if (isPrintRoute || location.pathname === '/login') return
+    document.title = companyLabel(company, APP_NEUTRAL_TITLE)
+  }, [company, isPrintRoute, location.pathname])
 
   const activeView = pathToView(location.pathname)
 
@@ -151,7 +162,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppContent />
+        <CompanyProvider>
+          <AppContent />
+        </CompanyProvider>
       </AuthProvider>
     </BrowserRouter>
   )

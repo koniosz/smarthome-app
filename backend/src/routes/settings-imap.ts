@@ -14,6 +14,7 @@ import { Router, Request, Response } from 'express'
 import { prisma } from '../db'
 import { requireAdmin } from '../middleware/auth'
 import { checkImapInbox, createImapClient, type ImapCheckResult } from '../services/cost-inbox-imap'
+import { getImapSettings, saveImapSettings } from '../settings-store'
 
 const router = Router()
 router.use(requireAdmin)
@@ -42,7 +43,7 @@ function masked(s: any) {
 }
 
 async function load() {
-  return (await prisma.imapSettings.findUnique({ where: { id: 'default' } })) ?? DEFAULTS
+  return (await getImapSettings()) ?? DEFAULTS
 }
 
 router.get('/', async (_req: Request, res: Response) => {
@@ -89,11 +90,7 @@ router.put('/', async (req: Request, res: Response) => {
       patch.last_error = ''
     }
 
-    const saved = await prisma.imapSettings.upsert({
-      where: { id: 'default' },
-      create: { ...DEFAULTS, ...patch, id: 'default' },
-      update: patch,
-    })
+    const saved = await saveImapSettings({ ...((await getImapSettings()) ? {} : DEFAULTS), ...patch })
     res.json(masked(saved))
   } catch (e) {
     console.error('[settings/imap PUT]', e)

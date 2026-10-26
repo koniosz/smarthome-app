@@ -1,6 +1,10 @@
 import { PrismaClient } from '@prisma/client'
+import { withTenantScope } from './tenant'
 
-export const prisma = new PrismaClient()
+// Jeden klient dla całej aplikacji; `prisma` ma automatyczny zakres aktywnej firmy (zob. tenant.ts).
+// `basePrisma` (bez zakresu) tylko do zadań administracyjnych: backfill, lista firm, middleware.
+export const basePrisma = new PrismaClient()
+export const prisma = withTenantScope(basePrisma)
 
 export const db = {
   projects: {

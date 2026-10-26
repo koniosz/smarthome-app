@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { prisma } from '../db'
 import { getSmtpConfig } from './mailer'
 import { computeHealth, formatPln, plural, warsawToday, type HealthResponse, type HealthKind, type HealthCheck } from './finance-health'
+import { getCompanySettings } from '../settings-store'
 
 export const appUrl = () => process.env.APP_URL || 'https://smarthome-app-ssrv.onrender.com'
 const now = () => new Date().toISOString()
@@ -181,7 +182,7 @@ export function parseEmails(s?: string | null): string[] {
 export async function collectRecipients(): Promise<string[]> {
   const [users, settings] = await Promise.all([
     prisma.user.findMany({ where: { OR: [{ role: 'admin' }, { can_view_payments: true }] }, select: { email: true } }),
-    prisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null),
+    getCompanySettings().catch(() => null),
   ])
   const set = new Set<string>()
   for (const u of users) if (u.email?.includes('@')) set.add(u.email.trim().toLowerCase())
@@ -254,7 +255,7 @@ export async function sendReport(kind: HealthKind, period: string, opts: { force
     const health = opts.health ?? await computeHealth(period)
     const [recipients, settings] = await Promise.all([
       collectRecipients(),
-      prisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null),
+      getCompanySettings().catch(() => null),
     ])
     if (!recipients.length) throw new Error('Brak odbiorców raportu — dodaj adresy w ustawieniach raportu.')
     const companyName = settings?.company_name || process.env.COMPANY_NAME || 'SHC Manager'

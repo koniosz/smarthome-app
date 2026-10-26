@@ -9,6 +9,7 @@ datasource db {
 }
 
 model Project {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id              String   @id
   name            String
   client_name     String   @default("")
@@ -40,6 +41,7 @@ model Project {
   tasks               Task[]
   handover_protocols  HandoverProtocol[]
 
+  @@index([company_id])
   @@map("projects")
 }
 
@@ -68,6 +70,7 @@ model HandoverProtocol {
 }
 
 model Task {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id          String   @id
   title       String
   project_id  String?
@@ -88,6 +91,7 @@ model Task {
   assignee    Employee?      @relation(fields: [assignee_id], references: [id], onDelete: SetNull)
   assignees   TaskAssignee[]
 
+  @@index([company_id])
   @@map("tasks")
 }
 
@@ -161,6 +165,7 @@ model ClientPayment {
 }
 
 model Employee {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id              String  @id
   user_id         String?           // powiązanie z kontem logowania (User) — dla zakładki HR; unikalność pilnowana w kodzie (unique na istniejącej tabeli blokuje nieinteraktywny `prisma db push` przy deployu)
   name            String
@@ -194,6 +199,7 @@ model Employee {
   leave_requests    LeaveRequest[]
   work_time_entries WorkTimeEntry[]
 
+  @@index([company_id])
   @@map("employees")
 }
 
@@ -303,6 +309,7 @@ model User {
   can_view_warehouse Boolean @default(false)   // admin nadaje dostęp do zakładki Magazyn
   can_view_invoices  Boolean @default(false)   // admin nadaje dostęp do fakturowania (sprzedaż)
   can_view_payments  Boolean @default(false)   // admin nadaje dostęp do zakładki Płatności (księgowy)
+  company_id    String?  // firma „domowa” pracownika (nie-admin widzi tylko ją); null = firma domyślna; admin przełącza dowolnie
   azure_oid     String?  @unique
   password_hash String?
   created_at    String
@@ -334,6 +341,7 @@ model PersonalTodo {
 
 // ─── Magazyn (warehouse) ─────────────────────────────────────────────────────
 model WarehouseItem {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id           String   @id
   warehouse_id String?  // null = Magazyn główny
   name         String
@@ -352,6 +360,7 @@ model WarehouseItem {
   movements    StockMovement[]
   reservations StockReservation[]
 
+  @@index([company_id])
   @@map("warehouse_items")
 }
 
@@ -408,12 +417,14 @@ model SalesInvoice {
 
 // Magazyny (lokalizacje) — pod dokumenty MM i stany per magazyn
 model WarehouseLocation {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id         String @id
   name       String
   created_at String
 
   items WarehouseItem[]
 
+  @@index([company_id])
   @@map("warehouse_locations")
 }
 
@@ -438,6 +449,7 @@ model StockReservation {
 
 // Dokumenty magazynowe: PZ (przyjęcie), WZ (wydanie), MM (przesunięcie międzymagazynowe)
 model WarehouseDoc {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id           String   @id
   type         String   // WZ | PZ | MM
   number       String   // np. 2026/06/001/WZ
@@ -455,6 +467,7 @@ model WarehouseDoc {
 
   lines        WarehouseDocLine[]
 
+  @@index([company_id])
   @@map("warehouse_docs")
 }
 
@@ -486,6 +499,7 @@ model ProjectMember {
 }
 
 model ProductCatalog {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id           String   @id
   sku          String?  @unique
   brand        String?
@@ -501,10 +515,12 @@ model ProductCatalog {
   last_import  String?
   sort_order   Int?
 
+  @@index([company_id])
   @@map("product_catalog")
 }
 
 model AiQuote {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id                   String   @id
   project_id           String?
   name                 String?
@@ -536,6 +552,7 @@ model AiQuote {
 
   project      Project? @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
+  @@index([company_id])
   @@map("ai_quotes")
 }
 
@@ -595,6 +612,7 @@ model Notification {
 
 // Wzorce AI — zatwierdzone przez człowieka oferty używane jako few-shot examples
 model AiQuoteExample {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id              String   @id
   title           String                        // np. "Dom 280m² KNX+Satel+Control4"
   project_type    String   @default("residential") // residential / commercial / apartment
@@ -611,6 +629,7 @@ model AiQuoteExample {
   source_quote_id String?                       // ID oryginalnej wyceny AI (AiQuote)
   created_at      String
 
+  @@index([company_id])
   @@map("ai_quote_examples")
 }
 
@@ -633,6 +652,7 @@ model CostAuditLog {
 // ─── KSeF — Krajowy System e-Faktur ──────────────────────────────────────────
 
 model KsefInvoice {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id               String   @id
   ksef_number      String?  @unique   // Numer referencyjny KSeF (np. 2023...)
   invoice_number   String?            // Numer faktury wystawcy
@@ -666,6 +686,7 @@ model KsefInvoice {
   project     Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
   allocations KsefInvoiceAllocation[]
 
+  @@index([company_id])
   @@map("ksef_invoices")
 }
 
@@ -693,6 +714,7 @@ model KsefInvoiceAllocation {
 }
 
 model BankTransaction {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id                String  @id
   source            String  // 'mt940' | 'przelewy24'
   transaction_date  String
@@ -707,10 +729,12 @@ model BankTransaction {
   review_status     String  @default("none") // none (spoza panelu Płatności) | pending (do sprawdzenia) | matched (auto) | assigned (ręcznie) | dismissed (odrzucona)
   created_at        String
 
+  @@index([company_id])
   @@map("bank_transactions")
 }
 
 model KsefSession {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id              String  @id
   session_token   String
   refresh_token   String?
@@ -719,6 +743,7 @@ model KsefSession {
   last_sync_error String?   // ostatni błąd synchronizacji (null = brak błędu)
   created_at      String
 
+  @@index([company_id])
   @@map("ksef_sessions")
 }
 
@@ -791,6 +816,9 @@ model Company {
   invoice_logo   String  @default("")        // data URL (≤ ~700 KB) lub pusty
   invoice_footer String  @default("")
   business_unit  String  @default("shc")     // shc | gatelynk | shared — do RZiS per jednostka
+  // KSeF tej firmy (puste = brak integracji; firma domyślna może używać KSEF_NIP/KSEF_TOKEN ze środowiska)
+  ksef_nip       String  @default("")
+  ksef_token     String  @default("")
   is_default     Boolean @default(false)
   active         Boolean @default(true)
   created_at     String
@@ -800,6 +828,7 @@ model Company {
 }
 
 model CompanySettings {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id             String @id @default("default")
   invoice_logo   String @default("")   // data URL (PNG/JPG/SVG, max ~500 KB) — pusty = bez logo
   invoice_footer String @default("")   // opcjonalna stopka na fakturze
@@ -812,6 +841,7 @@ model CompanySettings {
   inventory_in_pnl Boolean @default(true) // uwzględniaj zmianę stanu magazynu w RZiS
   updated_at     String @default("")
 
+  @@index([company_id])
   @@map("company_settings")
 }
 
@@ -831,6 +861,7 @@ model SmtpSettings {
 // ─── Manual Costs (pensje, ZUS, podatki, faktury zagraniczne) ─────────────────
 // ─── Finanse: rejestr sprzedaży (import z Firmao) ────────────────────────────
 model SalesRecord {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id             String  @id
   source         String  @default("firmao") // firmao | manual
   invoice_number String
@@ -852,11 +883,13 @@ model SalesRecord {
   matched_id     String? // id faktury KSeF lub modułu, z którą zdeduplikowano
   created_at     String
 
+  @@index([company_id])
   @@map("sales_records")
 }
 
 // ─── Finanse: środki trwałe (amortyzacja liniowa do RZiS) ────────────────────
 model FixedAsset {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id                  String @id
   name                String
   value_net           Float                   // wartość początkowa netto
@@ -866,10 +899,12 @@ model FixedAsset {
   notes               String @default("")
   created_at          String
 
+  @@index([company_id])
   @@map("fixed_assets")
 }
 
 model ManualCost {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id            String  @id
   date          String                      // YYYY-MM-DD
   description   String
@@ -890,11 +925,13 @@ model ManualCost {
   created_at    String
   created_by    String  @default("")
 
+  @@index([company_id])
   @@map("manual_costs")
 }
 
 // ── Saldo rachunku z wyciągu MT940 (:60F/:62F) — gotówka na koncie ─────────────
 model BankBalance {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id           String @id
   account      String                    // :25: numer rachunku (znormalizowany, bez spacji)
   currency     String @default("PLN")
@@ -905,11 +942,13 @@ model BankBalance {
   created_at   String
 
   @@unique([account, date, statement_no])
+  @@index([company_id])
   @@map("bank_balances")
 }
 
 // ── Reguła bankowa: przelew/karta spoza KSeF → kategoria kosztu (Google, Apple, AliExpress…) ──
 model BankRule {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id            String @id
   name          String @default("")       // czytelna nazwa, np. "Google Workspace"
   pattern       String                    // fragment (case-insensitive) kontrahenta/opisu
@@ -923,11 +962,13 @@ model BankRule {
   created_at    String
   updated_at    String @default("")
 
+  @@index([company_id])
   @@map("bank_rules")
 }
 
 // ── Skrzynka kosztów: dokument spoza KSeF (PDF/zdjęcie) odczytany przez AI, do zatwierdzenia ──
 model CostDocument {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id             String  @id
   source         String  @default("upload")   // upload | email | mobile
   status         String  @default("pending")  // pending | approved | rejected | processing | error
@@ -966,11 +1007,13 @@ model CostDocument {
   reviewed_by    String  @default("")
   reviewed_at    String  @default("")
 
+  @@index([company_id])
   @@map("cost_documents")
 }
 
 // ── Skrzynka e-mail (IMAP) na faktury spoza KSeF ─────────────────────────────
 model ImapSettings {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id              String  @id @default("default")
   enabled         Boolean @default(false)
   host            String  @default("")
@@ -984,11 +1027,13 @@ model ImapSettings {
   last_error      String  @default("")
   updated_at      String  @default("")
 
+  @@index([company_id])
   @@map("imap_settings")
 }
 
 // ── Zestawienie obrotów i sald od biura rachunkowego (uzgodnienie z księgową) ──
 model AccountantStatement {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id         String @id
   period     String @unique               // YYYY-MM
   mode       String @default("monthly")   // monthly (obroty miesiąca) | ytd (narastająco od stycznia)
@@ -1002,11 +1047,13 @@ model AccountantStatement {
   created_by String @default("")
   created_at String
 
+  @@index([company_id])
   @@map("accountant_statements")
 }
 
 // ── Log wysyłek raportu „Kondycja firmy" (idempotencja harmonogramu) ───────────
 model ReportDispatch {
+  company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id         String @id
   kind       String                       // monthly | quarterly
   period     String                       // 2026-08 | 2026-Q3
@@ -1015,5 +1062,6 @@ model ReportDispatch {
   summary    Json?
   created_at String
 
+  @@index([company_id])
   @@map("report_dispatches")
 }

@@ -9,15 +9,32 @@ import type {
 
 const BASE = '/api'
 
+// ─── Kontekst firmy (multi‑tenant) ──────────────────────────────────────────────
+// Aktywna firma trzymana w localStorage; backend czyta nagłówek `X-Company-Id` (bez nagłówka → firma domyślna,
+// nie‑admin → zawsze jego firma domowa). Przełączenie = zapis klucza + reload (CompanyContext).
+export const COMPANY_STORAGE_KEY = 'shm-company'
+export const COMPANY_HEADER = 'X-Company-Id'
+export function getStoredCompanyId(): string | null {
+  try { return localStorage.getItem(COMPANY_STORAGE_KEY) } catch { return null }
+}
+// Globalny default axiosa — obejmuje też bezpośrednie `axios.get(...)` i instancje tworzone później przez
+// `axios.create()` (AdminView, PersonalTodoPanel), które nie dziedziczą interceptorów `api`.
+{
+  const storedCompany = getStoredCompanyId()
+  if (storedCompany) axios.defaults.headers.common[COMPANY_HEADER] = storedCompany
+}
+
 export const api = axios.create({ baseURL: BASE })
 
-// Attach JWT token to every request
+// Attach JWT token + active company to every request
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('shm-token')
+  config.headers = config.headers || {}
   if (token) {
-    config.headers = config.headers || {}
     config.headers.Authorization = `Bearer ${token}`
   }
+  const companyId = getStoredCompanyId()
+  if (companyId) config.headers[COMPANY_HEADER] = companyId
   return config
 })
 
@@ -476,12 +493,19 @@ export interface Company {
   business_unit: CompanyBusinessUnit
   is_default: boolean
   active: boolean
+  ksef_nip: string                  // NIP używany w KSeF (zwykle = nip)
+  ksef_token: string                // z GET /companies: '' (brak) lub '••••••••' (maska) — nigdy prawdziwy token
   invoices_count?: number           // tylko w odpowiedzi admina (?all=true)
   created_at: string
   updated_at: string
 }
-export type CompanyInput = Omit<Company, 'id' | 'created_at' | 'updated_at' | 'invoices_count'>
+// `ksef_token` wysyłamy tylko, gdy użytkownik wpisał nową wartość ('' = usuń token)
+export type CompanyInput = Omit<Company, 'id' | 'created_at' | 'updated_at' | 'invoices_count' | 'ksef_token'> & { ksef_token?: string }
+/** Kontekst firmy: aktywna (wg nagłówka X-Company-Id), lista do przełączania, czy wolno przełączać (admin). */
+export interface CompanyMe { company: Company; companies: Company[]; can_switch: boolean }
 export const companiesApi = {
+  /** Aktywna firma + firmy dostępne do przełączenia dla zalogowanego użytkownika. */
+  me: () => api.get<CompanyMe>('/companies/me').then(r => r.data),
   /** Aktywne firmy (każdy zalogowany); `all=true` (admin) → wszystkie, z `invoices_count`. */
   list: (all = false) => api.get<Company[]>('/companies', { params: all ? { all: 'true' } : undefined }).then(r => r.data),
   create: (data: CompanyInput) => api.post<Company>('/companies', data).then(r => r.data),

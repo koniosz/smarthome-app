@@ -11,6 +11,7 @@ export interface AuthUser {
   can_view_warehouse?: boolean
   can_view_invoices?: boolean
   can_view_payments?: boolean
+  company_id?: string | null   // firma domowa (nie-admin); null = domyślna
 }
 
 declare global {

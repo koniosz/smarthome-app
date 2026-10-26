@@ -3,8 +3,9 @@ import { useParams } from 'react-router-dom'
 import { projectsApi, handoverApi } from '../api/client'
 import type { HandoverProtocol } from '../api/client'
 import type { Project } from '../types'
+import { useCompany } from '../company/CompanyContext'
 
-// Dane wykonawcy do dokumentu (do edycji w razie zmiany danych spółki).
+// Dane wykonawcy do dokumentu — FALLBACK, gdy kontekst firmy nie jest dostępny; normalnie bierzemy aktywną firmę z rejestru.
 const COMPANY = {
   name: 'Smart Home Center Sp. z o.o.',
   address: 'Gieysztora 6/u8, 02-999 Warszawa',
@@ -28,6 +29,11 @@ export default function HandoverPrintView() {
   const [loading, setLoading] = useState(true)
   const [pdfBusy, setPdfBusy] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  // Wykonawca = aktywna firma (rejestr firm); adres z rejestru jest wieloliniowy
+  const { company } = useCompany()
+  const contractor = company
+    ? { name: company.name, address: (company.address || '').replace(/\n/g, ', '), nip: company.nip }
+    : COMPANY
 
   const generatePdf = async () => {
     if (!contentRef.current || !proto) return
@@ -75,9 +81,9 @@ export default function HandoverPrintView() {
         {/* Nagłówek */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, paddingBottom: 16, borderBottom: '2px solid #111827' }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800 }}>{COMPANY.name}</div>
-            <div style={{ fontSize: 12, color: '#4b5563' }}>{COMPANY.address}</div>
-            <div style={{ fontSize: 12, color: '#4b5563' }}>NIP: {COMPANY.nip}</div>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>{contractor.name}</div>
+            <div style={{ fontSize: 12, color: '#4b5563' }}>{contractor.address}</div>
+            <div style={{ fontSize: 12, color: '#4b5563' }}>NIP: {contractor.nip}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 12, color: '#6b7280' }}>Nr dokumentu</div>
@@ -92,9 +98,9 @@ export default function HandoverPrintView() {
         <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
           <div style={{ flex: 1, border: '1px solid #e5e7eb', borderRadius: 8, padding: 14 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', marginBottom: 6 }}>Wykonawca</div>
-            <div style={{ fontWeight: 600 }}>{COMPANY.name}</div>
-            <div style={{ fontSize: 12, color: '#4b5563' }}>{COMPANY.address}</div>
-            <div style={{ fontSize: 12, color: '#4b5563' }}>NIP: {COMPANY.nip}</div>
+            <div style={{ fontWeight: 600 }}>{contractor.name}</div>
+            <div style={{ fontSize: 12, color: '#4b5563' }}>{contractor.address}</div>
+            <div style={{ fontSize: 12, color: '#4b5563' }}>NIP: {contractor.nip}</div>
           </div>
           <div style={{ flex: 1, border: '1px solid #e5e7eb', borderRadius: 8, padding: 14 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', marginBottom: 6 }}>Zamawiający</div>

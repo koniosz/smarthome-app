@@ -19,6 +19,7 @@ import {
 import { COST_TAXONOMY } from '../routes/ksef'
 import { MANUAL_SUBCATEGORIES } from '../routes/manual-costs'
 import { findKsefDuplicate, type DupDocInput, type DupKsefInvoice } from './cost-duplicates'
+import { getCompanySettings } from '../settings-store'
 
 // ── Typy odpowiedzi (kontrakt dla frontendu i raportu e-mail) ─────────────────
 export type HealthKind = 'monthly' | 'quarterly'
@@ -451,7 +452,7 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
   const [pnlCur, pnlPrev, settings] = await Promise.all([
     computePnlYear(year),
     computePnlYear(year - 1),
-    prisma.companySettings.findUnique({ where: { id: 'default' } }).catch(() => null),
+    getCompanySettings().catch(() => null),
   ])
   const monthMap = new Map<string, PnlLines & { period: string }>()
   for (const m of [...pnlPrev.months, ...pnlCur.months]) monthMap.set(m.period, m)

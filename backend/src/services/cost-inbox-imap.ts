@@ -22,6 +22,8 @@ import { simpleParser, type ParsedMail } from 'mailparser'
 import { v4 as uuidv4 } from 'uuid'
 import { prisma } from '../db'
 import { processCostDocument, MAX_FILE_BYTES, normalizeMime } from '../routes/cost-documents'
+import { getImapSettings, saveImapSettings } from '../settings-store'
+import { forEachCompany } from '../middleware/tenant'
 
 export interface ImapCheckResult {
   fetched: number   // przejrzane wiadomości
@@ -202,7 +204,7 @@ async function ingestMessage(uid: number, source: Buffer, host: string, folder: 
 async function runImapCheck(result: ImapCheckResult): Promise<void> {
   let settings: any
   try {
-    settings = await prisma.imapSettings.findUnique({ where: { id: 'default' } })
+    settings = await getImapSettings()
   } catch (e: any) {
     result.error = `Błąd bazy: ${e?.message ?? e}`
     return
@@ -225,7 +227,7 @@ async function runImapCheck(result: ImapCheckResult): Promise<void> {
     if (uid <= maxUid) return
     maxUid = uid
     try {
-      await prisma.imapSettings.update({ where: { id: 'default' }, data: { last_uid: maxUid, last_checked_at: now() } })
+      await saveImapSettings({ last_uid: maxUid, last_checked_at: now() })
     } catch (e: any) {
       console.error('[IMAP] Błąd zapisu postępu:', e?.message ?? e)
     }
@@ -285,7 +287,7 @@ async function runImapCheck(result: ImapCheckResult): Promise<void> {
     const error = String(e?.message ?? e).slice(0, 500)
     console.error('[IMAP] Błąd pobierania wiadomości:', error)
     result.error = error
-    try { await prisma.imapSettings.update({ where: { id: 'default' }, data: { last_checked_at: now(), last_error: error } }) } catch { /* ignoruj */ }
+    try { await saveImapSettings({ last_checked_at: now(), last_error: error }) } catch { /* ignoruj */ }
     try { await client.logout() } catch { /* ignoruj */ }
     // dokumenty utworzone przed błędem i tak muszą przejść odczyt AI
     await processCreated(createdIds)
@@ -297,7 +299,7 @@ async function runImapCheck(result: ImapCheckResult): Promise<void> {
   await processCreated(createdIds)
 
   try {
-    await prisma.imapSettings.update({ where: { id: 'default' }, data: { last_uid: maxUid, last_checked_at: now(), last_error: '' } })
+    await saveImapSettings({ last_uid: maxUid, last_checked_at: now(), last_error: '' })
   } catch (e: any) {
     console.error('[IMAP] Błąd zapisu ustawień:', e?.message ?? e)
   }
@@ -322,7 +324,7 @@ const POLL_INTERVAL_MS = 15 * 60 * 1000
 async function pollOnce(): Promise<void> {
   if (running) return // trwa „Sprawdź teraz” lub poprzedni przebieg — blokada właściwa jest w checkImapInbox
   try {
-    const s = await prisma.imapSettings.findUnique({ where: { id: 'default' }, select: { enabled: true, host: true } })
+    const s = await getImapSettings()
     if (!s?.enabled || !s.host) return
     const r = await checkImapInbox()
     if (r.error === IMAP_BUSY_ERROR) return
@@ -335,9 +337,11 @@ async function pollOnce(): Promise<void> {
 
 /** Uruchamia cykliczne sprawdzanie skrzynki: 5 min po starcie, potem co 15 min (tylko gdy `enabled`). */
 export function startImapPoller(): void {
+  // każda aktywna firma ma własną skrzynkę (ImapSettings per firma)
+  const tick = () => { void forEachCompany(() => pollOnce()) }
   setTimeout(() => {
-    void pollOnce()
-    setInterval(() => { void pollOnce() }, POLL_INTERVAL_MS)
+    tick()
+    setInterval(tick, POLL_INTERVAL_MS)
   }, POLL_FIRST_DELAY_MS)
   console.log('[IMAP] Poller skrzynki kosztów uruchomiony (pierwsze sprawdzenie za 5 min, potem co 15 min)')
 }

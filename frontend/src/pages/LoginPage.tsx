@@ -1,12 +1,17 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import { Building2 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { msalInstance, loginRequest, azureConfigured } from '../auth/msalConfig'
+import { APP_NEUTRAL_TITLE } from '../constants/app'
 
 export default function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
+
+  // Strona logowania jest wspólna dla wszystkich firm — neutralny tytuł, bez logo/nazwy konkretnej spółki
+  useEffect(() => { document.title = APP_NEUTRAL_TITLE }, [])
 
   const [tab, setTab] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
@@ -55,11 +60,13 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gray-100 dark:bg-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex justify-center mb-8">
-          <div className="bg-slate-800 rounded-2xl px-8 py-4">
-            <img src="/logo_wh2.webp" alt="Smart Home Center" className="h-16 w-auto object-contain" />
+        {/* Nagłówek — neutralny (jedno logowanie dla wszystkich firm; firma wybierana po zalogowaniu) */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="flex items-center justify-center rounded-2xl bg-slate-800 text-blue-400" style={{ width: 56, height: 56 }}>
+            <Building2 size={28} strokeWidth={2} />
           </div>
+          <h1 className="mt-3 text-lg font-bold tracking-tight text-gray-800 dark:text-gray-100">{APP_NEUTRAL_TITLE}</h1>
+          <p className="text-xs text-gray-400 mt-0.5">Zaloguj się, aby przejść do panelu swojej firmy</p>
         </div>
 
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-800 p-6">

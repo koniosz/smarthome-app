@@ -432,11 +432,14 @@ router.get('/invoices/:id/xml', async (req: Request, res: Response) => {
     const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
     if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
     if (!invoice.ksef_number) { res.status(400).json({ error: 'Brak numeru KSeF' }); return }
-    const { getActiveSession } = await import('../services/ksef')
+    const { getActiveSession, KsefNotConfiguredError } = await import('../services/ksef')
     const axios = (await import('axios')).default
+    let bearer: string
+    try { bearer = await getActiveSession() }
+    catch (e: any) { if (e instanceof KsefNotConfiguredError) { res.status(400).json({ error: e.message }); return } throw e }
     const xmlRes = await axios.get(
       `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(invoice.ksef_number)}`,
-      { headers: { Authorization: `Bearer ${await getActiveSession()}` }, responseType: 'text', timeout: 15000 },
+      { headers: { Authorization: `Bearer ${bearer}` }, responseType: 'text', timeout: 15000 },
     )
     res.setHeader('Content-Type', 'application/xml; charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename="faktura-${(invoice.invoice_number ?? invoice.ksef_number).replace(/[^\w.-]/g, '_')}.xml"`)
