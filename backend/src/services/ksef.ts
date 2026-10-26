@@ -115,6 +115,11 @@ function axiosError(err: any): string {
   return err?.message ?? String(err)
 }
 
+function addMonthsIso(date: string, n: number): string {
+  const d = new Date(date.slice(0, 10) + 'T00:00:00.000Z'); d.setUTCMonth(d.getUTCMonth() + n)
+  return d.toISOString().slice(0, 10)
+}
+
 /** Parsuj JWT exp claim → ISO string */
 function parseJwtExpiry(jwt: string): string {
   try {
@@ -716,9 +721,25 @@ export async function syncInvoicesForCurrentCompany(forceDateFrom?: Date): Promi
 
     // Pobierz faktury od ostatniej synchronizacji
     const lastSession = await prisma.ksefSession.findFirst({ where: sessionWhere })
+    // Nowa firma / brak historii kosztów: pobierz całą historię od początku roku (KSeF obowiązkowy od 2026),
+    // zamiast tylko ostatnich dni — inaczej w Płatnościach brakowałoby starszych faktur kosztowych.
+    // Warunek: brak faktur kosztowych albo najstarsza kosztowa jest dużo młodsza niż najstarsza sprzedażowa.
+    const yearStart = new Date(`${new Date().getFullYear()}-01-01T00:00:00.000Z`)
+    const [incomingCount, oldestIncoming, oldestOutgoing] = await Promise.all([
+      prisma.ksefInvoice.count({ where: { invoice_direction: 'incoming' } }),
+      prisma.ksefInvoice.findFirst({ where: { invoice_direction: 'incoming', invoice_date: { not: null } }, orderBy: { invoice_date: 'asc' }, select: { invoice_date: true } }),
+      prisma.ksefInvoice.findFirst({ where: { invoice_direction: 'outgoing', invoice_date: { not: null } }, orderBy: { invoice_date: 'asc' }, select: { invoice_date: true } }),
+    ])
+    const needsHistory = !forceDateFrom && incomingCount < 10 && (
+      incomingCount === 0 ||
+      (oldestIncoming?.invoice_date && oldestOutgoing?.invoice_date && oldestOutgoing.invoice_date < addMonthsIso(oldestIncoming.invoice_date, -2))
+    )
     let dateFrom: Date
     if (forceDateFrom) {
       dateFrom = forceDateFrom
+    } else if (needsHistory) {
+      dateFrom = yearStart
+      console.log(`[KSeF] Brak historii faktur kosztowych — pobieram od ${yearStart.toISOString().split('T')[0]} (pierwsza synchronizacja firmy)`)
     } else if (lastSession?.last_sync_at) {
       dateFrom = new Date(lastSession.last_sync_at)
     } else {

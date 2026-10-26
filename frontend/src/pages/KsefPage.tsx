@@ -958,13 +958,14 @@ export default function KsefPage() {
   const [viewMode, setViewMode]   = useState<'faktury' | 'all' | 'sprzedaz'>('faktury')
   const [tab, setTab]             = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [paymentTab, setPaymentTab] = useState<'all' | 'paid' | 'unpaid'>('all')
-  const [dirTab, setDirTab]       = useState<'all' | 'incoming' | 'outgoing'>('all')
+  // „Faktury kosztowe” = domyślnie tylko zakupowe; sprzedażowe (wystawione przez nas) pod osobnym filtrem
+  const [dirTab, setDirTab]       = useState<'all' | 'incoming' | 'outgoing'>('incoming')
   const [search, setSearch]       = useState('')
   const [page, setPage]           = useState(1)
   const [debugInfo, setDebugInfo] = useState<any>(null)
   const [debugging, setDebugging] = useState(false)
   const [resettingSession, setResettingSession] = useState(false)
-  const [dateFrom, setDateFrom]   = useState('2024-01-01')
+  const [dateFrom, setDateFrom]   = useState(`${new Date().getFullYear()}-01-01`)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [showAdminTools, setShowAdminTools]     = useState(false)
   const LIMIT = 50
