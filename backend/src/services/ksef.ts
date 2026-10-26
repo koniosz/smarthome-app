@@ -180,10 +180,13 @@ async function refreshAccessToken(companyId: string, refreshToken: string): Prom
     {},
     { headers: { Authorization: `Bearer ${refreshToken}` }, timeout: 15000 },
   )
-  const { accessToken } = res.data
+  // KSeF 2.0 zwraca { accessToken: { token, validUntil } } (starsze odpowiedzi: string)
+  const raw = res.data?.accessToken
+  const accessToken: string | undefined = typeof raw === 'string' ? raw : raw?.token
   if (!accessToken) throw new Error('Brak accessToken w refresh response')
-
-  const expiresAt = parseJwtExpiry(accessToken)
+  const expiresAt = (typeof raw === 'object' && raw?.validUntil ? new Date(raw.validUntil).toISOString() : null)
+    ?? parseJwtExpiry(accessToken)
+    ?? new Date(Date.now() + 10 * 60 * 1000).toISOString()
   await prisma.ksefSession.updateMany({ where: { company_id: companyId }, data: { session_token: accessToken, expires_at: expiresAt } })
   console.log('[KSeF] Token odświeżony, ważny do:', expiresAt)
   return accessToken
@@ -421,7 +424,9 @@ async function fetchInvoices(
   const all: any[] = []
   const CHUNK_MS     = 89 * 24 * 60 * 60 * 1000
   const totalMs      = dateTo.getTime() - dateFrom.getTime()
-  const subjectTypes = ['Subject1', 'Subject2'] as const
+  // Najpierw faktury KOSZTOWE (Subject2 — my jako nabywca): to one są kluczowe dla Płatności;
+  // sprzedażowe (Subject1) w drugiej kolejności, żeby ewentualny limit 429 nie zabierał kosztów
+  const subjectTypes = ['Subject2', 'Subject1'] as const
   const seen         = new Set<string>()
 
   // Jeśli zakres mieści się w jednym chunku (typowa codzienna sync) — bez chunków
@@ -743,7 +748,9 @@ export async function syncInvoicesForCurrentCompany(forceDateFrom?: Date): Promi
     // ale max 20 na przebieg syncu (ochrona przed rate-limitem KSeF; resztę uzupełni
     // przycisk w panelu Płatności albo leniwe pobranie pozycji)
     let detailsFetched = 0
-    const DETAILS_PER_SYNC = 20
+    // Limit KSeF ~20 żądań/h na podmiot: szczegóły (termin płatności, pozycje) doczytujemy po 5 na przebieg,
+    // resztę uzupełnia przycisk „Pobierz terminy z KSeF” w Płatnościach / kolejne przebiegi harmonogramu
+    const DETAILS_PER_SYNC = 5
 
     for (const inv of invoices) {
       try {
@@ -794,7 +801,11 @@ export async function syncInvoicesForCurrentCompany(forceDateFrom?: Date): Promi
     // Zaktualizuj czas ostatniej synchronizacji
     // Jeśli były błędy przy pobieraniu chunków (np. 422 z API) — zapisz je też jako last_sync_error
     const chunkErrorMsg = errors.length > 0 ? errors.join(' | ') : null
-    await prisma.ksefSession.updateMany({ where: sessionWhere, data: { last_sync_at: now(), last_sync_error: chunkErrorMsg } })
+    // Gdy zapytanie o faktury padło (429/5xx), NIE przesuwamy daty ostatniej synchronizacji —
+    // następny przebieg powtórzy ten sam zakres zamiast zgubić faktury z nieudanego okna
+    const queryFailed = errors.some(e => e.includes('Invoice query failed'))
+    await prisma.ksefSession.updateMany({ where: sessionWhere, data: { ...(queryFailed ? {} : { last_sync_at: now() }), last_sync_error: chunkErrorMsg } })
+    if (queryFailed) console.warn('[KSeF] Zapytanie o faktury nie powiodło się — data ostatniej synchronizacji bez zmian (powtórka przy następnym przebiegu)')
 
     console.log(`[KSeF] Zapisano ${saved} nowych faktur. Błędy: ${errors.length}`)
   } catch (err: any) {
