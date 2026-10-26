@@ -44,7 +44,12 @@ api.interceptors.response.use(
   err => {
     if (err.response?.status === 401) {
       localStorage.removeItem('shm-token')
+      localStorage.removeItem(COMPANY_STORAGE_KEY)
       window.location.href = '/login'
+    }
+    // wybrana firma niedostępna (usunięta/nieaktywna) — wróć do firmy domyślnej
+    if ((err.response?.status === 409 || err.response?.status === 403) && ['company_unavailable', 'company_inactive'].includes(err.response?.data?.code)) {
+      if (getStoredCompanyId()) { localStorage.removeItem(COMPANY_STORAGE_KEY); window.location.reload() }
     }
     return Promise.reject(err)
   }

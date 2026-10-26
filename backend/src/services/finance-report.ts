@@ -17,6 +17,7 @@ import { prisma } from '../db'
 import { getSmtpConfig } from './mailer'
 import { computeHealth, formatPln, plural, warsawToday, type HealthResponse, type HealthKind, type HealthCheck } from './finance-health'
 import { getCompanySettings } from '../settings-store'
+import { currentCompanyId, getDefaultCompanyId } from '../tenant'
 
 export const appUrl = () => process.env.APP_URL || 'https://smarthome-app-ssrv.onrender.com'
 const now = () => new Date().toISOString()
@@ -181,7 +182,15 @@ export function parseEmails(s?: string | null): string[] {
 
 export async function collectRecipients(): Promise<string[]> {
   const [users, settings] = await Promise.all([
-    prisma.user.findMany({ where: { OR: [{ role: 'admin' }, { can_view_payments: true }] }, select: { email: true } }),
+    // admini (globalni) + księgowi tylko z aktywnej firmy (company_id null = firma domyślna)
+    (async () => {
+      const cid = currentCompanyId() ?? getDefaultCompanyId()
+      const isDefault = !cid || cid === getDefaultCompanyId()
+      return prisma.user.findMany({
+        where: { OR: [{ role: 'admin' }, { can_view_payments: true, ...(isDefault ? { OR: [{ company_id: null }, { company_id: cid ?? undefined }] } : { company_id: cid }) }] },
+        select: { email: true },
+      })
+    })(),
     getCompanySettings().catch(() => null),
   ])
   const set = new Set<string>()

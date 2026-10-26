@@ -84,7 +84,7 @@ router.post('/import', upload.single('file'), async (req: Request, res: Response
         warnings.push('Styczeń: obroty narastające są równe obrotom miesiąca.')
       } else {
         const prevPeriod = addMonths(period, -1)
-        const prev = await prisma.accountantStatement.findUnique({ where: { period: prevPeriod } })
+        const prev = await prisma.accountantStatement.findFirst({ where: { period: prevPeriod } })
         if (prev && prev.mode === 'ytd') {
           monthRows = diffZoisRows(parsed.rows, (prev.rows as unknown as ZoisRow[]) ?? [])
           warnings.push(`Obroty miesiąca policzono jako różnicę narastających: ${period} − ${prevPeriod}.`)
@@ -109,11 +109,9 @@ router.post('/import', upload.single('file'), async (req: Request, res: Response
         created_by: String(user?.email ?? ''),
         created_at: now(),
       }
-      await prisma.accountantStatement.upsert({
-        where: { period },
-        create: { id: uuidv4(), ...data },
-        update: data,
-      })
+      const existing = await prisma.accountantStatement.findFirst({ where: { period } })
+      if (existing) await prisma.accountantStatement.update({ where: { id: existing.id }, data })
+      else await prisma.accountantStatement.create({ data: { id: uuidv4(), ...data } })
       saved = true
     }
 
@@ -185,7 +183,7 @@ router.get('/:period/compare', async (req: Request, res: Response) => {
   try {
     const period = String(req.params.period ?? '').slice(0, 7)
     if (!PERIOD_RE.test(period)) { res.status(400).json({ error: 'Okres w formacie RRRR-MM.' }); return }
-    const st = await prisma.accountantStatement.findUnique({ where: { period } })
+    const st = await prisma.accountantStatement.findFirst({ where: { period } })
     if (!st) { res.status(404).json({ error: 'Brak zestawienia księgowej za ten okres.' }); return }
 
     const theirs = toLines(st.lines)
@@ -262,7 +260,7 @@ router.get('/:period', async (req: Request, res: Response) => {
   try {
     const period = String(req.params.period ?? '').slice(0, 7)
     if (!PERIOD_RE.test(period)) { res.status(400).json({ error: 'Okres w formacie RRRR-MM.' }); return }
-    const st = await prisma.accountantStatement.findUnique({ where: { period } })
+    const st = await prisma.accountantStatement.findFirst({ where: { period } })
     if (!st) { res.status(404).json({ error: 'Brak zestawienia księgowej za ten okres.' }); return }
     res.json(st)
   } catch (e) {

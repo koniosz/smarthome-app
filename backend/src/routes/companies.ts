@@ -221,16 +221,21 @@ router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
     if (!c) { res.status(404).json({ error: 'Firma nie znaleziona' }); return }
     if (c.is_default) { res.status(409).json({ error: 'Nie można usunąć firmy domyślnej — najpierw ustaw inną jako domyślną' }); return }
     // Firma z jakimikolwiek danymi (projekty, pracownicy, faktury, KSeF, koszty, magazyn) — tylko dezaktywacja
-    const checks: Array<[string, number]> = [
-      ['faktur', await basePrisma.salesInvoice.count({ where: { company_id: c.id } })],
-      ['projektów', await basePrisma.project.count({ where: { company_id: c.id } })],
-      ['pracowników', await basePrisma.employee.count({ where: { company_id: c.id } })],
-      ['faktur KSeF', await basePrisma.ksefInvoice.count({ where: { company_id: c.id } })],
-      ['kosztów', await basePrisma.manualCost.count({ where: { company_id: c.id } })],
-      ['pozycji magazynu', await basePrisma.warehouseItem.count({ where: { company_id: c.id } })],
-    ]
+    const checks: Array<[string, number]> = []
+    for (const model of SCOPED_MODELS) {
+      if (model === 'CompanySettings' || model === 'ImapSettings' || model === 'KsefSession' || model === 'ReportDispatch') continue
+      const delegate = (basePrisma as any)[model.charAt(0).toLowerCase() + model.slice(1)]
+      if (!delegate?.count) continue
+      checks.push([model, await delegate.count({ where: { company_id: c.id } })])
+    }
+    checks.push(['użytkowników przypiętych', await basePrisma.user.count({ where: { company_id: c.id } })])
     const used = checks.filter(([, n]) => n > 0)
     if (used.length) { res.status(409).json({ error: `Firma ma dane (${used.map(([k, n]) => `${n} ${k}`).join(', ')}) — zamiast usuwać, oznacz ją jako nieaktywną` }); return }
+    // dane techniczne firmy (ustawienia, sesje KSeF, logi raportów) usuwamy razem z nią
+    await basePrisma.companySettings.deleteMany({ where: { company_id: c.id } })
+    await basePrisma.imapSettings.deleteMany({ where: { company_id: c.id } })
+    await basePrisma.ksefSession.deleteMany({ where: { company_id: c.id } })
+    await basePrisma.reportDispatch.deleteMany({ where: { company_id: c.id } })
     await db.companies.delete(c.id)
     invalidateCompanyCache()
     res.json({ ok: true })

@@ -333,8 +333,14 @@ async function sendEmployeeExpiryReminders() {
 
     // Sort: most urgent first
     items.sort((a, b) => a.daysLeft - b.daysLeft)
-    await sendEmployeeExpiryReminderEmail(items, EXPIRY_REMINDER_EMAIL)
-    console.log(`[HR] Wysłano przypomnienie o ${items.length} wygasających badaniach → ${EXPIRY_REMINDER_EMAIL}`)
+    // adresat per firma: e-mail firmy z rejestru; firma domyślna bez e-maila → dotychczasowy adres biura
+    const { currentCompanyId: cur, getDefaultCompanyId: def } = await import('./tenant')
+    const cid = cur()
+    const company = cid ? await _prismaIndex.company.findUnique({ where: { id: cid }, select: { email: true, name: true, is_default: true } }) : null
+    const to = company?.email?.includes('@') ? company.email : (company && !company.is_default && cid !== def() ? '' : EXPIRY_REMINDER_EMAIL)
+    if (!to) { console.log(`[HR] ${company?.name ?? 'firma'}: brak e-maila firmy — przypomnienie o badaniach pominięte`); return }
+    await sendEmployeeExpiryReminderEmail(items, to)
+    console.log(`[HR] ${company?.name ?? ''}: wysłano przypomnienie o ${items.length} wygasających badaniach → ${to}`)
   } catch (e: any) {
     console.error('[HR] Błąd wysyłki przypomnień o badaniach:', e.message)
   }

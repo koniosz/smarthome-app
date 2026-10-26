@@ -31,6 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY)
+    try { localStorage.removeItem('shm-company') } catch { /* ignoruj */ }
     setToken(null)
     setUser(null)
   }, [])

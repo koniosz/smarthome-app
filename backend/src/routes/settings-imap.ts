@@ -24,7 +24,7 @@ const TEST_TIMEOUT_MS = 20_000
 
 function now(): string { return new Date().toISOString() }
 
-const DEFAULTS = { id: 'default', enabled: false, host: '', port: 993, secure: true, user: '', pass: '', folder: 'INBOX', last_uid: 0, last_checked_at: '', last_error: '', updated_at: '' }
+const DEFAULTS = { enabled: false, host: '', port: 993, secure: true, user: '', pass: '', folder: 'INBOX', last_uid: 0, last_checked_at: '', last_error: '', updated_at: '' }
 
 function masked(s: any) {
   return {

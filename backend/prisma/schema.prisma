@@ -501,7 +501,7 @@ model ProjectMember {
 model ProductCatalog {
   company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id           String   @id
-  sku          String?  @unique
+  sku          String?  // unikalny w obrębie firmy (pilnowane w kodzie)
   brand        String?
   manufacturer String?
   category     String?
@@ -516,6 +516,7 @@ model ProductCatalog {
   sort_order   Int?
 
   @@index([company_id])
+  @@index([company_id, sku])
   @@map("product_catalog")
 }
 
@@ -654,7 +655,7 @@ model CostAuditLog {
 model KsefInvoice {
   company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id               String   @id
-  ksef_number      String?  @unique   // Numer referencyjny KSeF (np. 2023...)
+  ksef_number      String?            // Numer referencyjny KSeF — unikalny w obrębie firmy (pilnowane w kodzie)
   invoice_number   String?            // Numer faktury wystawcy
   seller_name      String?            // Nazwa sprzedawcy
   seller_nip       String?            // NIP sprzedawcy
@@ -687,6 +688,7 @@ model KsefInvoice {
   allocations KsefInvoiceAllocation[]
 
   @@index([company_id])
+  @@index([company_id, ksef_number])
   @@map("ksef_invoices")
 }
 
@@ -1035,7 +1037,7 @@ model ImapSettings {
 model AccountantStatement {
   company_id  String?  // firma (tenant) — ustawiane automatycznie z aktywnej firmy; null = firma domyślna (backfill przy starcie)
   id         String @id
-  period     String @unique               // YYYY-MM
+  period     String                       // YYYY-MM — unikalny w obrębie firmy (pilnowane w kodzie)
   mode       String @default("monthly")   // monthly (obroty miesiąca) | ytd (narastająco od stycznia)
   file_name  String @default("")
   rows       Json                         // [{account, name, debit, credit}]
@@ -1048,6 +1050,7 @@ model AccountantStatement {
   created_at String
 
   @@index([company_id])
+  @@index([company_id, period])
   @@map("accountant_statements")
 }
 

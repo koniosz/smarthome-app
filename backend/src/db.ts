@@ -140,7 +140,7 @@ export const db = {
     find: (id: string) =>
       prisma.productCatalog.findUnique({ where: { id } }),
     insert: (item: any) =>
-      prisma.productCatalog.create({ data: item }),
+      prisma.productCatalog.create({ data: item }), // SKU: unikalność per firma sprawdzana w trasie (findFirst po sku)
     update: (id: string, patch: any) =>
       prisma.productCatalog.update({ where: { id }, data: patch }),
     delete: (id: string) =>
@@ -150,7 +150,11 @@ export const db = {
     seed: async (items: any[]) => {
       const count = await prisma.productCatalog.count()
       if (count === 0) {
-        await prisma.productCatalog.createMany({ data: items, skipDuplicates: true })
+        // SKU unikalne w obrębie firmy: pomiń pozycje, których SKU już istnieje w aktywnej firmie
+        const skus = items.map((i: any) => i.sku).filter(Boolean)
+        const existing = skus.length ? await prisma.productCatalog.findMany({ where: { sku: { in: skus } }, select: { sku: true } }) : []
+        const taken = new Set(existing.map(e => e.sku))
+        await prisma.productCatalog.createMany({ data: items.filter((i: any) => !i.sku || !taken.has(i.sku)), skipDuplicates: true })
       }
     },
     count: () =>

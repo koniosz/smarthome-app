@@ -16,6 +16,7 @@ import { prisma } from '../db'
 import { computeHealth, warsawToday, type HealthKind } from './finance-health'
 import { sendReport, logFailed, sendingInProgress } from './finance-report'
 import { forEachCompany } from '../middleware/tenant'
+import { getCompanySettings } from '../settings-store'
 
 export type DueReport = { kind: HealthKind; period: string }
 
@@ -56,8 +57,7 @@ export function dueReports(
 /** Jeden przebieg harmonogramu (eksport do testów ręcznych / wywołania z zewnątrz). Nigdy nie rzuca. */
 export async function runReportScheduler(nowDate: Date = new Date()): Promise<void> {
   try {
-    const settings = await prisma.companySettings
-      .findUnique({ where: { id: 'default' }, select: { reports_enabled: true, report_day: true } })
+    const settings = await getCompanySettings()
       .catch((e: any) => { console.error('[Raport] Nie udało się odczytać ustawień raportu — wysyłka pominięta:', e?.message ?? e); return null })
     const due = dueReports(schedulerSettings(settings), warsawToday(nowDate))
     for (const { kind, period } of due) {

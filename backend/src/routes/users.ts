@@ -67,8 +67,13 @@ router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
     if (req.body.company_id !== undefined) {
       // firma „domowa”: nie-admin widzi tylko ją (null = firma domyślna)
       const cid = req.body.company_id ? String(req.body.company_id) : null
-      if (cid && !(await db.companies.find(cid))) { res.status(400).json({ error: 'Firma nie istnieje' }); return }
+      const company: any = cid ? await db.companies.find(cid) : null
+      if (cid && (!company || !company.active)) { res.status(400).json({ error: 'Firma nie istnieje lub jest nieaktywna' }); return }
       patch.company_id = cid
+      // kartoteka pracownika (HR) idzie za użytkownikiem do nowej firmy
+      const { basePrisma } = await import('../db')
+      const { getDefaultCompanyId } = await import('../tenant')
+      await basePrisma.employee.updateMany({ where: { user_id: req.params.id }, data: { company_id: cid ?? getDefaultCompanyId() ?? undefined } })
       const { invalidateCompanyCache } = await import('../middleware/tenant'); invalidateCompanyCache()
     }
     if (req.body.password) patch.password_hash = await bcrypt.hash(req.body.password, 10)

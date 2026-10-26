@@ -750,7 +750,7 @@ export async function syncInvoicesForCurrentCompany(forceDateFrom?: Date): Promi
         const mapped = mapInvoice(inv, cfg.nip)
         if (!mapped.ksef_number) continue
 
-        const exists = await prisma.ksefInvoice.findUnique({ where: { ksef_number: mapped.ksef_number } })
+        const exists = await prisma.ksefInvoice.findFirst({ where: { ksef_number: mapped.ksef_number } }) // w zakresie firmy (ta sama faktura może być u dwóch firm platformy)
         if (exists) continue
 
         const created = await prisma.ksefInvoice.create({

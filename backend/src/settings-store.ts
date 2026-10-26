@@ -12,7 +12,8 @@ async function cid(): Promise<string | null> {
   const d = await basePrisma.company.findFirst({ where: { is_default: true }, select: { id: true } })
   return d?.id ?? null
 }
-const rowId = (companyId: string | null) => (companyId && companyId !== getDefaultCompanyId()) ? companyId : 'default'
+// Nowe wiersze: id = company_id (unikalne); historyczny wiersz 'default' został przypisany do firmy domyślnej przez backfill
+const rowId = (companyId: string | null) => companyId ?? 'default'
 
 export async function getCompanySettings() {
   const c = await cid()
@@ -22,7 +23,8 @@ export async function saveCompanySettings(patch: Record<string, any>) {
   const c = await cid()
   const existing = c ? await prisma.companySettings.findFirst({ where: { company_id: c } }) : await prisma.companySettings.findFirst()
   if (existing) return prisma.companySettings.update({ where: { id: existing.id }, data: patch })
-  return prisma.companySettings.create({ data: { id: rowId(c), company_id: c ?? undefined, ...patch } })
+  const { id: _i, company_id: _c, ...rest } = patch
+  return prisma.companySettings.create({ data: { ...rest, id: rowId(c), company_id: c ?? undefined } })
 }
 
 export async function getImapSettings() {
@@ -33,5 +35,6 @@ export async function saveImapSettings(patch: Record<string, any>) {
   const c = await cid()
   const existing = c ? await prisma.imapSettings.findFirst({ where: { company_id: c } }) : await prisma.imapSettings.findFirst()
   if (existing) return prisma.imapSettings.update({ where: { id: existing.id }, data: patch })
-  return prisma.imapSettings.create({ data: { id: rowId(c), company_id: c ?? undefined, ...patch } })
+  const { id: _i, company_id: _c, ...rest } = patch
+  return prisma.imapSettings.create({ data: { ...rest, id: rowId(c), company_id: c ?? undefined } })
 }
