@@ -5,6 +5,9 @@ import {
   syncInvoicesForCurrentCompany, getStatus, debugAuth, tryAutoClassifyFromHistory, terminateSession,
   ksefConfig, KsefNotConfiguredError, KSEF_NOT_CONFIGURED_MSG,
 } from '../services/ksef'
+import {
+  getInvoiceXml, getInvoiceDocument, sendKsefXmlError, ksefInvoiceFileBaseName, NO_KSEF_NUMBER_MSG,
+} from '../services/ksef-xml-store'
 import db, { prisma } from '../db'
 
 const router = Router()
@@ -14,6 +17,43 @@ function sendKsefError(res: Response, err: any): void {
   if (err instanceof KsefNotConfiguredError) { res.status(400).json({ error: err.message, configured: false }); return }
   const msg = err?.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : (err?.message ?? String(err))
   res.status(500).json({ error: msg })
+}
+
+// ── XML / dokument faktury (magazyn ksef-xml-store: cache w bazie + KSeF) ─────
+const INVOICE_DOC_SELECT = { id: true, ksef_number: true, invoice_number: true, invoice_direction: true, is_shared: true } as const
+
+/** Oryginalny XML faktury (inline). `sharedOnly` = wariant dla pracowników: tylko faktury udostępnione. */
+async function sendInvoiceXml(req: Request, res: Response, sharedOnly: boolean): Promise<void> {
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id }, select: INVOICE_DOC_SELECT })
+    if (!invoice || (sharedOnly && !invoice.is_shared)) {
+      res.status(404).json({ error: sharedOnly ? 'Faktura nie znaleziona lub nieudostępniona' : 'Faktura nie znaleziona' }); return
+    }
+    if (!invoice.ksef_number) { res.status(400).json({ error: 'Brak numeru KSeF' }); return }
+    const { xml } = await getInvoiceXml(invoice)
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8')
+    // nazwa pliku tylko z [A-Za-z0-9_.-] — numer faktury nadaje kontrahent, nie może domknąć cudzysłowu w nagłówku
+    res.setHeader('Content-Disposition', `inline; filename="${ksefInvoiceFileBaseName(invoice)}.xml"`)
+    res.send(xml)
+  } catch (err: any) { sendKsefXmlError(res, err, 'ksef/xml') }
+}
+
+/**
+ * Pełny dokument faktury do podglądu/druku — HTML zbudowany z XML KSeF:
+ * { html, title, filename (bez rozszerzenia), source: 'cache'|'ksef' }.
+ * Błędy: { error, code? } — 404 brak faktury / nieudostępniona / nie ma jej w KSeF, 400 brak numeru KSeF
+ * lub konfiguracji KSeF (configured:false), 429 rate_limited, 502 błąd KSeF/sieci, 422 unparseable.
+ */
+async function sendInvoiceDocument(req: Request, res: Response, sharedOnly: boolean): Promise<void> {
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id }, select: INVOICE_DOC_SELECT })
+    if (!invoice || (sharedOnly && !invoice.is_shared)) {
+      res.status(404).json({ error: sharedOnly ? 'Faktura nie znaleziona lub nieudostępniona' : 'Faktura nie znaleziona' }); return
+    }
+    if (!invoice.ksef_number) { res.status(400).json({ error: NO_KSEF_NUMBER_MSG, code: 'no_ksef_number' }); return }
+    res.json(await getInvoiceDocument(invoice))
+  } catch (err: any) { sendKsefXmlError(res, err, 'ksef/document') }
 }
 
 function auditUser(req: Request) {
@@ -230,23 +270,11 @@ router.get('/invoices', requireAdmin, async (req: Request, res: Response) => {
   } catch (err: any) { res.status(500).json({ error: err.message }) }
 })
 
-// GET /api/ksef/invoices/:id/xml — pobierz XML faktury z KSeF
-router.get('/invoices/:id/xml', requireAdmin, async (req: Request, res: Response) => {
-  try {
-    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
-    if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
-    if (!invoice.ksef_number) { res.status(400).json({ error: 'Brak numeru KSeF' }); return }
-    const { getActiveSession } = await import('../services/ksef')
-    const axios = (await import('axios')).default
-    const xmlRes = await axios.get(
-      `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(invoice.ksef_number)}`,
-      { headers: { Authorization: `Bearer ${await getActiveSession()}` }, responseType: 'text', timeout: 15000 },
-    )
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8')
-    res.setHeader('Content-Disposition', `inline; filename="faktura-${invoice.invoice_number ?? invoice.ksef_number}.xml"`)
-    res.send(xmlRes.data)
-  } catch (err: any) { sendKsefError(res, err) }
-})
+// GET /api/ksef/invoices/:id/xml — oryginalny XML faktury (cache w bazie, a pierwszy raz z KSeF)
+router.get('/invoices/:id/xml', requireAdmin, (req: Request, res: Response) => sendInvoiceXml(req, res, false))
+
+// GET /api/ksef/invoices/:id/document — pełny dokument faktury (HTML z XML KSeF) do podglądu/druku
+router.get('/invoices/:id/document', requireAdmin, (req: Request, res: Response) => sendInvoiceDocument(req, res, false))
 
 // GET /api/ksef/invoices/:id/line-items — pozycje faktury (cache w DB, admin)
 router.get('/invoices/:id/line-items', requireAdmin, async (req: Request, res: Response) => {
@@ -593,22 +621,10 @@ router.get('/shared', requireAuth, async (req: Request, res: Response) => {
 })
 
 // GET /api/ksef/shared/:id/xml — podgląd XML dla userów (tylko udostępnione)
-router.get('/shared/:id/xml', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
-    if (!invoice || !invoice.is_shared) { res.status(404).json({ error: 'Faktura nie znaleziona lub nieudostępniona' }); return }
-    if (!invoice.ksef_number) { res.status(400).json({ error: 'Brak numeru KSeF' }); return }
-    const { getActiveSession } = await import('../services/ksef')
-    const axios = (await import('axios')).default
-    const xmlRes = await axios.get(
-      `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(invoice.ksef_number)}`,
-      { headers: { Authorization: `Bearer ${await getActiveSession()}` }, responseType: 'text', timeout: 15000 },
-    )
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8')
-    res.setHeader('Content-Disposition', `inline; filename="faktura-${invoice.invoice_number ?? invoice.ksef_number}.xml"`)
-    res.send(xmlRes.data)
-  } catch (err: any) { sendKsefError(res, err) }
-})
+router.get('/shared/:id/xml', requireAuth, (req: Request, res: Response) => sendInvoiceXml(req, res, true))
+
+// GET /api/ksef/shared/:id/document — pełny dokument faktury dla userów (tylko udostępnione)
+router.get('/shared/:id/document', requireAuth, (req: Request, res: Response) => sendInvoiceDocument(req, res, true))
 
 // PATCH /api/ksef/shared/:id/assign — user przypisuje fakturę do swojego projektu
 // albo oznacza jako koszty firmowe ({ company_cost: true, notes })

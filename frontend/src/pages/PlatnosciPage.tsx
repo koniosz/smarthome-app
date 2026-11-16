@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, CheckCircle2, RotateCcw, Search, AlertTriangle, Banknote, CalendarClock, ListChecks, Eye, Download, X, Folder } from 'lucide-react'
+import { Upload, CheckCircle2, RotateCcw, Search, AlertTriangle, Banknote, CalendarClock, ListChecks, Eye, Download, X, Folder, FileText } from 'lucide-react'
 import { payablesApi, projectsApi } from '../api/client'
 import type { PayableSummary, PayableInvoice, PayableReviewItem, Mt940ImportResult, Project } from '../types'
 import { PROJECT_STATUS_LABELS } from '../types'
 import { useAuth } from '../auth/AuthContext'
+import KsefInvoiceDocumentModal, { readServerError } from '../components/ksef/KsefInvoiceDocumentModal'
 
 function money(n: number, currency = 'PLN') {
   return `${new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)} ${currency === 'PLN' ? 'zł' : currency}`
@@ -33,6 +34,7 @@ export default function PlatnosciPage() {
   const [importError, setImportError] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [previewInv, setPreviewInv] = useState<PayableInvoice | null>(null)
+  const [docInv, setDocInv] = useState<PayableInvoice | null>(null) // pełna faktura (dokument z KSeF — podgląd / PDF)
   const [assignInv, setAssignInv] = useState<PayableInvoice | null>(null) // modal „Do projektu”
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -184,7 +186,7 @@ export default function PlatnosciPage() {
   }
 
   return (
-    <div className="p-6 max-w-[1200px] mx-auto" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
+    <div className="p-6 max-w-[1360px] mx-auto" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
       {/* Nagłówek */}
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
@@ -388,7 +390,8 @@ export default function PlatnosciPage() {
                   <th className="px-4 py-3 font-semibold">Termin płatności</th>
                   <th className="px-4 py-3 font-semibold text-right">Kwota brutto</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold text-right">Akcje</th>
+                  {/* od xl kolumna akcji ma zadaną szerokość: 4 przyciski (do 475 px) + 32 px paddingu = jeden rząd */}
+                  <th className="px-4 py-3 font-semibold text-right xl:w-[510px]">Akcje</th>
                 </tr>
               </thead>
               <tbody>
@@ -429,44 +432,57 @@ export default function PlatnosciPage() {
                       {money(inv.gross_amount, inv.currency)}
                     </td>
                     <td className="px-4 py-3">{statusBadge(inv)}</td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => setAssignInv(inv)}
-                        disabled={inv.internal_allocation || inv.multi_project}
-                        title={inv.internal_allocation
-                          ? 'Faktura rozpisana ręcznie jako koszt firmowy — zmień w zakładce Faktury (KSeF)'
-                          : inv.multi_project ? 'Faktura rozpisana na kilka projektów — podział zmień w zakładce Faktury (KSeF)'
-                          : inv.project_name ? 'Przenieś koszt do innego projektu' : 'Przypisz całą fakturę jako koszt projektu'}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 mr-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-xs font-semibold text-violet-700 hover:bg-violet-50 dark:text-violet-300 dark:hover:bg-violet-900/30 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <Folder size={13} /> {inv.project_name ? 'Zmień projekt' : 'Do projektu'}
-                      </button>
-                      {inv.ksef_number && (
+                    <td className="px-4 py-3">
+                      {/* akcje zawijają się do dwóch rzędów zamiast rozpychać tabelę na węższych ekranach
+                          (na szerokich mieszczą się w jednym — patrz szerokość nagłówka „Akcje”) */}
+                      <div className="flex flex-wrap items-center justify-end gap-1.5 min-w-[270px]">
                         <button
-                          onClick={() => setPreviewInv(inv)}
-                          title="Podgląd faktury z KSeF"
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 mr-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 hover:text-violet-600 dark:text-gray-400 dark:hover:text-violet-400"
+                          onClick={() => setAssignInv(inv)}
+                          disabled={inv.internal_allocation || inv.multi_project}
+                          title={inv.internal_allocation
+                            ? 'Faktura rozpisana ręcznie jako koszt firmowy — zmień w zakładce Faktury (KSeF)'
+                            : inv.multi_project ? 'Faktura rozpisana na kilka projektów — podział zmień w zakładce Faktury (KSeF)'
+                            : inv.project_name ? 'Przenieś koszt do innego projektu' : 'Przypisz całą fakturę jako koszt projektu'}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-xs font-semibold text-violet-700 hover:bg-violet-50 dark:text-violet-300 dark:hover:bg-violet-900/30 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          <Eye size={13} /> Podgląd
+                          <Folder size={13} /> {inv.project_name ? 'Zmień projekt' : 'Do projektu'}
                         </button>
-                      )}
-                      {inv.payment_status === 'paid' ? (
-                        <button
-                          onClick={() => markUnpaid(inv)}
-                          disabled={busyId === inv.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-60"
-                        >
-                          <RotateCcw size={12} /> Cofnij
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => markPaid(inv)}
-                          disabled={busyId === inv.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold disabled:opacity-60"
-                        >
-                          <CheckCircle2 size={13} /> Oznacz zapłaconą
-                        </button>
-                      )}
+                        {inv.ksef_number && (
+                          <button
+                            onClick={() => setPreviewInv(inv)}
+                            title="Podgląd faktury z KSeF"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 hover:text-violet-600 dark:text-gray-400 dark:hover:text-violet-400 whitespace-nowrap"
+                          >
+                            <Eye size={13} /> Podgląd
+                          </button>
+                        )}
+                        {inv.ksef_number && (
+                          <button
+                            onClick={() => setDocInv(inv)}
+                            title="Cała faktura jako dokument — podgląd, wydruk, zapis do PDF"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 hover:text-violet-600 dark:text-gray-400 dark:hover:text-violet-400 whitespace-nowrap"
+                          >
+                            <FileText size={13} /> Faktura PDF
+                          </button>
+                        )}
+                        {inv.payment_status === 'paid' ? (
+                          <button
+                            onClick={() => markUnpaid(inv)}
+                            disabled={busyId === inv.id}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 whitespace-nowrap disabled:opacity-60"
+                          >
+                            <RotateCcw size={12} /> Cofnij
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => markPaid(inv)}
+                            disabled={busyId === inv.id}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold whitespace-nowrap disabled:opacity-60"
+                          >
+                            <CheckCircle2 size={13} /> Oznacz zapłaconą
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -476,7 +492,13 @@ export default function PlatnosciPage() {
         </div>
       )}
 
-      {previewInv && <InvoicePreviewModal invoice={previewInv} onClose={() => setPreviewInv(null)} />}
+      {previewInv && (
+        <InvoicePreviewModal
+          invoice={previewInv}
+          onClose={() => setPreviewInv(null)}
+          onOpenDocument={() => setDocInv(previewInv)}
+        />
+      )}
       {assignInv && (
         <AssignProjectModal
           invoice={assignInv}
@@ -484,6 +506,17 @@ export default function PlatnosciPage() {
             setAssignInv(null)
             if (saved) { try { await reload(tab, search) } catch { alert('Przypisano, ale nie udało się odświeżyć listy — odśwież stronę.') } }
           }}
+        />
+      )}
+      {/* Pełna faktura (dokument z KSeF) — leży nad szybkim podglądem, bo można ją otworzyć z jego wnętrza */}
+      {docInv && (
+        <KsefInvoiceDocumentModal
+          key={docInv.id}
+          heading={`Faktura ${docInv.invoice_number ?? docInv.ksef_number ?? '—'}`}
+          subheading={[docInv.seller_name, docInv.ksef_number ? `KSeF: ${docInv.ksef_number}` : null].filter(Boolean).join(' · ') || undefined}
+          load={() => payablesApi.invoiceDocument(docInv.id)}
+          downloadXml={() => payablesApi.invoiceXml(docInv.id)}
+          onClose={() => setDocInv(null)}
         />
       )}
     </div>
@@ -618,7 +651,7 @@ function AssignProjectModal({ invoice, onClose }: { invoice: PayableInvoice; onC
 }
 
 // ── Podgląd faktury z KSeF (dane + pozycje) + pobranie XML ────────────────────
-function InvoicePreviewModal({ invoice, onClose }: { invoice: PayableInvoice; onClose: () => void }) {
+function InvoicePreviewModal({ invoice, onClose, onOpenDocument }: { invoice: PayableInvoice; onClose: () => void; onOpenDocument?: () => void }) {
   const [items, setItems] = useState<Array<{ nr: string; name: string; unit: string; qty: string; unitPrice: string; netValue: string; vatRate: string }> | null>(null)
   const [itemsError, setItemsError] = useState('')
   const [downloading, setDownloading] = useState(false)
@@ -639,7 +672,10 @@ function InvoicePreviewModal({ invoice, onClose }: { invoice: PayableInvoice; on
       a.download = `faktura-${(invoice.invoice_number ?? invoice.ksef_number ?? invoice.id).replace(/[^\w.-]/g, '_')}.xml`
       a.click()
       URL.revokeObjectURL(url)
-    } catch { alert('Nie udało się pobrać XML z KSeF.') }
+    } catch (err) {
+      // komunikat z serwera (np. limit zapytań KSeF, brak konfiguracji) zamiast ogólnego
+      alert((await readServerError(err, 'Nie udało się pobrać XML z KSeF.')).message)
+    }
     finally { setDownloading(false) }
   }
 
@@ -648,14 +684,24 @@ function InvoicePreviewModal({ invoice, onClose }: { invoice: PayableInvoice; on
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] overflow-y-auto">
-        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
-          <div className="min-w-0">
+        {/* Na telefonie: tytuł + ✕ w pierwszym rzędzie, przyciski pod spodem; od sm wszystko w jednym rzędzie */}
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-6 py-4 border-b border-gray-100 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
+          <div className="min-w-0 flex-1">
             <h2 className="text-base font-bold text-gray-800 dark:text-gray-100 truncate">
               Faktura {invoice.invoice_number ?? '—'}
             </h2>
             <p className="text-xs text-gray-400 truncate">KSeF: {invoice.ksef_number ?? '—'}</p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="order-3 sm:order-2 basis-full sm:basis-auto flex flex-wrap items-center gap-2">
+            {onOpenDocument && invoice.ksef_number && (
+              <button
+                onClick={onOpenDocument}
+                title="Cała faktura jako dokument — podgląd, wydruk, zapis do PDF"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold whitespace-nowrap"
+              >
+                <FileText size={13} /> Pełna faktura (PDF)
+              </button>
+            )}
             <button
               onClick={downloadXml}
               disabled={downloading}
@@ -663,8 +709,8 @@ function InvoicePreviewModal({ invoice, onClose }: { invoice: PayableInvoice; on
             >
               <Download size={13} /> {downloading ? 'Pobieram…' : 'Pobierz XML'}
             </button>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"><X size={18} /></button>
           </div>
+          <button onClick={onClose} className="order-2 sm:order-3 flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"><X size={18} /></button>
         </div>
 
         <div className="p-6 space-y-5">

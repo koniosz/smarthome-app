@@ -4,6 +4,7 @@ import { ksefApi, projectsApi } from '../api/client'
 import type { KsefInvoice, Project } from '../types'
 import AssignInvoiceModal from '../components/ksef/AssignInvoiceModal'
 import InvoiceLineItems from '../components/ksef/InvoiceLineItems'
+import KsefInvoiceDocumentModal, { readServerError } from '../components/ksef/KsefInvoiceDocumentModal'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -53,6 +54,7 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
   const [xml, setXml]               = useState<string | null>(null)
   const [loadingXml, setLoadingXml] = useState(false)
   const [modalOpen, setModalOpen]   = useState(false)
+  const [docOpen, setDocOpen]       = useState(false) // pełna faktura (dokument z KSeF — podgląd / PDF)
   const [saving, setSaving]         = useState(false)
 
   const loadXml = async () => {
@@ -62,7 +64,10 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
       const data = await ksefApi.getSharedXml(invoice.id)
       setXml(data)
       setExpanded(true)
-    } catch (e) { /* ignore */ } finally { setLoadingXml(false) }
+    } catch (e) {
+      // komunikat z serwera (np. limit zapytań KSeF) zamiast cichej porażki
+      alert((await readServerError(e, 'Nie udało się pobrać pozycji faktury z KSeF.')).message)
+    } finally { setLoadingXml(false) }
   }
 
   const { items } = xml ? parseXml(xml) : { items: [] as InvoiceLineItem[] }
@@ -94,8 +99,8 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
   return (
     <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
       {/* Header row */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', gap: 16 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: '16px 20px', gap: 16 }}>
+        <div style={{ flex: '1 1 280px', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{invoice.seller_name || '—'}</span>
             <span style={{ fontSize: 12, color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>{invoice.seller_nip}</span>
@@ -108,7 +113,7 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
           </div>
           <InvoiceLineItems invoiceId={invoice.id} load={() => ksefApi.sharedLineItems(invoice.id)} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginLeft: 'auto' }}>
           <button
             onClick={loadXml}
             disabled={loadingXml}
@@ -124,6 +129,23 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             {loadingXml ? '…' : 'Pozycje'}
           </button>
+          {invoice.ksef_number && (
+            <button
+              onClick={() => setDocOpen(true)}
+              title="Cała faktura jako dokument — podgląd, wydruk, zapis do PDF"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 13px', fontSize: 13, fontWeight: 600,
+                border: '1px solid #e2e8f0', borderRadius: 8,
+                background: '#ffffff', color: '#475569', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#ffffff' }}
+            >
+              <FileText size={14} />
+              Faktura (PDF)
+            </button>
+          )}
           <button
             onClick={() => setModalOpen(true)}
             disabled={saving}
@@ -187,6 +209,16 @@ function InvoiceCard({ invoice, projects, onAssigned }: {
           onPickProject={handlePickProject}
           onPickCompany={handlePickCompany}
           onClose={() => setModalOpen(false)}
+        />
+      )}
+
+      {docOpen && (
+        <KsefInvoiceDocumentModal
+          heading={`Faktura ${invoice.invoice_number ?? invoice.ksef_number ?? '—'}`}
+          subheading={[invoice.seller_name, invoice.ksef_number ? `KSeF: ${invoice.ksef_number}` : null].filter(Boolean).join(' · ') || undefined}
+          load={() => ksefApi.sharedInvoiceDocument(invoice.id)}
+          downloadXml={() => ksefApi.getSharedXml(invoice.id)}
+          onClose={() => setDocOpen(false)}
         />
       )}
     </div>

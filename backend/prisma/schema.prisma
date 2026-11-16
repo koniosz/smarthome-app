@@ -686,10 +686,24 @@ model KsefInvoice {
 
   project     Project? @relation(fields: [project_id], references: [id], onDelete: SetNull)
   allocations KsefInvoiceAllocation[]
+  xml_cache   KsefInvoiceXml?         // cache oryginalnego XML faktury (podgląd dokumentu, „Pobierz XML")
 
   @@index([company_id])
   @@index([company_id, ksef_number])
   @@map("ksef_invoices")
+}
+
+// Cache oryginalnego XML faktury z KSeF (FA(2)/FA(3)). XML w KSeF jest niezmienny, więc raz pobrany
+// plik jest zawsze poprawny — służy do podglądu dokumentu, pobierania XML i pozycji bez odpytywania KSeF.
+// Zakres firmy dziedziczony po fakturze (tenant.ts → CHILD_SCOPES).
+model KsefInvoiceXml {
+  invoice_id String @id
+  xml        String
+  fetched_at String
+
+  invoice    KsefInvoice @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+
+  @@map("ksef_invoice_xml")
 }
 
 model KsefInvoiceAllocation {

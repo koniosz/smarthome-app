@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, X, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug, Building2, Users } from 'lucide-react'
+import { RefreshCw, Folder, ChevronDown, Check, Search, AlertTriangle, Eye, Share2, Trash2, ChevronLeft, ChevronRight, Settings, Brain, Wrench, Bug, Building2, Users } from 'lucide-react'
 import { ksefApi, bankApi, projectsApi } from '../api/client'
 import { useCompany, companyLabel } from '../company/CompanyContext'
 import type { KsefInvoice, KsefStatus, Project } from '../types'
@@ -7,6 +7,7 @@ import AllocationPanel from '../components/ksef/AllocationPanel'
 import PaymentVerificationModal from '../components/ksef/PaymentVerificationModal'
 import AssignInvoiceModal from '../components/ksef/AssignInvoiceModal'
 import InvoiceLineItems from '../components/ksef/InvoiceLineItems'
+import KsefInvoiceDocumentModal from '../components/ksef/KsefInvoiceDocumentModal'
 import SalesInvoicesSection from '../components/invoices/SalesInvoicesSection'
 
 function fmt(n: number) {
@@ -200,187 +201,25 @@ function SyncErrorBanner({ status, onResetSession, resettingSession }: {
   )
 }
 
-// ─── XML invoice preview modal ─────────────────────────────────────────────────
+// ─── Pełny podgląd faktury (dokument z KSeF: podgląd, wydruk / PDF, XML) ───────
 
-interface InvoiceLineItem {
-  nr: string
-  name: string
-  unit: string
-  qty: string
-  unitPrice: string
-  netValue: string
-  vatRate: string
-}
-
-function parseInvoiceXml(xml: string): { fields: Record<string, string>; items: InvoiceLineItem[] } {
-  const doc = new DOMParser().parseFromString(xml, 'application/xml')
-  const el = (tag: string, parent: Element | Document = doc): string => {
-    const hits = parent.getElementsByTagNameNS('*', tag)
-    if (hits.length > 0) return hits[0].textContent?.trim() ?? ''
-    const hits2 = parent.getElementsByTagName(tag)
-    return hits2.length > 0 ? hits2[0].textContent?.trim() ?? '' : ''
-  }
-  const elFirst = (tags: string[], parent: Element | Document = doc): string => {
-    for (const tag of tags) { const v = el(tag, parent); if (v) return v }
-    return ''
-  }
-  const rowsNS = doc.getElementsByTagNameNS('*', 'FaWiersz')
-  const rows   = rowsNS.length > 0 ? rowsNS : doc.getElementsByTagName('FaWiersz')
-  const items: InvoiceLineItem[] = Array.from(rows).map(row => ({
-    nr:        elFirst(['NrWierszaFa', 'NrWiersza'], row),
-    name:      el('P_7',  row),
-    unit:      el('P_8A', row),
-    qty:       el('P_8B', row),
-    unitPrice: elFirst(['P_9A', 'P_9B'], row),
-    netValue:  elFirst(['P_11', 'P_11A'], row),
-    vatRate:   el('P_12', row),
-  })).filter(i => i.name)
-
-  const fields: Record<string, string> = {
-    'Nr faktury':       el('P_2'),
-    'Data wystawienia': el('P_1'),
-    'Sprzedawca':       elFirst(['Nazwa']),
-    'NIP sprzedawcy':   el('NIP'),
-    'Wartość netto':    el('P_15'),
-    'Kwota VAT':        el('P_16'),
-    'Wartość brutto':   el('P_17'),
-    'Waluta':           el('KodWaluty') || 'PLN',
-  }
-  return { fields, items }
-}
-
-function InvoicePreviewModal({ invoice, onClose }: {
+function InvoiceDocumentPreview({ invoice, onClose }: {
   invoice: KsefInvoice
   onClose: () => void
 }) {
-  const [xml, setXml]         = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState<string | null>(null)
-
-  useEffect(() => {
-    ksefApi.getXml(invoice.id)
-      .then(x => setXml(x))
-      .catch(e => setError(e.response?.data?.error ?? e.message))
-      .finally(() => setLoading(false))
-  }, [invoice.id])
-
-  const handleDownload = () => {
-    if (!xml) return
-    const blob = new Blob([xml], { type: 'application/xml' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href     = url
-    a.download = `faktura-${invoice.invoice_number ?? invoice.ksef_number ?? 'ksef'}.xml`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const { fields, items } = xml ? parseInvoiceXml(xml) : { fields: {}, items: [] }
-
+  // sprzedażowa → istotny jest nabywca; zakupowa → sprzedawca
+  const party = invoice.invoice_direction === 'outgoing' && invoice.buyer_name
+    ? `Nabywca: ${invoice.buyer_name}`
+    : invoice.seller_name
+  const subheading = [party, invoice.ksef_number ? `KSeF: ${invoice.ksef_number}` : null].filter(Boolean).join(' · ')
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
-      onClick={onClose}
-    >
-      <div
-        style={{ background: '#ffffff', borderRadius: 16, boxShadow: '0 24px 64px rgba(15,23,42,0.25)', width: '100%', maxWidth: 640, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: '1px solid #f1f5f9' }}>
-          <div>
-            <h2 style={{ fontSize: 15, fontWeight: 600, color: '#0f172a', margin: 0 }}>Podgląd faktury</h2>
-            <p style={{ fontSize: 12, color: '#94a3b8', margin: '2px 0 0' }}>{invoice.invoice_number ?? invoice.ksef_number}</p>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {xml && (
-              <button
-                onClick={handleDownload}
-                style={{ padding: '6px 14px', fontSize: 12, fontWeight: 500, color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: 8, background: 'transparent', cursor: 'pointer' }}
-              >
-                Pobierz XML
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              style={{ padding: 6, border: 'none', background: 'transparent', cursor: 'pointer', color: '#94a3b8', borderRadius: 6 }}
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-          {loading && <div style={{ textAlign: 'center', padding: '48px 0', color: '#94a3b8', fontSize: 14 }}>Pobieranie z KSeF…</div>}
-          {error   && <div style={{ fontSize: 13, color: '#b91c1c', background: '#fef2f2', padding: '12px 16px', borderRadius: 8 }}>{error}</div>}
-          {xml && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {Object.entries(fields).filter(([, v]) => v).map(([k, v]) => (
-                  <div key={k} style={{ background: '#f8fafc', padding: '8px 12px', borderRadius: 8 }}>
-                    <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>{k}</div>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: '#0f172a' }}>{v}</div>
-                  </div>
-                ))}
-              </div>
-              {items.length > 0 && (
-                <div>
-                  <h3 style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                    Pozycje faktury ({items.length})
-                  </h3>
-                  <div style={{ overflowX: 'auto', borderRadius: 8, border: '1px solid #f1f5f9' }}>
-                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ background: '#f8fafc' }}>
-                          {['Nazwa', 'Ilość', 'J.m.', 'Cena netto', 'Wartość netto', 'VAT %'].map(h => (
-                            <th key={h} style={{ padding: '8px 10px', textAlign: h === 'Nazwa' || h === 'J.m.' ? 'left' : 'right', fontSize: 11, fontWeight: 600, color: '#94a3b8' }}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((item, i) => (
-                          <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
-                            <td style={{ padding: '8px 10px', color: '#0f172a', fontWeight: 500 }}>{item.name}</td>
-                            <td style={{ padding: '8px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{item.qty}</td>
-                            <td style={{ padding: '8px 10px', color: '#64748b' }}>{item.unit}</td>
-                            <td style={{ padding: '8px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{item.unitPrice}</td>
-                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{item.netValue}</td>
-                            <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>{item.vatRate}%</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-              <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 16 }}>
-                <h3 style={{ fontSize: 11, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Dane z bazy</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  {[
-                    ['Sprzedawca', invoice.seller_name],
-                    ['NIP sprzedawcy', invoice.seller_nip],
-                    ['Netto', `${fmt(invoice.net_amount)} ${invoice.currency}`],
-                    ['VAT', `${fmt(invoice.vat_amount)} ${invoice.currency}`],
-                    ['Brutto', `${fmt(invoice.gross_amount)} ${invoice.currency}`],
-                    ['Data wystawienia', invoice.invoice_date],
-                    ['Numer KSeF', invoice.ksef_number],
-                  ].filter(([, v]) => v).map(([k, v]) => (
-                    <div key={k as string} style={{ background: '#f8fafc', padding: '8px 12px', borderRadius: 8 }}>
-                      <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 2 }}>{k}</div>
-                      <div style={{ fontSize: 13, color: '#475569', wordBreak: 'break-all' }}>{v}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <details style={{ border: '1px solid #f1f5f9', borderRadius: 8 }}>
-                <summary style={{ padding: '8px 16px', fontSize: 12, color: '#94a3b8', cursor: 'pointer', userSelect: 'none' }}>Surowy XML</summary>
-                <pre style={{ padding: '12px 16px', fontSize: 11, fontFamily: 'monospace', color: '#475569', overflowX: 'auto', maxHeight: 240, overflowY: 'auto', background: '#f8fafc', borderRadius: '0 0 8px 8px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>
-                  {xml}
-                </pre>
-              </details>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <KsefInvoiceDocumentModal
+      heading={`Faktura ${invoice.invoice_number ?? invoice.ksef_number ?? '—'}`}
+      subheading={subheading || undefined}
+      load={() => ksefApi.invoiceDocument(invoice.id)}
+      downloadXml={() => ksefApi.getXml(invoice.id)}
+      onClose={onClose}
+    />
   )
 }
 
@@ -498,7 +337,7 @@ function UnassignedRow({ invoice, projects, onUpdated }: {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
           <button
             onClick={() => setPreviewing(true)}
-            title="Podgląd faktury"
+            title="Podgląd faktury — cały dokument, wydruk / PDF"
             style={{ padding: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8', borderRadius: 6 }}
             onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = '#475569'}
             onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = '#94a3b8'}
@@ -610,7 +449,7 @@ function UnassignedRow({ invoice, projects, onUpdated }: {
       )}
 
       {previewing && (
-        <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />
+        <InvoiceDocumentPreview invoice={invoice} onClose={() => setPreviewing(false)} />
       )}
     </>
   )
@@ -861,7 +700,7 @@ function FullInvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
             <button
               onClick={() => setPreviewing(true)}
               style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
-              title="Podgląd faktury"
+              title="Podgląd faktury — cały dokument, wydruk / PDF"
             >
               <Eye size={13} />
             </button>
@@ -936,7 +775,7 @@ function FullInvoiceRow({ invoice, projects, onUpdated, onRemoved }: {
           </td>
         </tr>
       )}
-      {previewing && <InvoicePreviewModal invoice={invoice} onClose={() => setPreviewing(false)} />}
+      {previewing && <InvoiceDocumentPreview invoice={invoice} onClose={() => setPreviewing(false)} />}
     </>
   )
 }

@@ -181,6 +181,9 @@ export const payablesApi = {
     api.get(`/payables/invoices/${id}/line-items`).then(r => r.data),
   invoiceXml: (id: string): Promise<Blob> =>
     api.get(`/payables/invoices/${id}/xml`, { responseType: 'blob' }).then(r => r.data),
+  // Pełna faktura jako dokument HTML (render z XML KSeF) — do podglądu i wydruku/PDF
+  invoiceDocument: (id: string): Promise<import('../types').KsefInvoiceDocumentPayload> =>
+    api.get(`/payables/invoices/${id}/document`).then(r => r.data),
   assign: (txId: string, invoiceId: string): Promise<void> =>
     api.post(`/payables/review/${txId}/assign`, { invoice_id: invoiceId }).then(r => r.data),
   dismiss: (txId: string): Promise<void> =>
@@ -918,6 +921,10 @@ export const ksefApi = {
   getXml: (id: string) =>
     api.get<string>(`/ksef/invoices/${id}/xml`, { responseType: 'text' }).then(r => r.data),
 
+  // Pełna faktura jako dokument HTML (render z XML KSeF) — do podglądu i wydruku/PDF
+  invoiceDocument: (id: string) =>
+    api.get<import('../types').KsefInvoiceDocumentPayload>(`/ksef/invoices/${id}/document`).then(r => r.data),
+
   debugAuth: () =>
     api.get<Record<string, any>>('/ksef/debug-auth').then(r => r.data),
 
@@ -931,6 +938,9 @@ export const ksefApi = {
 
   getSharedXml: (id: string) =>
     api.get<string>(`/ksef/shared/${id}/xml`, { responseType: 'text' }).then(r => r.data),
+
+  sharedInvoiceDocument: (id: string) =>
+    api.get<import('../types').KsefInvoiceDocumentPayload>(`/ksef/shared/${id}/document`).then(r => r.data),
 
   lineItems: (id: string) =>
     api.get<{ items: import('../types').KsefLineItem[] }>(`/ksef/invoices/${id}/line-items`).then(r => r.data.items),

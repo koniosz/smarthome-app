@@ -27,6 +27,7 @@ export const CHILD_SCOPES: Record<string, string[]> = {
   StockMovement: ['item'], StockReservation: ['item'], WarehouseDocLine: ['doc'], ProjectMember: ['project'], ExtraCost: ['project'],
   AccessRequest: ['project'], CostAuditLog: ['project'], KsefInvoiceAllocation: ['invoice'], ProjectDocument: ['project'], ClientSurvey: ['project'],
   ClientSurveyAttachment: ['survey', 'project'],
+  KsefInvoiceXml: ['invoice'], // cache XML faktury KSeF — zakres po fakturze
 }
 function childFilter(path: string[], companyId: string): any {
   let f: any = { company_id: companyId }

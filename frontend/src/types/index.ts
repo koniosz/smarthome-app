@@ -512,6 +512,14 @@ export interface KsefLineItem {
   vatRate: string
 }
 
+// Pełny dokument faktury (HTML wyrenderowany przez backend z XML KSeF) — podgląd / wydruk / PDF
+export interface KsefInvoiceDocumentPayload {
+  html: string                 // kompletny, samodzielny dokument HTML (<!DOCTYPE html>…)
+  title: string                // np. „Faktura FV/12/2026”
+  filename: string             // np. „faktura-FV_12_2026” (bez rozszerzenia)
+  source: 'cache' | 'ksef'
+}
+
 export interface KsefInvoice {
   id: string
   ksef_number: string | null

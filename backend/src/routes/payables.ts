@@ -14,6 +14,7 @@ import { parseMT940Statements } from '../utils/mt940Parser'
 import { saveBankBalances, upsertMt940Costs } from '../services/mt940-costs'
 import db, { prisma } from '../db'
 import { assignInvoiceToProject, AssignError } from './ksef'
+import { getInvoiceXml, getInvoiceDocument, sendKsefXmlError, NO_KSEF_NUMBER_MSG } from '../services/ksef-xml-store'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -427,27 +428,37 @@ router.get('/invoices/:id/line-items', async (req: Request, res: Response) => {
 })
 
 // ── GET /api/payables/invoices/:id/xml — oryginalny XML faktury z KSeF ────────
+// XML z magazynu (ksef-xml-store): cache w bazie, a przy pierwszym razie pobranie z KSeF.
 router.get('/invoices/:id/xml', async (req: Request, res: Response) => {
   try {
-    const invoice = await prisma.ksefInvoice.findUnique({ where: { id: req.params.id } })
+    const invoice = await prisma.ksefInvoice.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, ksef_number: true, invoice_number: true },
+    })
     if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
     if (!invoice.ksef_number) { res.status(400).json({ error: 'Brak numeru KSeF' }); return }
-    const { getActiveSession, KsefNotConfiguredError } = await import('../services/ksef')
-    const axios = (await import('axios')).default
-    let bearer: string
-    try { bearer = await getActiveSession() }
-    catch (e: any) { if (e instanceof KsefNotConfiguredError) { res.status(400).json({ error: e.message }); return } throw e }
-    const xmlRes = await axios.get(
-      `https://api.ksef.mf.gov.pl/v2/invoices/ksef/${encodeURIComponent(invoice.ksef_number)}`,
-      { headers: { Authorization: `Bearer ${bearer}` }, responseType: 'text', timeout: 15000 },
-    )
+    const { xml } = await getInvoiceXml(invoice)
     res.setHeader('Content-Type', 'application/xml; charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename="faktura-${(invoice.invoice_number ?? invoice.ksef_number).replace(/[^\w.-]/g, '_')}.xml"`)
-    res.send(xmlRes.data)
-  } catch (err: any) {
-    const msg = err?.response ? `KSeF HTTP ${err.response.status}` : err.message
-    res.status(500).json({ error: msg })
-  }
+    res.send(xml)
+  } catch (err: any) { sendKsefXmlError(res, err, 'payables/xml') }
+})
+
+// ── GET /api/payables/invoices/:id/document — pełny dokument faktury (podgląd / druk) ──
+// HTML zbudowany z XML KSeF: { html, title, filename (bez rozszerzenia), source: 'cache'|'ksef' }.
+// Błędy: { error, code? } — 404 brak faktury / nie ma jej w KSeF, 400 brak numeru KSeF lub konfiguracji,
+// 429 rate_limited, 502 błąd KSeF/sieci, 422 unparseable.
+router.get('/invoices/:id/document', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const invoice = await prisma.ksefInvoice.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, ksef_number: true, invoice_number: true, invoice_direction: true },
+    })
+    if (!invoice) { res.status(404).json({ error: 'Faktura nie znaleziona' }); return }
+    if (!invoice.ksef_number) { res.status(400).json({ error: NO_KSEF_NUMBER_MSG, code: 'no_ksef_number' }); return }
+    res.json(await getInvoiceDocument(invoice))
+  } catch (err: any) { sendKsefXmlError(res, err, 'payables/document') }
 })
 
 // ── POST /api/payables/invoices/:id/assign-project { project_id, category?, notes?, reassign? } ─
@@ -471,7 +482,7 @@ router.post('/invoices/:id/assign-project', async (req: Request, res: Response) 
 // ── POST /api/payables/fetch-due-dates — uzupełnij terminy płatności z XML KSeF ──
 // Nieopłacone faktury kosztowe bez terminu (null = nigdy nie pobrano; '' = faktura
 // nie ma terminu w XML — nie ponawiamy). Partia max 30 na wywołanie (limiter XML
-// w ksef-lineitems trzyma równoległość 2, a limit partii chroni rate-limit KSeF).
+// w ksef-xml-store trzyma równoległość 2, a limit partii chroni rate-limit KSeF).
 router.post('/fetch-due-dates', async (_req: Request, res: Response) => {
   try {
     const missing = (await db.ksef_invoices.listAll()).filter((i: any) =>
