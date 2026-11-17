@@ -39,7 +39,7 @@ const MANUAL_COST_CATEGORIES: Array<{ label: string; cost_category: string; subc
 ]
 
 const COST_GROUP_META: Array<{ key: keyof CostDetailsResponse['groups']; label: string; icon: string }> = [
-  { key: 'salaries', label: 'Pensje', icon: '👥' },
+  { key: 'salaries', label: 'Pensje i PIT-4', icon: '👥' },
   { key: 'zus', label: 'ZUS', icon: '🏛️' },
   { key: 'taxes', label: 'Podatki (CIT)', icon: '🧾' },
   { key: 'import', label: 'Import towaru', icon: '🌏' },
@@ -52,14 +52,30 @@ const BU_OPTIONS = [['all', 'Cała spółka'], ['shc', 'Smart Home Center'], ['g
 type ViewMode = 'month' | 'quarters' | 'trend'
 
 // ── Wiersz RZiS ───────────────────────────────────────────────────────────────
-function Row({ label, value, pctVal, bold, indent, tone, note }: {
+function Row({ label, value, pctVal, bold, indent, sub, tone, note }: {
   label: string; value: number; pctVal?: number; bold?: boolean; indent?: boolean
+  /** wiersz informacyjny „w tym…” pod pozycją: głębsze wcięcie, wyszarzony — kwota już siedzi w wierszu nad nim */
+  sub?: boolean
   tone?: 'green' | 'red' | 'blue' | 'amber'; note?: string
 }) {
   const bg = tone === 'green' ? 'bg-green-50/70 dark:bg-green-950/20'
     : tone === 'blue' ? 'bg-blue-50/70 dark:bg-blue-950/20'
     : tone === 'amber' ? 'bg-amber-50/70 dark:bg-amber-950/20'
     : tone === 'red' ? 'bg-red-50/70 dark:bg-red-950/20' : ''
+  if (sub) {
+    return (
+      <tr className="border-b border-gray-100 dark:border-gray-800">
+        <td className="py-1.5 pl-14">
+          <span className="text-xs text-gray-400 dark:text-gray-500">{label}</span>
+          {note && <span className="ml-2 text-[11px] text-gray-400 dark:text-gray-500">{note}</span>}
+        </td>
+        <td className="py-1.5 pr-4 text-right tabular-nums whitespace-nowrap">
+          <span className="text-xs text-gray-400 dark:text-gray-500">{fmt(value)} zł</span>
+        </td>
+        <td className="py-1.5 pr-4 w-20" />
+      </tr>
+    )
+  }
   return (
     <tr className={`border-b border-gray-100 dark:border-gray-800 ${bg}`}>
       <td className={`py-2.5 ${indent ? 'pl-9' : 'pl-4'}`}>
@@ -108,6 +124,9 @@ function PnlTable({ L, showInventory }: { L: PnlLines; showInventory: boolean })
         <Row label="Koszty operacyjne (OPEX)" value={-L.opex} />
         {L.opex_sales > 0 && <Row label="Sprzedaż i marketing" value={-L.opex_sales} indent />}
         {L.opex_ga > 0 && <Row label="G&A (pensje, ZUS, czynsz, biuro)" value={-L.opex_ga} indent />}
+        {/* Informacyjnie (kwoty już są w G&A): koszty pracy z wyciągów i ich część szacowana — pola opcjonalne (starszy backend) */}
+        {(L.payroll ?? 0) > 0 && <Row label="w tym koszty pracy" value={-(L.payroll ?? 0)} sub note="wynagrodzenia, PIT-4, ZUS" />}
+        {(L.payroll_estimate ?? 0) > 0 && <Row label="w tym szacunek ZUS/PIT-4" value={-(L.payroll_estimate ?? 0)} sub note="przelewu za ten okres jeszcze nie było" />}
         {L.opex_operations > 0 && <Row label="Operacyjne (auta, narzędzia)" value={-L.opex_operations} indent />}
         {L.opex_leasing > 0 && <Row label="Leasing (operacyjny)" value={-L.opex_leasing} indent />}
         <Row label="EBITDA" value={L.ebitda} pctVal={L.ebitda_pct} bold tone={L.ebitda >= 0 ? 'green' : 'red'} />
@@ -562,7 +581,7 @@ function CostDetailsView({ details }: { details: CostDetailsResponse }) {
   const [projectsOpen, setProjectsOpen] = useState(false)
   const toggle = (k: string) => setOpenGroups(p => ({ ...p, [k]: !p[k] }))
 
-  const SOURCE_LABEL: Record<string, string> = { ksef: 'KSeF', mt940: 'MT940', manual: 'ręczny' }
+  const SOURCE_LABEL: Record<string, string> = { ksef: 'KSeF', mt940: 'MT940', manual: 'ręczny', document: 'dokument', szacunek: 'szacunek' }
 
   return (
     <div className="mt-3 space-y-3">
@@ -573,9 +592,16 @@ function CostDetailsView({ details }: { details: CostDetailsResponse }) {
         </div>
         {details.skipped_mt940_duplicates.count > 0 && (
           <span className="text-xs px-2 py-1 rounded-md bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-semibold"
-            title="Przelewy MT940 za faktury, które są już w KSeF — policzone raz, z faktury">
-            ✓ wyłapano {details.skipped_mt940_duplicates.count} duplikatów MT940 ({money(details.skipped_mt940_duplicates.total)})
+            title="Przelewy z wyciągu za faktury, które są już w KSeF, albo wykluczone decyzją — koszt policzony raz, z faktury">
+            ✓ przelewy za faktury z KSeF: {details.skipped_mt940_duplicates.count} — policzone raz ({money(details.skipped_mt940_duplicates.total)})
           </span>
+        )}
+        {(details.mt940_awaiting_decision?.count ?? 0) > 0 && (
+          <a href={`/koszty-spoza-ksef?tab=rules&from=${details.from}`}
+            className="text-xs px-2 py-1 rounded-md bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 font-semibold hover:underline"
+            title="Przelewy z wyciągu, których system nie rozpoznał i nie dopasował do faktury z KSeF. Nie są policzone w kosztach — zdecyduj, czy to koszt (Koszty spoza KSeF › Reguły bankowe)">
+            ⚠ przelewy czekające na decyzję: {details.mt940_awaiting_decision!.count} ({money(details.mt940_awaiting_decision!.total)}) — nie są w kosztach →
+          </a>
         )}
         {(details.foreign_currency_costs?.count ?? 0) > 0 && (
           <span className="text-xs px-2 py-1 rounded-md bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 font-semibold"

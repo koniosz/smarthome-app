@@ -24,16 +24,16 @@ test('CIT / PIT do US → financial/tax_income (nie tax_vat), także z kontrahen
   assert.equal(mt940('Urząd Skarbowy', 'zaliczka na podatek dochodowy CIT'), 'financial/tax_income')
   assert.equal(mt940('MIKRORACHUNEK PODATKOWY', '/SFP/CIT/2026'), 'financial/tax_income')
   assert.equal(mt940('MIKRORACHUNEK PODATKOWY', '/TXT/CIT8 08/2026'), 'financial/tax_income')
-  // PIT-4 / PIT-8A = zaliczki od wynagrodzeń → koszt pensji (ga/salary_gross), nie CIT
-  assert.equal(mt940('US Warszawa', 'PIT-4 za 08/2026'), 'ga/salary_gross')
-  assert.equal(mt940('URZĄD SKARBOWY', 'PIT-8A 08/2026'), 'ga/salary_gross')
-  assert.equal(mt940('MIKRORACHUNEK PODATKOWY', '/TXT/PIT4R 2026'), 'ga/salary_gross')
+  // PIT-4 / PIT-8A = zaliczki od wynagrodzeń → koszt pracy (ga/salary_pit, osobna pozycja obok wypłat netto), nie CIT
+  assert.equal(mt940('US Warszawa', 'PIT-4 za 08/2026'), 'ga/salary_pit')
+  assert.equal(mt940('URZĄD SKARBOWY', 'PIT-8A 08/2026'), 'ga/salary_pit')
+  assert.equal(mt940('MIKRORACHUNEK PODATKOWY', '/TXT/PIT4R 2026'), 'ga/salary_pit')
   assert.equal(mt940('URZĄD SKARBOWY', 'zaliczka na podatek 08/2026'), 'financial/tax_income')
   // bez kontrahenta US (wpis ręczny / krótki tytuł)
   assert.equal(sub('CIT-8 zaliczka 08/2026'), 'financial/tax_income')
   assert.equal(sub('Zaliczka CIT 08/2026'), 'financial/tax_income')
   assert.equal(sub('Zaliczka na podatek dochodowy CIT'), 'financial/tax_income')
-  assert.equal(sub('PIT-4 za 08/2026'), 'ga/salary_gross')
+  assert.equal(sub('PIT-4 za 08/2026'), 'ga/salary_pit')
 })
 
 test('VAT / JPK do US → financial/tax_vat', () => {

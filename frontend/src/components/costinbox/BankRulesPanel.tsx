@@ -17,7 +17,8 @@ interface FormState {
 
 const EMPTY: FormState = { name: '', pattern: '', match_field: 'any', subcategory: 'software', business_unit: 'shared', pnl_mode: 'include' }
 
-export default function BankRulesPanel() {
+// initialFrom (YYYY-MM, już zwalidowany przez stronę) — od którego miesiąca otworzyć listę nierozpoznanych przelewów
+export default function BankRulesPanel({ initialFrom }: { initialFrom?: string }) {
   const [rules, setRules] = useState<BankRule[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -257,7 +258,7 @@ export default function BankRulesPanel() {
         )}
       </div>
 
-      <UnmatchedTransfers refreshKey={unmatchedKey} onMakeRule={prefillFrom} />
+      <UnmatchedTransfers refreshKey={unmatchedKey} onMakeRule={prefillFrom} initialFrom={initialFrom} />
     </div>
   )
 }

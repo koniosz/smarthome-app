@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Upload, CheckCircle2, RotateCcw, Search, AlertTriangle, Banknote, CalendarClock, ListChecks, Eye, Download, X, Folder, FileText } from 'lucide-react'
 import { payablesApi, projectsApi } from '../api/client'
 import type { PayableSummary, PayableInvoice, PayableReviewItem, Mt940ImportResult, Project } from '../types'
@@ -13,6 +14,17 @@ function fmtDate(s: string | null) {
   if (!s) return '—'
   const [y, m, d] = s.slice(0, 10).split('-')
   return `${d}.${m}.${y}`
+}
+
+// Pełne złote z separatorem tysięcy („21 300 zł”) — podsumowanie rozpoznanych przelewów po imporcie wyciągu
+function money0(n: number) {
+  return `${new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 }).format(Math.abs(n || 0))} zł`
+}
+// Odmiana po liczebniku: 1 przelew · 2–4 przelewy · 5+ przelewów (12–14 też „przelewów”)
+function plural(n: number, one: string, few: string, many: string) {
+  const a = Math.abs(n), d = a % 10, h = a % 100
+  if (a === 1) return one
+  return d >= 2 && d <= 4 && !(h >= 12 && h <= 14) ? few : many
 }
 
 const SOURCE_LABEL: Record<string, string> = { mt940: 'MT940', przelewy24: 'P24', manual: 'ręcznie' }
@@ -225,6 +237,7 @@ export default function PlatnosciPage() {
               ))}
             </ul>
           )}
+          <Mt940Recognition result={importResult} />
         </div>
       )}
       {importError && (
@@ -518,6 +531,72 @@ export default function PlatnosciPage() {
           downloadXml={() => payablesApi.invoiceXml(docInv.id)}
           onClose={() => setDocInv(null)}
         />
+      )}
+    </div>
+  )
+}
+
+// ── Wynik importu MT940: co system rozpoznał w wyciągu (ZUS, podatki, pensje, przelewy zagraniczne) ──
+// Wszystkie pola są opcjonalne — starszy backend ich nie zwraca i wtedy blok się nie pokazuje.
+function Mt940Recognition({ result }: { result: Mt940ImportResult }) {
+  const recognized = (result.recognized ?? []).filter(r => r && r.kind !== 'unknown' && r.count > 0)
+  // Ten sam przelew to jeden wiersz w płatnościach i jeden w kosztach — liczymy przelewy, nie wiersze
+  const repaired = Math.max(result.repaired ?? 0, result.costs_repaired ?? 0)
+  const autoDismissed = result.auto_dismissed ?? 0
+  const toDecide = result.costs_to_review ?? 0
+  // Lista w „Regułach bankowych” domyślnie pokazuje 3 ostatnie miesiące — po wgraniu starszego wyciągu
+  // otwieramy ją od miesiąca, w którym są czekające przelewy (pole opcjonalne; stronę docelową i tak waliduje)
+  const decideFrom = result.costs_to_review_from
+  const decideLink = '/koszty-spoza-ksef?tab=rules'
+    + (typeof decideFrom === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(decideFrom) ? `&from=${decideFrom}` : '')
+  if (recognized.length === 0 && repaired <= 0 && autoDismissed <= 0 && toDecide <= 0 && !result.costs_error) return null
+
+  return (
+    <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-800 space-y-2">
+      {recognized.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-green-700/80 dark:text-green-400/80">Rozpoznano w wyciągu</div>
+          <ul className="mt-1.5 flex flex-wrap gap-1.5">
+            {recognized.map(r => (
+              <li key={r.kind} className="inline-flex items-baseline gap-1.5 px-2 py-1 rounded-md bg-white/70 dark:bg-gray-900/40 border border-green-200/70 dark:border-green-800/60 text-xs">
+                <span className="font-semibold">{r.label || r.kind}</span>
+                <span className="tabular-nums">{r.count} · {money0(r.total)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {repaired > 0 && (
+        <div className="text-xs">
+          Uzupełniono <b>{repaired}</b> {plural(repaired, 'wcześniej wgrany przelew', 'wcześniej wgrane przelewy', 'wcześniej wgranych przelewów')} (tytuł, kontrahent) — bez duplikatów.
+        </div>
+      )}
+      {(result.legacy_duplicates ?? 0) > 0 && (
+        <div className="text-xs">
+          Odłożono <b>{result.legacy_duplicates}</b> {plural(result.legacy_duplicates ?? 0, 'zdublowany wpis', 'zdublowane wpisy', 'zdublowanych wpisów')} z wcześniejszego importu (ten sam przelew był zapisany dwa razy).
+        </div>
+      )}
+      {autoDismissed > 0 && (
+        <div className="text-xs">
+          <b>{autoDismissed}</b> {plural(autoDismissed, 'przelew', 'przelewy', 'przelewów')} (ZUS, podatki, pensje, opłaty, przelewy własne) {plural(autoDismissed, 'nie wymaga', 'nie wymagają', 'nie wymaga')} dopasowania do faktur.
+        </div>
+      )}
+      {toDecide > 0 && (
+        <div className="text-xs">
+          <b className="text-amber-700 dark:text-amber-400">
+            {toDecide} {plural(toDecide, 'przelew czeka', 'przelewy czekają', 'przelewów czeka')} na decyzję
+          </b>
+          {' '}— system nie wie, czy to koszt.{' '}
+          <Link to={decideLink} className="font-semibold text-violet-700 dark:text-violet-300 underline hover:no-underline">
+            Koszty spoza KSeF › Reguły bankowe →
+          </Link>
+        </div>
+      )}
+      {result.costs_error && (
+        // techniczny komunikat serwera tylko w podpowiedzi — w treści zdanie zrozumiałe dla laika
+        <div className="text-xs font-semibold text-amber-700 dark:text-amber-400" title={result.costs_error.slice(0, 300)}>
+          Uwaga: płatności są zapisane, ale koszty z tego wyciągu nie trafiły do rentowności. Wgraj ten sam plik jeszcze raz — duplikaty zostaną pominięte.
+        </div>
       )}
     </div>
   )

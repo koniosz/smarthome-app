@@ -78,6 +78,20 @@ export interface HealthTiles {
   cash_date: string | null
 }
 
+/**
+ * Koszty pracy okresu, memoriałowo (miesiąc, którego dotyczą — nie dzień przelewu): przelewy wynagrodzeń,
+ * zaliczki PIT-4 i składki ZUS z wyciągów + szacunek ZUS/PIT-4 za miesiące, za które przelewu jeszcze nie było.
+ */
+export interface HealthPayroll {
+  salaries: number
+  pit4: number
+  zus: number
+  zus_estimate: number
+  pit4_estimate: number
+  total: number                 // razem z szacunkiem
+  estimated_months: string[]    // YYYY-MM — miesiące z szacunkiem
+}
+
 export interface HealthResponse {
   kind: HealthKind
   period: string            // '2026-08' | '2026-Q3'
@@ -95,6 +109,8 @@ export interface HealthResponse {
   taxes: HealthTaxes
   checks: HealthCheck[]
   cash: HealthCash
+  /** Opcjonalne — starszy backend nie zwraca; karta „Koszty pracy” jest wtedy ukryta */
+  payroll?: HealthPayroll
   generated_at: string
 }
 

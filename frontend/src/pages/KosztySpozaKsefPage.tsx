@@ -1,15 +1,30 @@
 // Strona „Koszty spoza KSeF”: skrzynka dokumentów (upload / e-mail / telefon), reguły bankowe, ustawienia IMAP (admin).
 // Dostęp: admin lub can_view_payments. Trasa /koszty-spoza-ksef.
+// Adres: ?tab=docs | rules | imap (domyślnie docs) oraz opcjonalnie ?from=YYYY-MM — od którego miesiąca otworzyć
+// listę nierozpoznanych przelewów (link „N przelewów czeka na decyzję” z Płatności po imporcie wyciągu).
 import { useEffect, useState, type ReactElement } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Inbox, Landmark, Mail } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { costDocumentsApi, type CostDocumentStats } from '../api/costInbox'
 import DocumentsInbox from '../components/costinbox/DocumentsInbox'
 import BankRulesPanel from '../components/costinbox/BankRulesPanel'
 import ImapSettingsCard from '../components/costinbox/ImapSettingsCard'
+import { currentMonth } from '../components/costinbox/shared'
 
 type Tab = 'docs' | 'rules' | 'imap'
+
+function parseTab(raw: string | null): Tab {
+  return raw === 'rules' || raw === 'imap' ? raw : 'docs'
+}
+
+// ?from= przyjmujemy tylko jako poprawny miesiąc z rozsądnego zakresu (nie z przyszłości, nie sprzed 2015);
+// cokolwiek innego ignorujemy — lista otwiera się wtedy na domyślnym zakresie.
+function parseFromMonth(raw: string | null): string | undefined {
+  if (!raw || !/^\d{4}-(0[1-9]|1[0-2])$/.test(raw)) return undefined
+  if (raw < '2015-01' || raw > currentMonth(0)) return undefined
+  return raw
+}
 
 export default function KosztySpozaKsefPage() {
   const { user } = useAuth()
@@ -17,7 +32,19 @@ export default function KosztySpozaKsefPage() {
   const canSee = user?.role === 'admin' || !!user?.can_view_payments
   const isAdmin = user?.role === 'admin'
 
-  const [tab, setTab] = useState<Tab>('docs')
+  // Zakładka żyje w adresie (jedno źródło prawdy): odświeżenie strony i link z innej strony trafiają we właściwą.
+  // Przełączenie zakładki podmienia wpis historii (replace), żeby „wstecz” wracało do poprzedniej strony, a nie zakładki.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = parseTab(searchParams.get('tab'))
+  const initialFrom = parseFromMonth(searchParams.get('from'))
+  const setTab = (next: Tab) => {
+    if (next === tab) return
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      p.set('tab', next)
+      return p
+    }, { replace: true })
+  }
   const [stats, setStats] = useState<CostDocumentStats | null>(null)
 
   useEffect(() => {
@@ -81,7 +108,7 @@ export default function KosztySpozaKsefPage() {
       </div>
 
       {tab === 'docs' && <DocumentsInbox isAdmin={isAdmin} onStats={setStats} />}
-      {tab === 'rules' && <BankRulesPanel />}
+      {tab === 'rules' && <BankRulesPanel initialFrom={initialFrom} />}
       {tab === 'imap' && (isAdmin
         ? <ImapSettingsCard />
         : <div className="p-8 text-center text-gray-500 dark:text-gray-400">Ustawienia skrzynki e-mail może zmieniać tylko administrator.</div>)}

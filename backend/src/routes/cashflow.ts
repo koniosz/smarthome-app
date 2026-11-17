@@ -16,11 +16,14 @@ import { addMonths } from './finance'
 const router = Router()
 router.use(requirePayments)
 
-export const RECURRING_SUBCATEGORIES = ['salary_gross', 'salary_admin', 'zus_employer', 'tax_vat', 'tax_income', 'rent', 'leasing'] as const
+// Prognoza jest KASOWA — liczy po datach przelewów (nie po miesiącu, którego koszt dotyczy, jak RZiS).
+// salary_pit: zaliczka PIT-4 ma od importu z klasyfikatorem własną podkategorię (wcześniej trafiała do salary_gross).
+export const RECURRING_SUBCATEGORIES = ['salary_gross', 'salary_admin', 'salary_pit', 'zus_employer', 'tax_vat', 'tax_income', 'rent', 'leasing'] as const
 const RECURRING_SET = new Set<string>(RECURRING_SUBCATEGORIES)
 const RECURRING_LABELS: Record<string, string> = {
   salary_gross: 'Wynagrodzenia (umowy o pracę)',
   salary_admin: 'Wynagrodzenia — administracja',
+  salary_pit: 'PIT-4 (zaliczki na podatek od wynagrodzeń)',
   zus_employer: 'ZUS',
   tax_vat: 'VAT do urzędu skarbowego',
   tax_income: 'CIT / zaliczka na podatek dochodowy',
@@ -324,7 +327,13 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Stałe: średnia z 3 pełnych miesięcy; w bieżącym miesiącu pomijamy już opłacone podkategorie
     const recurring = computeRecurring(recurringCosts.filter(c => c.date < `${curMonth}-01`), months)
-    const paid_this_month = [...new Set(recurringCosts.filter(c => c.date >= `${curMonth}-01`).map(c => c.subcategory))]
+    // „Opłacone w tym miesiącu" tylko wtedy, gdy przelew z bieżącego miesiąca wypada w pobliżu zwykłego dnia tej opłaty.
+    // Pensje za poprzedni miesiąc wypłacone 1.–2. dnia nie znaczą, że wypłata z końca TEGO miesiąca już wyszła —
+    // inaczej prognoza gubiłaby cały najbliższy koszt pracy.
+    const paid_this_month = recurring
+      .filter(it => recurringCosts.some(c => c.subcategory === it.subcategory && c.date >= `${curMonth}-01`
+        && Number(String(c.date).slice(8, 10)) >= it.day_of_month - 7))
+      .map(it => it.subcategory)
 
     const projection = projectCashflow({
       as_of, days, start_balance: total_pln, balance_date, foreign_currencies, skipped_fx_invoices: skippedFx,

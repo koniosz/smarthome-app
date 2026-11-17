@@ -740,6 +740,7 @@ model BankTransaction {
   counterparty      String  @default("")  // name of sender/receiver
   counterparty_iban String  @default("")
   reference         String  @default("")  // bank reference number / P24 order ID
+  op_code           String?               // kod operacji bankowej z wyciągu MT940 (np. mBank 152, D95); null = stary import
   matched_invoice_id String?
   match_confidence  Float?  // 0-1 confidence score
   review_status     String  @default("none") // none (spoza panelu Płatności) | pending (do sprawdzenia) | matched (auto) | assigned (ręcznie) | dismissed (odrzucona)
@@ -937,6 +938,11 @@ model ManualCost {
   // zagraniczny bez KSeF, z reguły bankowej lub dokumentu), exclude = nigdy (duplikat faktury KSeF)
   pnl_mode      String  @default("auto")
   bank_rule_id  String?                     // reguła bankowa, która skategoryzowała przelew
+  // Rozpoznanie automatyczne przelewu z wyciągu (services/bank-classify): zus | tax_pit4 | tax_cit | tax_vat |
+  // tax_other | salary | bank_fee | internal | foreign_vendor | foreign_transfer; null = nierozpoznany / wpis ręczny / stary import
+  auto_kind     String?
+  op_code       String?                     // kod operacji bankowej z wyciągu (np. mBank 152, D95)
+  counterparty_iban String?                 // rachunek kontrahenta z wyciągu (IBAN/NRB bez spacji)
   document_id   String?                     // CostDocument, z którego powstał koszt
   created_at    String
   created_by    String  @default("")

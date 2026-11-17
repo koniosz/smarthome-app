@@ -13,7 +13,7 @@ import multer from 'multer'
 import { v4 as uuidv4 } from 'uuid'
 import { prisma } from '../db'
 import { requirePayments } from './payables'
-import { computePnlYear, addMonths, includeManualCostInPnl } from './finance'
+import { computePnlYear, addMonths, loadManualCosts, manualLinesByMonth } from './finance'
 import {
   parseZoisFile, parseZoisRows, mapZoisToLines, diffZoisRows, emptyAccountantLines, MAX_ZOIS_ROWS,
   type ZoisRow, type AccountantLines,
@@ -30,8 +30,9 @@ const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/
 const fmtPln = (n: number) => `${new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 0 }).format(Math.round(Math.abs(n)))} zł`
 
 // Pensje i ZUS w naszym RZiS (konto 404 + 405 u księgowej). salary_civil (UoD/UoZ) księguje się
-// też na 404; B2B to 402 (usługi obce), więc zostaje w „pozostałych kosztach”.
-const SALARY_SUBCATEGORIES = ['salary_gross', 'salary_admin', 'salary_civil', 'zus_employer']
+// też na 404; B2B to 402 (usługi obce), więc zostaje w „pozostałych kosztach”. salary_pit = zaliczka PIT-4:
+// u księgowej jest częścią wynagrodzenia brutto (404), u nas osobnym przelewem do urzędu skarbowego.
+const SALARY_SUBCATEGORIES = ['salary_gross', 'salary_admin', 'salary_civil', 'salary_pit', 'zus_employer']
 
 function toLines(json: any): AccountantLines {
   const L = emptyAccountantLines()
@@ -140,9 +141,11 @@ router.get('/', async (_req: Request, res: Response) => {
 async function computeOurs(period: string) {
   const year = parseInt(period.slice(0, 4), 10)
   const from = `${period}-01`, to = `${period}-31`
-  const [pnl, manualCosts, allocations, unallocated] = await Promise.all([
-    computePnlYear(year),
-    prisma.manualCost.findMany({ where: { date: { gte: from, lte: to }, subcategory: { in: SALARY_SUBCATEGORIES } } }),
+  // Koszty spoza KSeF: ta sama alokacja co w silniku RZiS — koszty pracy w miesiącu, KTÓREGO dotyczą
+  // (ZUS / PIT-4 z okresem z tytułu, pensja z 1.–2. dnia w miesiącu poprzednim) + szacunek za brak przelewu.
+  const manual = await loadManualCosts()
+  const [pnl, allocations, unallocated] = await Promise.all([
+    computePnlYear(year, 'all', manual),
     prisma.ksefInvoiceAllocation.findMany({
       where: { subcategory: { in: SALARY_SUBCATEGORIES } },
       include: { invoice: { select: { invoice_date: true, created_at: true, net_amount: true, gross_amount: true, invoice_direction: true } } },
@@ -152,8 +155,12 @@ async function computeOurs(period: string) {
   const month = pnl.months.find(m => m.period === period)
   if (!month) throw new Error(`Brak miesiąca ${period} w RZiS`)
 
-  let salariesSocial = 0
-  for (const c of manualCosts as any[]) if (includeManualCostInPnl(c)) salariesSocial += c.amount || 0
+  // Pensje, PIT-4 i ZUS spoza KSeF ujęte w kosztach miesiąca (ten sam miesiąc co w RZiS) + szacunek ZUS / PIT-4.
+  // Po PODKATEGORII, niezależnie od linii RZiS — jak alokacje KSeF niżej i jak dotychczas: księgowa ma je na 404 / 405
+  // także wtedy, gdy u nas koszt pracy jest zaksięgowany poza G&A.
+  const payrollEstimate = manualLinesByMonth(manual, [period]).get(period)?.payroll_estimate ?? 0
+  let salariesSocial = payrollEstimate
+  for (const b of manual.booked) if (b.month === period && b.payroll) salariesSocial += Number(b.cost.amount) || 0
   for (const a of allocations as any[]) {
     const inv = a.invoice
     if (!inv || inv.invoice_direction === 'outgoing') continue
@@ -168,6 +175,7 @@ async function computeOurs(period: string) {
       revenue: r2(month.revenue),
       depreciation: r2(month.depreciation),
       salaries_social: r2(salariesSocial),
+      salaries_social_estimate: r2(payrollEstimate),   // część salaries_social, która jest szacunkiem ZUS / PIT-4
       cit: r2(month.cit),
       other_costs: r2(costs_total - month.depreciation - salariesSocial),
       costs_total,
@@ -236,7 +244,10 @@ router.get('/:period/compare', async (req: Request, res: Response) => {
       hints.push(`Amortyzacja różni się o ${fmtPln(ours.depreciation - t.depreciation)} — uzupełnij środki trwałe (wartość, okres amortyzacji).`)
     }
     if (Math.abs(ours.salaries_social - t.salaries_social) > tol) {
-      hints.push(`Pensje i ZUS różnią się o ${fmtPln(ours.salaries_social - t.salaries_social)} — sprawdź, czy wyciąg MT940 za ten miesiąc jest wgrany (pensje liczymy z przelewów, księgowa memoriałowo).`)
+      hints.push(`Pensje i ZUS różnią się o ${fmtPln(ours.salaries_social - t.salaries_social)} — sprawdź, czy wyciąg MT940 za ten miesiąc i za następny jest wgrany (liczymy z przelewów: pensje netto, PIT-4 i ZUS, przypisane do miesiąca, którego dotyczą; księgowa — z listy płac).`)
+    }
+    if (ours.salaries_social_estimate > 0) {
+      hints.push(`W naszych kosztach pracy jest szacunek ZUS i PIT-4 ${fmtPln(ours.salaries_social_estimate)} — przelewu za ten miesiąc jeszcze nie było na wyciągu; po jego wgraniu szacunek zastąpi rzeczywista kwota.`)
     }
     if (t.other_revenue !== 0) {
       hints.push(`Księgowa wykazuje pozostałe przychody ${fmtPln(t.other_revenue)} (odsetki, różnice kursowe) — nie ma ich w naszym RZiS.`)

@@ -10,7 +10,8 @@ import {
   parsePeriod, shiftPeriod, yoyPeriod, monthsInRange, lastDayOf, shortMonthLabel, monthLabel,
   formatPln, plural, computeCosts, computeStatus, buildHeadline, buildSubline, buildChecks,
   costBreakdown, computeTaxes, computeCashPosition, cmpOf, subcategoryLabels, countCostDocKsefOverlap, isPlnCost,
-  type HealthResponse, type HealthCheck,
+  isLegacyBankRow, legacyBankFacts, payrollGapMonths, warsawToday, PAYROLL_ESTIMATE_KEY, PAYROLL_LOW_SHARE,
+  type HealthResponse, type HealthCheck, estimateNoun,
 } from '../services/finance-health'
 import { buildReportEmail, buildIncompleteEmail, parseEmails, deltaText, esc } from '../services/finance-report'
 import { dueReports } from '../services/report-scheduler'
@@ -114,6 +115,37 @@ describe('status i nagłówek', () => {
     assert.match(buildSubline([{ key: 'firmao_missing', severity: 'error', message: 'f' }]), /Firmao/)
     assert.match(buildSubline([{ key: 'mt940_missing', severity: 'error', message: 'm' }, { key: 'firmao_missing', severity: 'error', message: 'f' }]), /MT940 i importu Firmao/)
   })
+  test('buildSubline: wyciągi wgrane starym importem — mówi wprost, że trzeba je wgrać ponownie', () => {
+    const legacy: HealthCheck = { key: 'mt940_legacy_rows', severity: 'error', message: 'l' }
+    const mt: HealthCheck = { key: 'mt940_missing', severity: 'error', message: 'm' }
+    const firmao: HealthCheck = { key: 'firmao_missing', severity: 'error', message: 'f' }
+    assert.equal(buildSubline([legacy]), 'Wyciągi bankowe trzeba wgrać ponownie — w kosztach nie ma pensji, ZUS i podatków, wynik może być zawyżony.')
+    assert.equal(buildSubline([mt, legacy]), 'Brakuje wyciągu MT940, a wcześniej wgrane wyciągi trzeba wgrać ponownie — w kosztach nie ma pensji, ZUS i podatków, wynik może być zawyżony.')
+    assert.equal(buildSubline([legacy, firmao]), 'Wyciągi bankowe trzeba wgrać ponownie (w kosztach nie ma pensji, ZUS i podatków) i brakuje importu Firmao — wynik jest wstępny.')
+    assert.match(buildSubline([mt, legacy, firmao]), /^Brakuje wyciągu MT940 i importu Firmao, a wcześniej wgrane wyciągi trzeba wgrać ponownie .* wynik jest wstępny\.$/)
+    // ostrzeżenia obok błędu nie zmieniają podpisu
+    assert.match(buildSubline([legacy, { key: 'payroll_missing', severity: 'warn', message: 'w' }]), /^Wyciągi bankowe trzeba wgrać ponownie/)
+  })
+  test('buildSubline: pensje dużo niższe niż zwykle (ostrzeżenie) — nie piszemy „Dane kompletne"', () => {
+    const pm: HealthCheck = { key: 'payroll_missing', severity: 'warn', message: 'p' }
+    const w: HealthCheck = { key: 'ksef_unallocated', severity: 'warn', message: 'x' }
+    assert.equal(buildSubline([pm]), 'Wynagrodzenia są dużo niższe niż zwykle — w kosztach może ich brakować, wynik może być zawyżony.')
+    assert.equal(buildSubline([pm, w, w]), 'Wynagrodzenia są dużo niższe niż zwykle — w kosztach może ich brakować, wynik może być zawyżony. Do sprawdzenia jeszcze: 2 uwagi.')
+    // szacunek ZUS / PIT-4 to informacja — dane są kompletne
+    assert.equal(buildSubline([{ key: 'payroll_estimated', severity: 'info', message: 'e' }]), 'Dane kompletne.')
+  })
+  test('buildSubline: miesiąc BEZ wypłat to błąd — podpis mówi, że wynik jest zawyżony o koszt pracy', () => {
+    const pm: HealthCheck = { key: 'payroll_missing', severity: 'error', message: 'p' }
+    const firmao: HealthCheck = { key: 'firmao_missing', severity: 'error', message: 'f' }
+    assert.equal(buildSubline([pm]), 'W kosztach brakuje wynagrodzeń (nie ma ich jeszcze na wyciągu) — wynik jest zawyżony o koszt pracy. Wgraj wyciąg z wypłatami.')
+    assert.equal(buildSubline([pm, firmao]), 'W kosztach brakuje wynagrodzeń (nie ma ich jeszcze na wyciągu) i brakuje importu Firmao — wynik jest wstępny.')
+    // status: zysk na papierze, ale dane niekompletne → nigdy „dobrze"
+    assert.equal(computeStatus({ ebitda: 90000, ebitda_pct: 21 } as any, false), 'yellow')
+  })
+  test('helpery dat przeniesione do routes/finance są nadal eksportowane stąd', () => {
+    assert.equal(warsawToday(new Date('2026-01-01T00:30:00Z')).period, '2026-01')
+    assert.equal(warsawToday(new Date('2025-12-31T23:30:00Z')).iso, '2026-01-01')
+  })
 })
 
 describe('buildChecks', () => {
@@ -190,6 +222,186 @@ describe('buildChecks', () => {
     assert.match(c[1].message, /^Koszty w walucie obcej bez kursu: 1/)
     assert.match(buildChecks({ ...base, cost_doc_ksef_overlap: 5 })[0].message, /^5 zatwierdzonych dokumentów spoza KSeF ma odpowiednik/)
   })
+
+  test('mt940_legacy_rows: przelewy zapisane starym importem → error z linkiem do Płatności', () => {
+    assert.deepEqual(buildChecks({ ...base, legacy_bank_rows: 0, legacy_bank_months: [] }), [])
+    const c = buildChecks({ ...base, legacy_bank_rows: 12, legacy_bank_months: ['2026-08', '2026-07', '2026-08'] })
+    assert.deepEqual(c.map(x => [x.key, x.severity, x.count, x.link]), [['mt940_legacy_rows', 'error', 12, '/platnosci']])
+    assert.match(c[0].message, /^12 przelewów z wyciągu za Lipiec 2026, Sierpień 2026 jest zapisanych bez tytułu i kontrahenta/)
+    assert.match(c[0].message, /nie rozpoznał w nich pensji, ZUS i podatków/)
+    assert.match(c[0].message, /Wgraj te wyciągi jeszcze raz w Płatnościach/)
+    assert.match(buildChecks({ ...base, legacy_bank_rows: 1 })[0].message, /^1 przelew z wyciągu jest zapisany bez tytułu/)
+    assert.match(buildChecks({ ...base, legacy_bank_rows: 3, legacy_bank_months: ['2026-09'] })[0].message, /^3 przelewy z wyciągu za Wrzesień 2026 są zapisane bez tytułu/)
+    // kolejność błędów: brak wyciągu → stary import → Firmao; dane niekompletne
+    const all = buildChecks({ ...base, mt940_months: ['2026-07', '2026-08'], legacy_bank_rows: 2, legacy_bank_months: ['2026-07'], provisional_months: ['2026-09'], ksef_unallocated: 1 })
+    assert.deepEqual(all.map(x => x.key), ['mt940_missing', 'mt940_legacy_rows', 'firmao_missing', 'ksef_unallocated'])
+  })
+
+  test('payroll_estimated: szacunek ZUS / PIT-4 w wyniku → info (nie blokuje raportu)', () => {
+    assert.deepEqual(buildChecks({ ...base, payroll_estimate: 0, payroll_estimate_months: [] }), [])
+    const c = buildChecks({ ...base, payroll_estimate: 5000.4, payroll_estimate_months: ['2026-09', '2026-08'] })
+    assert.deepEqual(c.map(x => [x.key, x.severity, x.count]), [['payroll_estimated', 'info', 2]])
+    assert.match(c[0].message, /szacunek ZUS i PIT-4: 5 000 zł za Sierpień 2026, Wrzesień 2026/)
+    assert.match(c[0].message, /nie było jeszcze na wyciągu/)
+    assert.match(c[0].message, /automatycznie zastąpiony rzeczywistymi kwotami/)
+    // info stoi za ostrzeżeniami, przed pozostałymi informacjami
+    const mixed = buildChecks({ ...base, payroll_estimate: 100, payroll_estimate_months: ['2026-09'], ksef_unallocated: 1, accountant_months: ['2026-07', '2026-08'] })
+    assert.deepEqual(mixed.map(x => x.key), ['ksef_unallocated', 'payroll_estimated', 'accountant_missing'])
+  })
+
+  test('payroll_missing: zakończony miesiąc bez pensji, choć ≥ 2 z 3 poprzednich je miały → BŁĄD (wynik zawyżony o cały koszt pracy)', () => {
+    const sal = { '2026-04': 0, '2026-05': 10000, '2026-06': 10000, '2026-07': 10000, '2026-08': 10000, '2026-09': 0 }
+    const c = buildChecks({ ...base, salaries_by_month: sal })
+    assert.deepEqual(c.map(x => [x.key, x.severity, x.count, x.link]), [['payroll_missing', 'error', 1, '/platnosci']])
+    assert.match(c[0].message, /^Brak przelewów wynagrodzeń za Wrzesień 2026, choć w poprzednich miesiącach były/)
+    assert.match(c[0].message, /prawdopodobnie brakuje pensji, ZUS i PIT-4 za ten miesiąc/)
+    assert.match(c[0].message, /z innego rachunku/)
+    // pensje były we wszystkich miesiącach → nic
+    assert.deepEqual(buildChecks({ ...base, salaries_by_month: { ...sal, '2026-09': 9500 } }), [])
+    // początek historii: tylko jeden z trzech poprzednich miesięcy miał pensje → nie zgadujemy
+    assert.deepEqual(buildChecks({ ...base, salaries_by_month: { '2026-08': 10000 } }), [])
+    assert.deepEqual(buildChecks({ ...base, salaries_by_month: {} }), [])
+    // dwa miesiące naraz — liczba mnoga
+    const two = buildChecks({ ...base, salaries_by_month: { '2026-05': 10000, '2026-06': 10000, '2026-07': 10000 } })
+    assert.equal(two[0].count, 2)
+    assert.match(two[0].message, /za Sierpień 2026, Wrzesień 2026.*za te miesiące/)
+  })
+
+  test('payroll_missing: bieżący miesiąc, miesiąc bez wyciągu i miesiąc starego importu nie są zgłaszane drugi raz', () => {
+    const sal = { '2026-06': 10000, '2026-07': 10000, '2026-08': 10000, '2026-09': 0 }
+    // wrzesień trwa (today_month = 2026-09) → pensje mogły jeszcze nie wyjść
+    assert.deepEqual(buildChecks({ ...base, today_month: '2026-09', salaries_by_month: sal }).map(x => x.key), [])
+    // brak wyciągu za wrzesień → wystarczy błąd mt940_missing
+    assert.deepEqual(buildChecks({ ...base, mt940_months: ['2026-07', '2026-08'], salaries_by_month: sal }).map(x => x.key), ['mt940_missing'])
+    // wrzesień wgrany starym importem → wystarczy błąd mt940_legacy_rows
+    assert.deepEqual(buildChecks({ ...base, legacy_bank_rows: 40, legacy_bank_months: ['2026-09'], salaries_by_month: sal }).map(x => x.key), ['mt940_legacy_rows'])
+  })
+
+  test('payroll_missing: pensje dużo niższe niż zwykle (część przelewów jeszcze nie wgrana)', () => {
+    const c = buildChecks({ ...base, salaries_by_month: { '2026-06': 10000, '2026-07': 10000, '2026-08': 10000, '2026-09': 3000 } })
+    assert.deepEqual(c.map(x => [x.key, x.severity, x.count]), [['payroll_missing', 'warn', 1]])
+    assert.match(c[0].message, /^Wynagrodzenia za Wrzesień 2026 to 3 000 zł — dużo mniej niż zwykle \(ok\. 10 000 zł\)/)
+    // dokładnie połowa średniej → jeszcze nie „dużo mniej"
+    assert.deepEqual(buildChecks({ ...base, salaries_by_month: { '2026-06': 10000, '2026-07': 10000, '2026-08': 10000, '2026-09': 5000 } }), [])
+  })
+})
+
+describe('isLegacyBankRow / payrollGapMonths', () => {
+  test('stary import: w opisie i kontrahencie sam 3-znakowy kod operacji, bez op_code', () => {
+    assert.equal(isLegacyBankRow({ description: '152', counterparty: '152' }), true)
+    assert.equal(isLegacyBankRow({ description: 'D95', counterparty: 'D95', op_code: null }), true)
+    assert.equal(isLegacyBankRow({ description: ' 27A ', counterparty: '' }), true)
+    assert.equal(isLegacyBankRow({ description: '210' }), true)   // wiersz kosztu z wyciągu: opis = sam kod
+  })
+  test('nowy import nie jest mylony ze starym', () => {
+    // operacja bez tytułu (opłata): opis pusty, kod w op_code
+    assert.equal(isLegacyBankRow({ description: '', counterparty: '', op_code: '27A' }), false)
+    assert.equal(isLegacyBankRow({ description: '', counterparty: '' }), false)
+    assert.equal(isLegacyBankRow({ description: '152', counterparty: '152', op_code: '152' }), false)
+    assert.equal(isLegacyBankRow({ description: 'WYNAGRODZENIE 9/2026', counterparty: 'JAN TESTOWY', op_code: '152' }), false)
+    assert.equal(isLegacyBankRow({ description: 'WPŁATA DO ZUS', counterparty: '' }), false)
+    // krótki tytuł, ale prawdziwy kontrahent (wyciąg innego banku bez subpól)
+    assert.equal(isLegacyBankRow({ description: 'ZUS', counterparty: 'ZAKŁAD UBEZPIECZEŃ PRZYKŁADOWYCH' }), false)
+    assert.equal(isLegacyBankRow({}), false)
+  })
+  test('payrollGapMonths: brak / dużo mniej / za mało historii', () => {
+    assert.equal(PAYROLL_LOW_SHARE, 0.5)
+    const sal = { '2025-11': 8000, '2025-12': 12000, '2026-01': 0, '2026-02': 4000, '2026-03': 9000 }
+    const gap = payrollGapMonths(sal, ['2026-01', '2026-02', '2026-03', '2026-04'])
+    // styczeń: poprzednie XI, XII (2 z 3) → brak; luty: poprzednie XII, XI (styczeń = 0) → średnia 10 000, 4 000 < 5 000 → mało;
+    // marzec: poprzednie II, XII → średnia 8 000, 9 000 ok; kwiecień: poprzednie III, II → brak
+    assert.deepEqual(gap.missing, ['2026-01', '2026-04'])
+    assert.deepEqual(gap.low, [{ period: '2026-02', salaries: 4000, usual: 10000 }])
+    assert.deepEqual(payrollGapMonths({}, ['2026-01']), { missing: [], low: [] })
+  })
+  test('legacyBankFacts: obciążenia starego importu po dacie operacji w okresie — liczba i miesiące', () => {
+    const txs = [
+      { transaction_date: '2026-08-03', amount: -100, description: '152', counterparty: '152', op_code: null },
+      { transaction_date: '2026-08-31', amount: -200, description: 'D95', counterparty: '', op_code: null },
+      { transaction_date: '2026-09-10', amount: -300, description: '210', counterparty: '210', op_code: null },
+      { transaction_date: '2026-09-10', amount: -77, description: 'ZUS', counterparty: '', op_code: '' },                      // nowy import, bank bez kodów: krótki, prawdziwy tytuł
+      { transaction_date: '2026-09-11', amount: 500, description: '150', counterparty: '150', op_code: null },                 // uznanie — nie liczymy
+      { transaction_date: '2026-09-12', amount: -40, description: '', counterparty: '', op_code: '776' },                      // nowy import: opłata bez tytułu
+      { transaction_date: '2026-09-13', amount: -900, description: 'WYNAGRODZENIE 9/2026', counterparty: 'JAN TESTOWY', op_code: '152' },
+      { transaction_date: '2026-07-31', amount: -700, description: '152', counterparty: '152', op_code: null },                // przed okresem
+      { transaction_date: '2026-10-01', amount: -700, description: '152', counterparty: '152', op_code: null },                // po okresie
+    ]
+    assert.deepEqual(legacyBankFacts(txs, [], '2026-08-01', '2026-09-30'), { rows: 3, months: ['2026-08', '2026-09'] })
+    // po ponownym wgraniu wyciągu wiersze mają op_code → nic do zgłoszenia
+    assert.deepEqual(legacyBankFacts(txs.map(t => ({ ...t, op_code: t.description || '776' })), [], '2026-08-01', '2026-09-30'), { rows: 0, months: [] })
+    // wyciąg wgrany tylko jako koszty: liczą się wiersze kosztów z wyciągu (nie wpisy ręczne); ten sam przelew
+    // w obu tabelach nie jest liczony dwa razy (większa z liczb, nie suma)
+    const costs = [
+      { date: '2026-08-03', source: 'mt940', description: '152', op_code: null },
+      { date: '2026-08-04', source: 'mt940', description: '153', op_code: null },
+      { date: '2026-08-05', source: 'manual', description: 'ABC', op_code: null },
+      { date: '2026-08-06', source: 'mt940', description: 'ZAKŁAD TESTOWY · SKŁADKI', op_code: '153' },
+      { date: '2026-06-06', source: 'mt940', description: '152', op_code: null },                                              // przed okresem
+    ]
+    assert.deepEqual(legacyBankFacts([], costs, '2026-08-01', '2026-08-31'), { rows: 2, months: ['2026-08'] })
+    assert.deepEqual(legacyBankFacts(txs, costs, '2026-08-01', '2026-09-30'), { rows: 3, months: ['2026-08', '2026-09'] })
+    assert.deepEqual(legacyBankFacts([], [], '2026-08-01', '2026-08-31'), { rows: 0, months: [] })
+  })
+})
+
+describe('nowe kontrole: mt940_legacy_rows / payroll_estimated / payroll_missing', () => {
+  // Raport za październik liczony 1–2 listopada: wyciąg za październik jest wgrany, ale pensje za październik
+  // wychodzą 1.–2. listopada (będą dopiero na wyciągu listopadowym)
+  const october = {
+    months: ['2026-10'], today_month: '2026-11', mt940_months: ['2026-10'], provisional_months: [] as string[],
+    ksef_unallocated: 0, cost_docs_pending: 0, bank_review_pending: 0, accountant_months: ['2026-10'],
+    accountant_diffs: [] as Array<{ period: string; ours: number; theirs: number; theirs_costs: number }>,
+    cogs_purchases: 0, pz_docs: 0, latest_ksef_created_at: null,
+    salaries_by_month: { '2026-07': 21000, '2026-08': 21000, '2026-09': 21000, '2026-10': 0 } as Record<string, number>,
+  }
+  test('payroll_missing zgłasza OSTATNI (właśnie zakończony) miesiąc bez pensji — pełny raport czeka na wyciąg z wypłatami', () => {
+    const c = buildChecks(october)
+    assert.deepEqual(c.map(x => [x.key, x.severity, x.count]), [['payroll_missing', 'error', 1]])
+    assert.match(c[0].message, /^Brak przelewów wynagrodzeń za Październik 2026/)
+    assert.match(c[0].message, /wypłaty z 1\.–2\. dnia są na wyciągu następnego miesiąca/)
+    // błąd: dane niekompletne → status nie jest „dobrze", pełny raport nie wychodzi sam z zyskiem zawyżonym o koszt pracy
+    assert.equal(c.some(x => x.severity === 'error'), true)
+    assert.match(buildSubline(c), /brakuje wynagrodzeń .* wynik jest zawyżony o koszt pracy/)
+    // wystarczą dwa z trzech poprzednich miesięcy z pensjami
+    assert.equal(buildChecks({ ...october, salaries_by_month: { '2026-08': 21000, '2026-09': 21000 } })[0]?.key, 'payroll_missing')
+    assert.deepEqual(buildChecks({ ...october, salaries_by_month: { '2026-09': 21000 } }), [])
+    // pensje dograne z wyciągu listopadowego (przypisane do października) → kontrola znika
+    assert.deepEqual(buildChecks({ ...october, salaries_by_month: { ...october.salaries_by_month, '2026-10': 21000 } }), [])
+    // ten sam miesiąc oglądany w trakcie jego trwania (dziś = październik) → jeszcze nie zgłaszamy
+    assert.deepEqual(buildChecks({ ...october, today_month: '2026-10' }), [])
+    // kwartał w toku (IV kw. oglądany w listopadzie): zgłaszany jest tylko zakończony październik
+    const q4 = buildChecks({ ...october, months: ['2026-10', '2026-11', '2026-12'], mt940_months: ['2026-10', '2026-11'], accountant_months: ['2026-10', '2026-11'] })
+    assert.deepEqual(q4.map(x => [x.key, x.count]), [['payroll_missing', 1]])
+    assert.match(q4[0].message, /za Październik 2026,/)
+  })
+  test('trzy nowe kontrole naraz: klucze unikalne, wagi error / warn / info, linki tylko do istniejących stron', () => {
+    const all = buildChecks({
+      ...october,
+      months: ['2026-08', '2026-09', '2026-10'], mt940_months: ['2026-08', '2026-09', '2026-10'], accountant_months: ['2026-08', '2026-09', '2026-10'],
+      legacy_bank_rows: 7, legacy_bank_months: ['2026-08'],
+      payroll_estimate: 14000, payroll_estimate_months: ['2026-09'],
+      salaries_by_month: { '2026-05': 21000, '2026-06': 21000, '2026-07': 21000, '2026-08': 0, '2026-09': 21000, '2026-10': 0 },
+      ksef_unallocated: 2, cost_docs_pending: 1, bank_review_pending: 3,
+    })
+    const keys = all.map(x => x.key)
+    assert.equal(new Set(keys).size, keys.length, 'klucze kontroli muszą być unikalne')
+    const byKey = Object.fromEntries(all.map(x => [x.key, x]))
+    assert.equal(byKey.mt940_legacy_rows.severity, 'error')
+    assert.equal(byKey.payroll_missing.severity, 'error')
+    assert.equal(byKey.payroll_estimated.severity, 'info')
+    // sierpień ma wiersze starego importu → mówi o nim błąd; payroll_missing zgłasza tylko październik
+    assert.equal(byKey.payroll_missing.count, 1)
+    assert.match(byKey.payroll_missing.message, /za Październik 2026,/)
+    assert.ok(!byKey.payroll_missing.message.includes('Sierpień'))
+    assert.match(byKey.mt940_legacy_rows.message, /^7 przelewów z wyciągu za Sierpień 2026 /)
+    assert.match(byKey.payroll_estimated.message, /14 000 zł za Wrzesień 2026/)
+    // strony dostępne dla użytkownika z dostępem do płatności
+    const allowed = new Set(['/platnosci', '/koszty-spoza-ksef', '/rentownosc'])
+    for (const k of ['mt940_legacy_rows', 'payroll_missing', 'payroll_estimated']) assert.ok(allowed.has(String(byKey[k].link)), `${k}: ${byKey[k].link}`)
+    // kolejność wg wagi: błędy, ostrzeżenia, informacje
+    const order = { error: 0, warn: 1, info: 2 } as const
+    assert.deepEqual(all.map(x => order[x.severity]), [...all.map(x => order[x.severity])].sort((a, b) => a - b))
+  })
 })
 
 describe('countCostDocKsefOverlap / isPlnCost', () => {
@@ -236,7 +448,9 @@ describe('podział kosztów', () => {
     const b = costBreakdown(items, labels)
     assert.equal(b.length, 7)
     assert.deepEqual(b.map(x => x.key), ['salary_gross', 'hardware', 'zus_employer', 'rent', 'car_fuel', 'software', 'other'])
-    assert.equal(b[0].label, 'Wynagrodzenia brutto (UoP)')
+    // etykieta z taksonomii kosztów ręcznych (routes/manual-costs) — treść może się zmieniać, ma być czytelną nazwą
+    assert.equal(b[0].label, subcategoryLabels().salary_gross)
+    assert.match(b[0].label, /^Wynagrodzenia/)
     assert.equal(b[1].amount, 10000)
     assert.equal(b[1].label, 'Sprzęt krajowy (KNX/HDL/Control4…)')
     assert.equal(b[6].label, 'Pozostałe'); assert.equal(b[6].amount, 500)
@@ -251,6 +465,18 @@ describe('podział kosztów', () => {
     assert.equal(b[1].label, 'xyz')
   })
   test('pusto → pusta lista', () => { assert.deepEqual(costBreakdown([], {}), []) })
+  test('PIT-4 i szacunek ZUS / PIT-4 mają czytelne etykiety (szacunek jako osobna pozycja)', () => {
+    const labels = subcategoryLabels()
+    assert.equal(PAYROLL_ESTIMATE_KEY, 'payroll_estimate')
+    const b = costBreakdown([
+      { subcategory: 'salary_gross', amount: 30000 }, { subcategory: 'zus_employer', amount: 8000 },
+      { subcategory: PAYROLL_ESTIMATE_KEY, amount: 5000 }, { subcategory: 'salary_pit', amount: 3000 },
+    ], labels)
+    assert.deepEqual(b.map(x => x.key), ['salary_gross', 'zus_employer', 'payroll_estimate', 'salary_pit'])
+    assert.equal(b[2].label, 'ZUS i PIT-4 — szacunek')
+    assert.match(b[3].label, /PIT/)
+    assert.ok(!/^salary_pit$/.test(b[3].label), 'salary_pit musi mieć etykietę, nie klucz')
+  })
 })
 
 describe('podatki', () => {
@@ -339,6 +565,7 @@ describe('raport e-mail', () => {
     trend: [{ period: '2026-08', label: 'Sie 26', revenue: 350000, costs: 305600, ebitda: 50000 }],
     cost_breakdown: [{ key: 'salary_gross', label: 'Wynagrodzenia brutto (UoP)', amount: 30000, pct: 60 }, { key: 'other', label: 'Pozostałe', amount: 20000, pct: 40 }],
     taxes: computeTaxes({ vat_output: 80500, vat_input: 46000, cit_rate: 9, ytd: [l], cit_paid_ytd: 0, zus: 6000 }),
+    payroll: { salaries: 30000, pit4: 2400, zus: 6000, zus_estimate: 0, pit4_estimate: 0, total: 38400, estimated_months: [] },
     checks: [{ key: 'ksef_unallocated', severity: 'warn', message: '2 faktury kosztowe z KSeF bez kategorii — <test>', count: 2, link: '/finanse' }],
     cash: { balances: [{ account: 'PL1', currency: 'PLN', closing: 62000.56, date: '2026-08-31' }], total_pln: 62000.56, receivables: 4730, overdue_receivables: 2230, payables: 1100, overdue_payables: 700 },
     generated_at: '2026-09-15T08:00:00.000Z',
@@ -351,7 +578,7 @@ describe('raport e-mail', () => {
       assert.equal(subject, '🟢 Kondycja firmy — Sierpień 2026: zysk 38 400 zł')
       assert.match(html, /Smart Home Center/)
       assert.match(html, /zarobiliście 38 400 zł na czysto \(marża 11 %\)/)
-      for (const s of ['Przychód', 'Koszty', 'Zysk EBITDA', 'Gotówka', 'Porównanie', 'Na co idą pieniądze', 'Podatki', 'Do sprawdzenia', 'Raport wygenerowany automatycznie przez SHC Manager']) {
+      for (const s of ['Przychód', 'Koszty', 'Zysk EBITDA', 'Gotówka', 'Porównanie', 'Na co idą pieniądze', 'Koszty pracy', 'Podatki', 'Do sprawdzenia', 'Raport wygenerowany automatycznie przez SHC Manager']) {
         assert.ok(html.includes(s), `brak sekcji: ${s}`)
       }
       assert.match(html, /350 000 zł/)
@@ -362,6 +589,12 @@ describe('raport e-mail', () => {
       assert.match(html, /Wynagrodzenia brutto \(UoP\)/)
       assert.match(html, /60 %/)
       assert.match(html, /34 500 zł/)                 // VAT do zapłaty
+      // blok „Koszty pracy": między podziałem kosztów a podatkami, bez szacunku
+      assert.ok(html.indexOf('Na co idą pieniądze') < html.indexOf('Koszty pracy') && html.indexOf('Koszty pracy') < html.indexOf('Podatki'))
+      assert.match(html, /Razem koszty pracy/)
+      assert.match(html, /38 400 zł/)
+      assert.match(html, /2 400 zł/)                  // PIT-4
+      assert.ok(!html.includes('w tym szacunek'), 'bez szacunku nie ma wiersza „w tym szacunek"')
       assert.match(html, /https:\/\/test\.example\/finanse/)
       assert.ok(html.includes('&lt;test&gt;'), 'komunikat checka powinien być escapowany')
       assert.ok(!html.includes('<test>'))
@@ -369,6 +602,34 @@ describe('raport e-mail', () => {
     } finally {
       if (prevUrl === undefined) delete process.env.APP_URL; else process.env.APP_URL = prevUrl
     }
+  })
+  test('buildReportEmail: koszty pracy z szacunkiem — osobny wiersz i jedno zdanie wyjaśnienia', () => {
+    const h: HealthResponse = { ...health,
+      payroll: { salaries: 30000, pit4: 1200, zus: 4000, zus_estimate: 8000, pit4_estimate: 1200, total: 44400, estimated_months: ['2026-08'] } }
+    const { html } = buildReportEmail(h, 'Smart Home Center')
+    assert.match(html, /w tym szacunek/)
+    assert.match(html, /9 200 zł/)                    // szacunek razem
+    assert.match(html, /12 000 zł/)                   // ZUS = zapłacony + szacunek
+    assert.match(html, /44 400 zł/)                   // razem koszty pracy
+    assert.match(html, /ZUS i PIT-4 za Sierpień 2026 to na razie szacunek \(9 200 zł\)/)
+    assert.match(html, /zastąpią go rzeczywiste kwoty/)
+    // sekcja „Podatki": ZUS zapłacony (bez szacunku) z wyjaśnieniem, o ile „Koszty pracy" pokazują więcej —
+    // inaczej e-mail miałby dwie różne kwoty ZUS bez słowa komentarza
+    assert.ok(html.includes('ZUS zapłacony za ten okres'))
+    assert.ok(!html.includes('ZUS w tym okresie'))
+    assert.match(html, /bez szacunku — w „Kosztach pracy” ZUS jest o 8 000 zł wyższy \(przelewu jeszcze nie było\)/)
+    // bez szacunku: zwykły podpis, bez zdania o różnicy
+    const paid = buildReportEmail({ ...health, payroll: { salaries: 30000, pit4: 2400, zus: 12000, zus_estimate: 0, pit4_estimate: 0, total: 44400, estimated_months: [] } }, 'Smart Home Center').html
+    assert.ok(paid.includes('ZUS zapłacony za ten okres'))
+    assert.ok(!paid.includes('bez szacunku'))
+    assert.match(paid, /składki pracownika i pracodawcy, liczone za miesiąc, którego dotyczą/)
+  })
+  test('buildReportEmail: brak kosztów pracy → jedno zdanie zamiast pustej tabeli', () => {
+    const h: HealthResponse = { ...health, payroll: { salaries: 0, pit4: 0, zus: 0, zus_estimate: 0, pit4_estimate: 0, total: 0, estimated_months: [] } }
+    const { html } = buildReportEmail(h, '')
+    assert.match(html, /Koszty pracy/)
+    assert.match(html, /nie ma przelewów wynagrodzeń, PIT-4 ani ZUS/)
+    assert.ok(!html.includes('Razem koszty pracy'))
   })
   test('buildReportEmail: brak gotówki i strata', () => {
     const strata = lines({ revenue: 100000, cogs_purchases: 112300 })
@@ -402,5 +663,43 @@ describe('raport e-mail', () => {
     assert.equal(deltaText(100, 0), '—')
     assert.equal(deltaText(-50, -100), '▲ +50 %')
     assert.equal(esc('<a href="x">&'), '&lt;a href=&quot;x&quot;&gt;&amp;')
+  })
+})
+
+describe('kontrole po przeglądzie: inne miesiące starego importu, nazwa szacunku, brak wyciągu walutowego', () => {
+  const facts = {
+    months: ['2026-10'], today_month: '2026-11', mt940_months: ['2026-10'], provisional_months: [],
+    ksef_unallocated: 0, cost_docs_pending: 0, bank_review_pending: 0, accountant_months: ['2026-10'], accountant_diffs: [],
+    cogs_purchases: 0, pz_docs: 0, latest_ksef_created_at: null,
+  }
+  test('mt940_legacy_rows_other: stare wyciągi w miesiącach SPOZA okresu → ostrzeżenie z listą (nie znika po wgraniu jednego miesiąca)', () => {
+    const c = buildChecks({ ...facts, legacy_other_months: ['2026-03', '2026-01', '2026-02'] })
+    assert.deepEqual(c.map(x => [x.key, x.severity, x.count, x.link]), [['mt940_legacy_rows_other', 'warn', 3, '/platnosci']])
+    assert.match(c[0].message, /^Także wyciągi za Styczeń 2026, Luty 2026, Marzec 2026 są zapisane bez tytułów/)
+    assert.match(c[0].message, /CIT liczony od stycznia/)
+    // dane okresu są kompletne (to tylko ostrzeżenie), ale podpis nie mówi „bez uwag"
+    assert.equal(buildSubline(c), 'Dane kompletne. Do sprawdzenia: 1 uwaga.')
+    // dużo miesięcy → zakres zamiast długiej listy
+    const many = buildChecks({ ...facts, legacy_other_months: ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08'] })
+    assert.match(many[0].message, /^Także wyciągi za Styczeń 2026 – Sierpień 2026 są zapisane/)
+    // miesiąc zgłoszony już błędem okresu nie jest powtarzany
+    const both = buildChecks({ ...facts, legacy_bank_rows: 5, legacy_bank_months: ['2026-10'], legacy_other_months: ['2026-10', '2026-09'] })
+    assert.deepEqual(both.map(x => x.key), ['mt940_legacy_rows', 'mt940_legacy_rows_other'])
+    assert.ok(!both[1].message.includes('Październik'))
+  })
+  test('payroll_estimated nazywa to, co naprawdę jest szacowane', () => {
+    const msg = (z: number, p: number) => buildChecks({ ...facts, payroll_estimate: z + p, payroll_estimate_months: ['2026-10'], payroll_zus_estimate: z, payroll_pit4_estimate: p })[0].message
+    assert.match(msg(12000, 0), /^W kosztach jest szacunek ZUS: 12 000 zł za Październik 2026 — tego przelewu nie było/)
+    assert.match(msg(0, 2300), /^W kosztach jest szacunek PIT-4: 2 300 zł za Październik 2026 — tego przelewu nie było/)
+    assert.match(msg(12000, 2300), /^W kosztach jest szacunek ZUS i PIT-4: 14 300 zł za Październik 2026 — tych przelewów nie było/)
+    assert.equal(estimateNoun(), 'ZUS i PIT-4')
+  })
+  test('fx_account_missing: wymiana na walutę bez wyciągu rachunku walutowego → ostrzeżenie; z wyciągiem albo bez wymiany — nic', () => {
+    const c = buildChecks({ ...facts, fx_exchange_out: 254800, has_fx_account: false })
+    assert.deepEqual(c.map(x => [x.key, x.severity, x.link]), [['fx_account_missing', 'warn', '/platnosci']])
+    assert.match(c[0].message, /wyszło 254 800 zł w natychmiastowych transakcjach walutowych/)
+    assert.match(c[0].message, /wyciąg MT940 rachunku EUR \/ USD/)
+    assert.deepEqual(buildChecks({ ...facts, fx_exchange_out: 254800, has_fx_account: true }), [])
+    assert.deepEqual(buildChecks({ ...facts, fx_exchange_out: 0, has_fx_account: false }), [])
   })
 })

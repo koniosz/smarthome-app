@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { manualCostsApi } from '../api/client'
 import type { ManualCost } from '../types'
+import { subcategoryLabel, categoryLabel, bankKindLabel, AUTO_NOTE_PREFIX } from '../constants/costTaxonomy'
 
 function fmt(n: number) {
   return new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -16,10 +17,11 @@ const COST_CATS: Record<string, { label: string; icon: string }> = {
 
 const SUBCATS: Record<string, Record<string, string>> = {
   ga: {
-    salary_gross:    'Wynagrodzenia brutto (UoP)',
+    salary_gross:    'Wynagrodzenia (wypłaty na konta)',
     salary_b2b:      'Wynagrodzenia B2B / faktury',
     salary_civil:    'Wynagrodzenia UoD / UoZ',
-    zus_employer:    'ZUS pracodawcy',
+    salary_pit:      'Zaliczki PIT od wynagrodzeń (PIT-4)',
+    zus_employer:    'ZUS (składki pracownika i pracodawcy)',
     rent:            'Czynsz biuro / magazyn',
     utilities:       'Media (prąd, internet)',
     software:        'Oprogramowanie / licencje',
@@ -35,6 +37,7 @@ const SUBCATS: Record<string, Record<string, string>> = {
     interest:    'Odsetki',
     leasing:     'Leasing',
     fx:          'Różnice kursowe',
+    internal_transfer: 'Przelew własny / rachunek VAT (nie koszt)',
   },
   cogs: {
     hardware:              'Sprzęt krajowy',
@@ -53,6 +56,31 @@ const SUBCATS: Record<string, Record<string, string>> = {
     travel:      'Podróże służbowe',
     tools:       'Narzędzia',
   },
+}
+
+// Etykieta podkategorii: lokalna tabela (z ikonami), a dla kluczy spoza niej (np. „other”, „marketing” z importu
+// MT940 / skrzynki kosztów) — wspólna taksonomia; nigdy surowy klucz, o ile gdziekolwiek ma etykietę.
+function subLabel(cat: string, sub: string): string {
+  return SUBCATS[cat]?.[sub] ?? subcategoryLabel(sub)
+}
+
+// Notatki kosztu pod opisem: część dopisana przez rozpoznanie przelewu („rozpoznano: ZUS — …”) wyróżniona,
+// reszta (kurs NBP, „płatność za fakturę KSeF”, decyzja ręczna, notatka własna) na szaro.
+function CostNotes({ cost }: { cost: ManualCost }) {
+  const parts = String(cost.notes ?? '').split(' · ').map(p => p.trim()).filter(Boolean)
+  const auto = parts.find(p => p.toLowerCase().startsWith(AUTO_NOTE_PREFIX))
+  const rest = parts.filter(p => p !== auto)
+  // starszy / naprawiony wiersz może mieć rodzaj bez notatki — pokaż chociaż sam rodzaj
+  const kind = bankKindLabel(cost.auto_kind)
+  const autoText = auto ?? (kind ? `${AUTO_NOTE_PREFIX}${kind}` : '')
+  if (!autoText && rest.length === 0) return null
+  return (
+    <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5 leading-snug break-words line-clamp-2" title={cost.notes}>
+      {autoText && <span className="text-blue-600 dark:text-blue-400">{autoText}</span>}
+      {autoText && rest.length > 0 && ' · '}
+      {rest.join(' · ')}
+    </div>
+  )
 }
 
 const BU_LABELS: Record<string, string> = {
@@ -170,6 +198,8 @@ function CostForm({ initial, onSave, onCancel, saving }: {
             setCostCategory(e.target.value)
             setSubcategory(Object.keys(SUBCATS[e.target.value] ?? {})[0] ?? '')
           }} className={`w-full ${selectCls}`}>
+            {/* kategoria spoza listy (np. „sales” z importu) — pokaż ją, zamiast mylnie wyświetlać pierwszą pozycję */}
+            {!!cost_category && !(cost_category in COST_CATS) && <option value={cost_category}>{categoryLabel(cost_category)}</option>}
             {Object.entries(COST_CATS).map(([k, v]) => (
               <option key={k} value={k}>{v.icon} {v.label}</option>
             ))}
@@ -178,6 +208,8 @@ function CostForm({ initial, onSave, onCancel, saving }: {
         <div>
           <label className="block text-xs text-gray-500 mb-0.5">Podkategoria</label>
           <select value={subcategory} onChange={e => setSubcategory(e.target.value)} className={`w-full ${selectCls}`}>
+            {/* podkategoria spoza listy (np. „Inne administracyjne” z importu MT940) — jw. */}
+            {!!subcategory && !(subcategory in subs) && <option value={subcategory}>{subcategoryLabel(subcategory)}</option>}
             {Object.entries(subs).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
             ))}
@@ -281,7 +313,17 @@ export default function ManualCostsPage() {
     try {
       const text = await file.text()
       const result = await manualCostsApi.importMt940(text)
-      alert(result.message)
+      // Pod komunikatem serwera jedna linia: co rozpoznano (rodzaj × liczba) i ile przelewów czeka na decyzję.
+      // Oba pola są opcjonalne — starszy backend ich nie zwraca i wtedy zostaje sam komunikat.
+      const recognized = (result.recognized ?? [])
+        .filter(r => r && r.kind !== 'unknown' && r.count > 0)
+        .map(r => `${bankKindLabel(r.kind, r.label) || r.kind} × ${r.count}`)
+      const toReview = result.to_review ?? 0
+      const extra = [
+        recognized.length > 0 ? `Rozpoznano: ${recognized.join(', ')}` : '',
+        toReview > 0 ? `Przelewy czekające na decyzję: ${toReview} (Koszty spoza KSeF › Reguły bankowe)` : '',
+      ].filter(Boolean).join(' · ')
+      alert(extra ? `${result.message}\n${extra}` : result.message)
       load()
     } catch (err: any) {
       alert('Błąd importu: ' + (err.response?.data?.error ?? err.message))
@@ -431,14 +473,16 @@ export default function ManualCostsPage() {
                           {cost.source === 'mt940' ? '🏦 MT940' : '✏️ ręczny'}
                         </span>
                       </div>
-                      <div className="text-sm text-gray-800 dark:text-gray-100 mt-0.5">{cost.description}</div>
+                      {/* operacje bez tytułu (opłaty bankowe, przewalutowania) mają pusty opis — pokaż rozpoznany rodzaj */}
+                      <div className="text-sm text-gray-800 dark:text-gray-100 mt-0.5">{cost.description || bankKindLabel(cost.auto_kind) || '(bez opisu)'}</div>
                       {cost.reference && (
                         <div className="text-xs text-gray-400 mt-0.5 font-mono">{cost.reference}</div>
                       )}
+                      <CostNotes cost={cost} />
                     </td>
                     <td className="py-2.5 px-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${CAT_COLORS[cost.cost_category] ?? ''}`}>
-                        {COST_CATS[cost.cost_category]?.icon} {SUBCATS[cost.cost_category]?.[cost.subcategory] ?? cost.subcategory}
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${CAT_COLORS[cost.cost_category] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'}`}>
+                        {COST_CATS[cost.cost_category]?.icon} {subLabel(cost.cost_category, cost.subcategory)}
                       </span>
                       <div className="text-[10px] text-gray-400 mt-0.5">{BU_LABELS[cost.business_unit]}</div>
                     </td>

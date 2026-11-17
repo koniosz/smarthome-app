@@ -28,6 +28,7 @@ import { requirePayments } from './payables'
 import { extractCostDocument, subcategoryToCategory, EXTRACT_SUBCATEGORIES, normalizeDate, toNumber, type Extracted } from '../services/cost-extract'
 import { getNbpRate } from '../services/nbp-rates'
 import { findDuplicate, nipDigits, type DupContext, type DuplicateHit } from '../services/cost-duplicates'
+import { KIND_TARGETS, type BankKind } from '../services/bank-classify'
 
 const router = Router()
 
@@ -103,6 +104,25 @@ export function stripExcludedByDocument(notes: string | null | undefined, docId:
   return String(notes ?? '')
     .replace(new RegExp(`\\s*(?:·\\s*)?${EXCLUDED_BY_DOC} ${escapeRe(docId)}(?: \\(wcześniej: [a-z]+\\))?`, 'g'), '')
     .replace(/^\s*·\s*/, '')
+    .trim()
+}
+/**
+ * pnl_mode, do którego wraca przelew BEZ reguły bankowej po zniknięciu dokumentu, który go wykluczał:
+ * jeśli przed wykluczeniem był liczony (`include`) — znów `include`; inaczej to, co klasyfikator nadaje
+ * temu rodzajowi przelewu (np. dostawca zagraniczny bez KSeF → `include`), a bez rozpoznania — `auto`.
+ * Bez tego koszt znikałby z RZiS dwa razy: dokument usunięty, a przelew zostawał poza wynikiem.
+ */
+export function restoredPnlMode(prev: string | null | undefined, autoKind: string | null | undefined): string {
+  if (prev === 'include') return 'include'
+  const kind = String(autoKind ?? '')
+  return Object.prototype.hasOwnProperty.call(KIND_TARGETS, kind) ? KIND_TARGETS[kind as BankKind].pnl_mode : 'auto'
+}
+/** Usuwa z notes ślad strażnika importu „duplikat dokumentu <id> —" (zostawał po zdjęciu „wykluczony przez dokument <id>"). */
+export function stripDocumentDuplicateNote(notes: string | null | undefined, docId: string): string {
+  return String(notes ?? '')
+    .replace(new RegExp(`\\s*(?:·\\s*)?duplikat dokumentu ${escapeRe(docId)}\\s*—?`, 'g'), '')
+    .replace(/^\s*·\s*/, '')
+    .replace(/\s*·\s*$/, '')
     .trim()
 }
 export function appendNote(notes: string | null | undefined, add: string): string {
@@ -613,18 +633,18 @@ class ApproveConflict extends Error {}
  * użytkownika („decyzja ręczna” w notes) nie jest nadpisywana. Znacznik z notes jest usuwany.
  */
 async function restoreMt940AfterDocument(mtId: string, docId: string): Promise<void> {
-  const cost = await prisma.manualCost.findUnique({ where: { id: mtId }, select: { source: true, pnl_mode: true, bank_rule_id: true, notes: true } })
+  const cost = await prisma.manualCost.findUnique({ where: { id: mtId }, select: { source: true, pnl_mode: true, bank_rule_id: true, notes: true, auto_kind: true } })
   if (!cost || cost.source !== 'mt940') return
   const prev = parseExcludedByDocument(cost.notes, docId)
   if (prev === null) return // to nie ten dokument wykluczył przelew — nie ruszamy
-  const notes = stripExcludedByDocument(cost.notes, docId)
+  const notes = stripDocumentDuplicateNote(stripExcludedByDocument(cost.notes, docId), docId)
   const data: { notes: string; pnl_mode?: string } = { notes }
   if (cost.pnl_mode === 'exclude' && !/decyzja ręczna/i.test(notes)) {
     if (prev === 'exclude') data.pnl_mode = 'exclude'
     else if (cost.bank_rule_id) {
       const rule = await prisma.bankRule.findUnique({ where: { id: cost.bank_rule_id }, select: { pnl_mode: true } })
       data.pnl_mode = rule?.pnl_mode ?? 'auto'
-    } else data.pnl_mode = 'auto'
+    } else data.pnl_mode = restoredPnlMode(prev, cost.auto_kind) // bez reguły: wynik klasyfikatora, nie ślepe „auto"
   }
   await prisma.manualCost.update({ where: { id: mtId }, data })
 }

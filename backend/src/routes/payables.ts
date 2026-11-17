@@ -2,16 +2,26 @@
  * Panel Płatności (zobowiązania) — faktury kosztowe z KSeF do opłacenia + import MT940.
  * Dostęp: admin lub użytkownik z flagą can_view_payments (księgowy).
  *
- * Przepływ MT940: upload pliku → parsowanie → deduplikacja → auto-dopasowanie
- * obciążeń do nieopłaconych faktur (pewność ≥ AUTO_MATCH_THRESHOLD ⇒ faktura
- * oznaczona jako opłacona). Niedopasowane obciążenia lądują na liście
- * „do sprawdzenia" z kandydatami do ręcznego przypisania.
+ * Przepływ MT940: upload pliku → parsowanie → plan importu (pomiń już zaimportowane / uzupełnij
+ * na miejscu wiersze starego importu / utwórz nowe) → auto-dopasowanie obciążeń do nieopłaconych
+ * faktur (pewność ≥ AUTO_MATCH_THRESHOLD ⇒ faktura oznaczona jako opłacona). Niedopasowane obciążenia
+ * lądują na liście „do sprawdzenia" z kandydatami do ręcznego przypisania.
+ *
+ * Higiena listy „do sprawdzenia": przelew, który z natury NIE może być zapłatą za fakturę zakupową
+ * (ZUS, urząd skarbowy, wynagrodzenie, opłata bankowa, przelew własny / rachunek VAT — klasyfikator
+ * services/bank-classify, `not_invoice_payment`), jest od razu odrzucany i nigdy nie jest
+ * auto-dopasowywany do faktury.
  */
 import { Router, Request, Response, NextFunction } from 'express'
 import multer from 'multer'
 import { v4 as uuidv4 } from 'uuid'
 import { parseMT940Statements } from '../utils/mt940Parser'
-import { saveBankBalances, upsertMt940Costs } from '../services/mt940-costs'
+import {
+  saveBankBalances, upsertMt940Costs, loadClassifyContext, createImportPlanner, planImport, isLegacyRow, bankTxDescription,
+  accountInOtherCompanyMessage,
+  type ImportPlannerConfig, type ImportPlanner, type ImportDecision, type Mt940Recognized,
+} from '../services/mt940-costs'
+import { classifyBankTransfer } from '../services/bank-classify'
 import db, { prisma } from '../db'
 import { assignInvoiceToProject, AssignError } from './ksef'
 import { getInvoiceXml, getInvoiceDocument, sendKsefXmlError, NO_KSEF_NUMBER_MSG } from '../services/ksef-xml-store'
@@ -86,27 +96,72 @@ function alnum(s: string): string {
   return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-// Pole :86: z mBanku ma subpola ~NN — wyciągnij czytelny tytuł (~20–25),
-// kontrahenta (~32–33) i IBAN (~38). Bez subpól zwraca dane bez zmian.
+// ── Surowe pole :86: w starych wierszach ──────────────────────────────────────
+// Parser (utils/mt940Parser) sam rozkłada subpola ~NN i zwraca CZYSTY tytuł, kontrahenta i IBAN — dla jego
+// wyniku ta funkcja nic nie zmienia. Zostaje dla wierszy zapisanych SUROWO przez dawny import
+// (opis zaczyna się od „[kod]~NN…"): wyciąga tytuł (~20–28, ~29 gdy to nie rachunek), kontrahenta (~32–33)
+// i IBAN (~38). Kawałki sklejane jak w parserze: kawałek o długości dokładnie 27 znaków łączy się
+// BEZPOŚREDNIO z następnym (bank tnie tekst co 27 znaków, także w środku słowa), krótszy dostaje spację.
+const RAW_SUBFIELDS_RE = /^\s*(?:[A-Z0-9]{3}\s?)?~\d{2}/
+const SUBFIELD_CHUNK_LEN = 27
+
+function joinSubfieldChunks(chunks: string[]): string {
+  let out = ''
+  for (const raw of chunks) {
+    // stary parser przycinał linie i sklejał je spacją — jedna spacja na końcu kawałka to ślad tego sklejenia
+    const c = raw.endsWith(' ') ? raw.slice(0, -1) : raw
+    out += c.length === SUBFIELD_CHUNK_LEN ? c : `${c} `
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
 export function cleanMt940Fields(tx: { description: string; counterparty: string; counterparty_iban: string }) {
   const d = tx.description || ''
-  if (!d.includes('~')) return { description: d, counterparty: tx.counterparty, counterparty_iban: tx.counterparty_iban }
-  const fields: Record<string, string> = {}
-  for (const part of d.split('~')) {
-    const code = part.slice(0, 2)
-    if (/^\d{2}$/.test(code)) fields[code] = ((fields[code] || '') + ' ' + part.slice(2)).trim()
+  if (!RAW_SUBFIELDS_RE.test(d)) return { description: d, counterparty: tx.counterparty, counterparty_iban: tx.counterparty_iban }
+
+  const body = d.slice(d.indexOf('~'))
+  const title: string[] = []
+  const name: string[] = []
+  let iban38 = ''
+  let account = ''
+  const re = /~(\d{2})/g
+  const marks: Array<{ code: number; start: number; end: number }> = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(body)) !== null) marks.push({ code: parseInt(m[1], 10), start: m.index, end: m.index + m[0].length })
+  marks.forEach((mk, i) => {
+    const text = body.slice(mk.end, i + 1 < marks.length ? marks[i + 1].start : body.length)
+    const compact = text.replace(/\s+/g, '').toUpperCase()
+    if (mk.code >= 20 && mk.code <= 28) title.push(text)
+    else if (mk.code === 29) {
+      // rachunek kontrahenta (26 cyfr albo pełny IBAN); w innym razie — kolejny kawałek tytułu
+      if (/^\d{26}$/.test(compact) || /^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(compact)) { if (!account) account = compact }
+      else title.push(text)
+    } else if (mk.code === 32 || mk.code === 33) name.push(text)
+    else if (mk.code === 38 && !iban38) iban38 = compact
+  })
+
+  // IBAN: ~38 dłuższe niż sam prefiks kraju („PLPL…"/„PLDE…" → bez zdublowanego „PL"), potem rachunek z ~29
+  let iban = ''
+  if (iban38.length > 4) {
+    const doubled = /^[A-Z]{2}([A-Z]{2}\d{2}[A-Z0-9]{10,30})$/.exec(iban38)
+    iban = doubled ? doubled[1] : (/^\d{26}$/.test(iban38) ? `PL${iban38}` : iban38)
+  } else if (account) {
+    iban = /^\d{26}$/.test(account) ? `PL${account}` : account
   }
-  const title = ['20', '21', '22', '23', '24', '25'].map(c => fields[c] || '').join(' ').replace(/\s+/g, ' ').trim()
-  const cp = ['32', '33'].map(c => fields[c] || '').join(' ').replace(/\s+/g, ' ').trim()
-  const iban = (fields['38'] || '').replace(/\s+/g, '')
+
+  const cleanTitle = joinSubfieldChunks(title)
+  const cp = joinSubfieldChunks(name)
+  // zapisany kontrahent surowego wiersza to początek pola :86: (kod operacji / znaczniki) — nie nazwa
+  const storedCp = String(tx.counterparty ?? '')
+  const storedCpIsRaw = storedCp.includes('~') || /^[A-Z0-9]{3}$/.test(storedCp.trim())
   return {
-    description: title || d,
-    counterparty: cp || tx.counterparty,
+    description: cleanTitle || d,
+    counterparty: cp || (storedCpIsRaw ? '' : storedCp),
     counterparty_iban: iban || tx.counterparty_iban,
   }
 }
 
-export function scoreMatch(tx: any, inv: any): { confidence: number; reasons: string[] } {
+export function scoreMatch(tx: any, inv: any): { confidence: number; reasons: string[]; score: number } {
   let confidence = 0
   const reasons: string[] = []
   const txAbs = Math.abs(tx.amount)
@@ -149,29 +204,57 @@ export function scoreMatch(tx: any, inv: any): { confidence: number; reasons: st
     confidence += 0.05; reasons.push('data')
   }
 
-  return { confidence: Math.min(1, confidence), reasons }
+  // `confidence` (0–1) trafia do bazy i na ekran; `score` to suma BEZ obcięcia — do rankingu kandydatów.
+  // Odkąd wyciąg niesie tytuł i kontrahenta, kilka faktur tego samego dostawcy dobija do 1,0 (NIP + nazwa +
+  // kwota w tolerancji), więc obcięta pewność przestaje je rozróżniać — numer faktury w tytule musi wygrać.
+  return { confidence: Math.min(1, confidence), reasons, score: confidence }
 }
 
 function bestMatches(tx: any, invoices: any[], limit: number) {
+  const exact = (m: { reasons: string[] }) => Number(m.reasons.includes('kwota'))
   return invoices
     .map(inv => ({ invoice: inv, ...scoreMatch(tx, inv) }))
     .filter(m => m.confidence >= CANDIDATE_THRESHOLD)
-    .sort((a, b) => b.confidence - a.confidence)
+    // ranking po sumie nieobciętej; remis → dokładna kwota przed kwotą ±prowizja (wynik nie zależy od kolejności faktur)
+    .sort((a, b) => b.score - a.score || exact(b) - exact(a))
     .slice(0, limit)
+}
+
+/**
+ * Faktury, które dany przelew W OGÓLE mógł opłacić: wystawione nie później niż PREPAYMENT_GRACE_DAYS po
+ * przelewie (przedpłata na podstawie zamówienia / proformy bywa kilka dni przed fakturą). Bez tej granicy
+ * historyczny przelew — np. uzupełniany przy ponownym wgraniu starego wyciągu — „opłaciłby" dzisiejszą,
+ * jeszcze niezapłaconą fakturę tego samego dostawcy na tę samą kwotę (abonament). Opóźnienie płatności
+ * (przelew długo PO fakturze) nadal niczego nie wyklucza. Faktura bez daty zostaje kandydatem.
+ */
+export const PREPAYMENT_GRACE_DAYS = 14
+export function payableCandidates<T extends { invoice_date?: string | null }>(
+  tx: { transaction_date?: string | null; date?: string | null },
+  invoices: T[],
+): T[] {
+  const txDate = String(tx.transaction_date ?? tx.date ?? '').slice(0, 10)
+  const t = Date.parse(txDate)
+  if (!Number.isFinite(t)) return invoices
+  const limit = new Date(t + PREPAYMENT_GRACE_DAYS * 86_400_000).toISOString().slice(0, 10)
+  return invoices.filter(i => {
+    const d = String(i.invoice_date ?? '').slice(0, 10)
+    return !/^\d{4}-\d{2}-\d{2}$/.test(d) || d <= limit
+  })
 }
 
 // Wybór faktury do automatycznego oznaczenia — wspólne dla importu i ponownego
 // dopasowania. Zwraca null przy braku kwalifikującego dopasowania lub realnej
-// niejednoznaczności (dwie faktury kwalifikują się jednocześnie; dokładna kwota
-// wygrywa z kwotą ±prowizja).
-function pickAutoMatch(tx: any, candidates: any[]): { invoice: any; confidence: number; reasons: string[] } | null {
+// niejednoznaczności (dwie faktury kwalifikują się jednocześnie). Rozstrzygają: wyraźna przewaga sumy
+// punktów (np. numer faktury w tytule przelewu — także przy dwóch fakturach na tę samą kwotę) albo
+// dokładna kwota przeciw kwocie ±prowizja.
+export function pickAutoMatch(tx: any, candidates: any[]): { invoice: any; confidence: number; reasons: string[] } | null {
   const [best, second] = bestMatches(tx, candidates, 2)
   if (!best || best.confidence < AUTO_MATCH_THRESHOLD) return null
   const bestExact = best.reasons.includes('kwota')
   const secondExact = !!second && second.reasons.includes('kwota')
   const ambiguous = !!second
     && second.confidence >= AUTO_MATCH_THRESHOLD
-    && best.confidence - second.confidence < 0.1
+    && best.score - second.score < 0.1
     && !(bestExact && !secondExact)
   return ambiguous ? null : best
 }
@@ -309,6 +392,130 @@ router.post('/invoices/:id/mark-unpaid', async (req: Request, res: Response) => 
   }
 })
 
+// ── Import MT940: klucz deduplikacji, plan importu, higiena listy „do sprawdzenia" (czyste funkcje) ──
+
+/**
+ * Klucz deduplikacji transakcji bankowej: data | kwota ze znakiem | referencja | początek opisu
+ * (referencja i opis porównywane po znakach alfanumerycznych — odstępy i polskie znaki nie mają znaczenia).
+ */
+export function bankTxKey(t: { date?: string; transaction_date?: string; amount: number; description?: string | null; reference?: string | null }): string {
+  return `${t.date ?? t.transaction_date}|${t.amount.toFixed(2)}|${alnum(t.reference || '')}|${alnum(t.description || '').slice(0, 80)}`
+}
+
+export interface BankTxPlanRow {
+  transaction_date: string
+  amount: number
+  description: string
+  counterparty: string
+  counterparty_iban: string
+  reference: string
+}
+
+export interface BankTxPlanTx {
+  date: string
+  amount: number                       // ze znakiem (obciążenie ujemne)
+  description: string
+  reference: string
+  op_code?: string
+  legacy_description?: string
+}
+
+/**
+ * Plan importu dla BankTransaction (te same zasady co dla kosztów — services/mt940-costs):
+ *  - istniejące wiersze kluczowane po opisie ZNORMALIZOWANYM (cleanMt940Fields nic nie zmienia w czystych
+ *    opisach, a surowe wiersze dawnego importu /api/bank/import-mt940 sprowadza do tej samej postaci),
+ *  - transakcja ma dwa klucze: z referencją i bez — ten drugi trafia w wiersz zapisany BEZ referencji
+ *    (stary parser brał referencję tylko po „//"),
+ *  - wiersz starego importu (opis = sam kod operacji, brak referencji) parujemy po dacie i kwocie ZE ZNAKIEM.
+ * Po naprawie wiersz ma opis i referencję z pliku, więc ponowne wgranie tego samego wyciągu daje same duplikaty.
+ */
+export const BANK_TX_PLAN_CONFIG: ImportPlannerConfig<BankTxPlanRow, BankTxPlanTx> = {
+  existingKeys: row => [bankTxKey({ ...row, ...cleanMt940Fields(row) })],
+  txKeys: tx => {
+    const keys = [bankTxKey(tx)]
+    const noRef = bankTxKey({ ...tx, reference: '' })
+    if (!keys.includes(noRef)) keys.push(noRef)
+    return keys
+  },
+  existingDate: row => row.transaction_date,
+  existingAmounts: row => [Number(row.amount) || 0],
+  txDate: tx => tx.date,
+  txAmount: tx => tx.amount,
+  isLegacy: (row, tx) => isLegacyRow(row, tx),
+}
+
+export function createBankTxPlanner<E extends BankTxPlanRow>(existing: E[]): ImportPlanner<BankTxPlanTx> {
+  return createImportPlanner<BankTxPlanRow, BankTxPlanTx>(existing, BANK_TX_PLAN_CONFIG)
+}
+
+export function planBankTxImport(txs: BankTxPlanTx[], existing: BankTxPlanRow[]): ImportDecision[] {
+  return planImport(txs, existing, BANK_TX_PLAN_CONFIG)
+}
+
+/**
+ * Co zrobić z NOWĄ transakcją: `credit` — uznanie (nie dotyczy płacenia faktur), `dismiss` — obciążenie,
+ * które nie może być zapłatą za fakturę (od razu odrzucone, bez auto-dopasowania), `review` — storno
+ * (do ręcznej decyzji), `match` — próba auto-dopasowania do nieopłaconej faktury.
+ */
+export type NewTxDisposition = 'credit' | 'dismiss' | 'review' | 'match'
+export function newTxDisposition(tx: { amount: number; is_reversal?: boolean }, notInvoicePayment: boolean): NewTxDisposition {
+  if (!(tx.amount < 0)) return 'credit'
+  if (notInvoicePayment) return 'dismiss'
+  return tx.is_reversal ? 'review' : 'match'
+}
+
+/**
+ * Co zrobić z ISTNIEJĄCYM wierszem (naprawianym albo już zaimportowanym) po poznaniu tytułu i kontrahenta:
+ * `keep` — nie ruszać statusu (uznanie, wiersz dopasowany / przypisany / odrzucony), `dismiss` — nie może być
+ * zapłatą za fakturę, a czeka (pending) albo jest spoza panelu (none), `review` — storno czekające na
+ * decyzję, `match` — obciążenie czekające na sprawdzenie: próba auto-dopasowania.
+ * Dopasowania (matched_invoice_id) NIGDY nie zmieniamy.
+ */
+export type ExistingTxDisposition = 'keep' | 'dismiss' | 'review' | 'match'
+export function existingTxDisposition(
+  row: { matched_invoice_id?: string | null; review_status?: string | null },
+  tx: { amount: number; is_reversal?: boolean },
+  notInvoicePayment: boolean,
+): ExistingTxDisposition {
+  if (!(tx.amount < 0) || row.matched_invoice_id) return 'keep'
+  const status = row.review_status || 'none'
+  if (notInvoicePayment) return status === 'pending' || status === 'none' ? 'dismiss' : 'keep'
+  if (status !== 'pending') return 'keep'
+  return tx.is_reversal ? 'review' : 'match'
+}
+
+/**
+ * Zdublowane wiersze starego importu do odłożenia po imporcie pliku (czysta funkcja): „goły" wiersz (opis = sam
+ * kod operacji, bez referencji i bez op_code), NIEnaprawiony w tym przebiegu, niedopasowany do faktury i jeszcze
+ * nierozstrzygnięty ręcznie (pending / none / dismissed), którego dzień + kwota + kod operacji WYSTĘPUJĄ w pliku.
+ * Plik miał więc taki przelew, ale każdy jego egzemplarz dostał już inny wiersz — ten jest nadwyżką.
+ */
+export function legacyOrphanIds(
+  existing: Array<{ id: string; transaction_date: string; amount: number; description: string; reference?: string | null; op_code?: string | null; matched_invoice_id?: string | null; review_status?: string | null }>,
+  parsed: Array<{ date: string; amount: number; op_code?: string; legacy_description?: string }>,
+  repairedIds: Set<string>,
+): string[] {
+  const keyOf = (date: string, amount: number, code: string) => `${date}|${Number(amount).toFixed(2)}|${code.trim().toUpperCase()}`
+  const fileKeys = new Set<string>()
+  for (const t of parsed) {
+    for (const code of [t.op_code, t.legacy_description]) {
+      const c = String(code ?? '').trim()
+      if (c && c.length <= 3) fileKeys.add(keyOf(t.date, t.amount, c))
+    }
+  }
+  if (!fileKeys.size) return []
+  const out: string[] = []
+  for (const row of existing) {
+    if (repairedIds.has(row.id) || row.op_code != null || row.matched_invoice_id) continue
+    const d = String(row.description ?? '').trim()
+    if (!/^[A-Za-z0-9]{1,3}$/.test(d) || String(row.reference ?? '').trim()) continue
+    const status = row.review_status || 'none'
+    if (status !== 'pending' && status !== 'none' && status !== 'dismissed') continue
+    if (fileKeys.has(keyOf(row.transaction_date, row.amount, d))) out.push(row.id)
+  }
+  return out
+}
+
 // ── POST /api/payables/import-mt940 — upload + auto-dopasowanie w jednym kroku ─
 router.post('/import-mt940', upload.single('file'), async (req: Request, res: Response) => {
   try {
@@ -320,62 +527,143 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
     const { transactions: parsed, balances } = parseMT940Statements(content)
     if (!parsed.length) { res.status(400).json({ error: 'Nie znaleziono transakcji w pliku. Sprawdź, czy to poprawny wyciąg MT940.' }); return }
 
-    // Deduplikacja względem już zaimportowanych (data + kwota + referencja + opis).
-    // Klucze liczone na OPISACH ZNORMALIZOWANYCH (cleanMt940Fields jest no-opem dla czystych opisów),
-    // żeby złapać też wiersze zapisane surowo przez starszy import /api/bank/import-mt940.
-    // Licznik wystąpień zamiast Set: dwa identyczne autentyczne przelewy tego samego dnia
-    // nie mogą się nawzajem "deduplikować".
+    // Wyciąg rachunku prowadzonego w innej firmie → odmowa, zanim cokolwiek zapiszemy (każda firma ma swoje księgi)
+    const otherCompany = await accountInOtherCompanyMessage([...parsed.map(t => t.account), ...balances.map(b => b.account)])
+    if (otherCompany) { res.status(409).json({ error: otherCompany, code: 'account_other_company' }); return }
+
+    // Plan importu względem już zaimportowanych: pomiń (ten sam klucz: data + kwota + referencja + opis),
+    // napraw na miejscu (wiersz starego importu: opis = sam kod operacji) albo utwórz. Każdy istniejący
+    // wiersz jest „zużywany" raz — dwa identyczne autentyczne przelewy tego samego dnia nie mogą się
+    // nawzajem "deduplikować".
     const existing = await db.bank_transactions.list({ source: 'mt940' })
-    const keyOf = (t: { date?: string; transaction_date?: string; amount: number; description?: string; reference?: string }) =>
-      `${t.date ?? t.transaction_date}|${t.amount.toFixed(2)}|${alnum(t.reference || '')}|${alnum(t.description || '').slice(0, 80)}`
-    const existingCount = new Map<string, number>()
-    for (const t of existing) {
-      const k = keyOf({ ...t, ...cleanMt940Fields(t) })
-      existingCount.set(k, (existingCount.get(k) ?? 0) + 1)
-    }
+    const planner = createBankTxPlanner(existing)
+
+    // Kontekst klasyfikatora: rachunki własne (zapisane salda + rachunki wyciągów z tego pliku) i pracownicy
+    const context = await loadClassifyContext([...parsed.map(t => t.account), ...balances.map(b => b.account)])
 
     const unpaidInvoices = (await db.ksef_invoices.listAll()).filter((i: any) => isIncoming(i) && isUnpaid(i))
     const paidNow = new Set<string>() // faktury opłacone w trakcie tego importu
 
-    let imported = 0, duplicates = 0, autoMatched = 0, toReview = 0, credits = 0
+    let imported = 0, duplicates = 0, autoMatched = 0, toReview = 0, credits = 0, repaired = 0, autoDismissed = 0
     const matchedDetails: any[] = []
+    const repairedIds = new Set<string>() // wiersze starego importu uzupełnione w tym przebiegu
+
+    // Auto-dopasowanie obciążenia do nieopłaconej faktury (wspólne dla nowych i naprawianych wierszy)
+    const autoMatch = async (tx: any, txId: string): Promise<{ invoiceId: string; confidence: number } | null> => {
+      const candidates = payableCandidates(tx, unpaidInvoices.filter((i: any) => !paidNow.has(i.id)))
+      const best = pickAutoMatch(tx, candidates)
+      if (!best) return null
+      await markInvoicePaid(best.invoice.id, { source: 'mt940', amount: Math.abs(tx.amount), paidAt: tx.date, txId })
+      paidNow.add(best.invoice.id)
+      matchedDetails.push({
+        invoice_id: best.invoice.id, invoice_number: best.invoice.invoice_number,
+        seller_name: best.invoice.seller_name, amount: Math.abs(tx.amount),
+        confidence: best.confidence, reasons: best.reasons,
+      })
+      autoMatched++
+      return { invoiceId: best.invoice.id, confidence: best.confidence }
+    }
 
     for (const rawTx of parsed) {
-      // transaction_date jawnie: scoreMatch i insert czytają to pole, a parser zwraca `date`
-      const tx = { ...rawTx, ...cleanMt940Fields(rawTx), transaction_date: rawTx.date }
-      const key = keyOf(tx)
-      const remaining = existingCount.get(key) ?? 0
-      if (remaining > 0) { existingCount.set(key, remaining - 1); duplicates++; continue }
+      // transaction_date jawnie: scoreMatch i insert czytają to pole, a parser zwraca `date`.
+      // Operacja bez tytułu (opłata bankowa, transakcja natychmiastowa): opisem jest nazwa operacji z wyciągu —
+      // ten sam opis trafia do planu importu (klucz deduplikacji) i do bazy, więc ponowne wgranie go rozpozna.
+      const tx = { ...rawTx, description: bankTxDescription(rawTx), transaction_date: rawTx.date }
+      const decision = planner.decide(tx)
 
+      // Każde obciążenie przechodzi przez klasyfikator: ZUS / US / pensja / opłata / przelew własny
+      // nigdy nie jest zapłatą za fakturę zakupową
+      const cls = tx.amount < 0 ? classifyBankTransfer({
+        date: tx.date, amount: tx.amount, description: rawTx.description, counterparty: tx.counterparty,
+        counterparty_iban: tx.counterparty_iban, op_code: tx.op_code, op_label: tx.op_label, currency: tx.currency,
+      }, context) : null
+      const notInvoicePayment = !!cls?.not_invoice_payment
+      // „Pensja" to jedyny rodzaj rozpoznawany po samym TYTULE przelewu (ZUS, US, opłaty i przelewy własne — po
+      // rachunku / kodzie operacji). Podwykonawca-osoba fizyczna też pisze „wynagrodzenie", a wystawia fakturę
+      // w KSeF — dlatego przed odrzuceniem takiego przelewu próbujemy go dopasować do nieopłaconej faktury.
+      const tryInvoiceFirst = cls?.kind === 'salary' && !tx.is_reversal
+
+      if (decision.action === 'skip') {
+        duplicates++
+        // Wiersz już zaimportowany (np. uzupełniony wcześniej dawnym importem /api/bank), który wciąż czeka
+        // na sprawdzenie, a nie może być zapłatą za fakturę — odrzuć, żeby nie wisiał na liście
+        const row: any = existing[decision.index]
+        if (existingTxDisposition(row, tx, notInvoicePayment) === 'dismiss') {
+          await db.bank_transactions.update(row.id, { review_status: 'dismissed' })
+          autoDismissed++
+        }
+        continue
+      }
+
+      if (decision.action === 'repair') {
+        // ── Wiersz starego importu: uzupełnij na miejscu tytuł, kontrahenta, rachunek, referencję i kod operacji ──
+        const row: any = existing[decision.index]
+        const patch: Record<string, any> = {
+          description: tx.description, counterparty: tx.counterparty, counterparty_iban: tx.counterparty_iban,
+          reference: tx.reference, op_code: tx.op_code ?? '', currency: tx.currency || row.currency || 'PLN',
+        }
+        const disposition = existingTxDisposition(row, tx, notInvoicePayment)
+        repairedIds.add(row.id)
+        if (disposition === 'dismiss') {
+          const hit = tryInvoiceFirst ? await autoMatch(tx, row.id) : null
+          if (hit) {
+            patch.matched_invoice_id = hit.invoiceId
+            patch.match_confidence = hit.confidence
+            patch.review_status = 'matched'
+          } else {
+            patch.review_status = 'dismissed'
+            autoDismissed++
+          }
+        } else if (disposition === 'match') {
+          // Tytuł i kontrahent są już znane — ta sama próba auto-dopasowania co dla nowych wierszy
+          const hit = await autoMatch(tx, row.id)
+          if (hit) {
+            patch.matched_invoice_id = hit.invoiceId
+            patch.match_confidence = hit.confidence
+            patch.review_status = 'matched'
+          } else {
+            toReview++
+          }
+        } else if (disposition === 'review') {
+          toReview++
+        }
+        await db.bank_transactions.update(row.id, patch)
+        repaired++
+        continue
+      }
+
+      // ── Nowa transakcja ──
       const id = uuidv4()
-      const isDebit = tx.amount < 0
       let matchedInvoiceId: string | null = null
       let matchConfidence: number | null = null
       let reviewStatus = 'pending'
 
-      if (!isDebit) {
+      const disposition = newTxDisposition(tx, notInvoicePayment)
+      if (disposition === 'credit') {
         // Uznania (wpływy) nie dotyczą płacenia faktur kosztowych — pomijamy w sprawdzaniu
         reviewStatus = 'dismissed'
         credits++
-      } else if (tx.is_reversal) {
+      } else if (disposition === 'dismiss') {
+        // ZUS / podatek / pensja / opłata bankowa / przelew własny — nie trafia na listę „do sprawdzenia"
+        const hit = tryInvoiceFirst ? await autoMatch(tx, id) : null
+        if (hit) {
+          matchedInvoiceId = hit.invoiceId
+          matchConfidence = hit.confidence
+          reviewStatus = 'matched'
+        } else {
+          reviewStatus = 'dismissed'
+          autoDismissed++
+        }
+      } else if (disposition === 'review') {
         // Storno (RC) to zwrot wcześniejszej transakcji, nie płatność — nie dopasowujemy
         // automatycznie; ląduje na liście "do sprawdzenia" do ręcznej decyzji
         toReview++
       } else {
-        const candidates = unpaidInvoices.filter((i: any) => !paidNow.has(i.id))
-        const best = pickAutoMatch(tx, candidates)
-        if (best) {
-          matchedInvoiceId = best.invoice.id
-          matchConfidence = best.confidence
+        const hit = await autoMatch(tx, id)
+        if (hit) {
+          matchedInvoiceId = hit.invoiceId
+          matchConfidence = hit.confidence
           reviewStatus = 'matched'
-          await markInvoicePaid(best.invoice.id, { source: 'mt940', amount: Math.abs(tx.amount), paidAt: tx.date, txId: id })
-          paidNow.add(best.invoice.id)
-          matchedDetails.push({
-            invoice_id: best.invoice.id, invoice_number: best.invoice.invoice_number,
-            seller_name: best.invoice.seller_name, amount: Math.abs(tx.amount),
-            confidence: best.confidence, reasons: best.reasons,
-          })
-          autoMatched++
         } else {
           toReview++
         }
@@ -383,24 +671,42 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
 
       await db.bank_transactions.insert({
         id, source: 'mt940',
-        transaction_date: tx.date, amount: tx.amount, currency: 'PLN',
+        transaction_date: tx.date, amount: tx.amount, currency: tx.currency || 'PLN',
         description: tx.description, counterparty: tx.counterparty,
         counterparty_iban: tx.counterparty_iban, reference: tx.reference,
+        op_code: tx.op_code ?? '', // '' = bank bez kodów operacji; NULL zostaje tylko w wierszach starego importu
         matched_invoice_id: matchedInvoiceId, match_confidence: matchConfidence,
         review_status: reviewStatus, created_at: now(),
       })
       imported++
     }
 
+    // ── Pozostałości starego importu: zdublowane „gołe" wiersze, których żaden przelew z pliku już nie sparuje ──
+    // Dawny import /api/bank nie deduplikował, więc wyciąg wgrany tam dwa razy zostawił dwa identyczne wiersze na
+    // jeden przelew. Pierwszy został właśnie uzupełniony; drugi zostałby „gołym" wierszem na zawsze — wisiałby na
+    // liście „do sprawdzenia", a „Kondycja firmy" bez końca kazałaby wgrywać wyciąg ponownie. Skoro plik zawiera
+    // ten dzień, kwotę i kod operacji, a wszystkie jego przelewy mają już swój wiersz, nadwyżka to duplikat:
+    // odkładamy ją (dismissed) i oznaczamy kodem operacji. Wierszy dopasowanych do faktur nie ruszamy.
+    const orphanIds = legacyOrphanIds(existing as any[], parsed, repairedIds)
+    for (const oid of orphanIds) {
+      const row: any = (existing as any[]).find(r => r.id === oid)
+      await db.bank_transactions.update(oid, { review_status: 'dismissed', op_code: String(row?.description ?? '').trim().toUpperCase() })
+    }
+
     // ── Salda wyciągu (BankBalance) + koszty do RZiS (ManualCost source='mt940') — wspólny serwis ──
     // Transakcje bankowe są już zapisane; błąd tego etapu nie unieważnia importu (ponowny upload
     // zdeduplikuje), tylko trafia do odpowiedzi jako costs_error.
     let costs_created = 0, costs_skipped = 0, rules_applied = 0, balances_saved = 0
+    let costs_repaired = 0, costs_to_review = 0
+    let costs_to_review_from: string | null = null
+    let recognized: Mt940Recognized[] = []
     let costs_error: string | undefined
     try {
       balances_saved = await saveBankBalances(balances)
-      const c = await upsertMt940Costs(parsed, { createdBy: (req as any).user?.email ?? '' })
+      const c = await upsertMt940Costs(parsed, { createdBy: (req as any).user?.email ?? '', context })
       costs_created = c.created; costs_skipped = c.skipped_existing; rules_applied = c.rules_applied
+      costs_repaired = c.repaired; costs_to_review = c.to_review; recognized = c.recognized
+      costs_to_review_from = c.to_review_from
     } catch (ce: any) {
       console.error('[payables/import-mt940] koszty/salda:', ce)
       costs_error = ce?.message ?? 'Błąd zapisu kosztów z wyciągu'
@@ -409,6 +715,9 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
     res.json({
       imported, duplicates, auto_matched: autoMatched, to_review: toReview, credits_skipped: credits, matched: matchedDetails,
       costs_created, costs_skipped, rules_applied, balances_saved,
+      // naprawa starego importu + rozpoznawanie przelewów (ZUS, podatki, pensje, przelewy własne, zagraniczne)
+      repaired, auto_dismissed: autoDismissed, costs_repaired, recognized, costs_to_review, costs_to_review_from,
+      legacy_duplicates: orphanIds.length, // zdublowane wpisy starego importu odłożone przy tym imporcie
       ...(costs_error ? { costs_error } : {}),
     })
   } catch (e: any) {
@@ -523,7 +832,7 @@ router.post('/rematch', async (_req: Request, res: Response) => {
     const details: any[] = []
 
     for (const tx of pending) {
-      const candidates = unpaidInvoices.filter((i: any) => !paidNow.has(i.id))
+      const candidates = payableCandidates(tx, unpaidInvoices.filter((i: any) => !paidNow.has(i.id)))
       const best = pickAutoMatch(tx, candidates)
       if (!best) continue
       await markInvoicePaid(best.invoice.id, { source: 'mt940', amount: Math.abs(tx.amount), paidAt: tx.transaction_date, txId: tx.id })

@@ -7,18 +7,22 @@ import { v4 as uuidv4 } from 'uuid'
 import { prisma } from '../db'
 import { requireAdmin } from '../middleware/auth'
 import { parseMT940Statements } from '../utils/mt940Parser'
-import { saveBankBalances, upsertMt940Costs } from '../services/mt940-costs'
+import { saveBankBalances, upsertMt940Costs, accountInOtherCompanyMessage } from '../services/mt940-costs'
 
 const router = Router()
 
 // ─── Taksonomia kosztów ręcznych ──────────────────────────────────────────────
-// Podkategorie rozszerzone o pensje / ZUS / podatki
+// Podkategorie rozszerzone o pensje / ZUS / podatki.
+// Koszt pracy z wyciągu składa się z trzech przelewów: wypłaty na konta pracowników (salary_gross —
+// kwoty netto „na rękę"), zaliczka PIT-4 do urzędu skarbowego (salary_pit) i składki do ZUS
+// (zus_employer — część pracownika i pracodawcy razem). Suma tych trzech = pełny koszt wynagrodzeń.
 export const MANUAL_SUBCATEGORIES: Record<string, Record<string, string>> = {
   ga: {
-    salary_gross:   'Wynagrodzenia brutto (UoP)',
+    salary_gross:   'Wynagrodzenia (wypłaty na konta)',
+    salary_pit:     'Zaliczki PIT od wynagrodzeń (PIT-4)',
     salary_b2b:     'Wynagrodzenia B2B / faktury',
     salary_civil:   'Wynagrodzenia UoD / UoZ',
-    zus_employer:   'ZUS pracodawcy',
+    zus_employer:   'ZUS (składki pracownika i pracodawcy)',
     rent:           'Czynsz biuro / magazyn',
     utilities:      'Media (prąd, internet)',
     software:       'Oprogramowanie / licencje',
@@ -35,6 +39,7 @@ export const MANUAL_SUBCATEGORIES: Record<string, Record<string, string>> = {
     interest:       'Odsetki',
     leasing:        'Leasing',
     fx:             'Różnice kursowe / przewalutowanie',
+    internal_transfer: 'Przelew własny / rachunek VAT (nie koszt)',
   },
   cogs: {
     hardware:           'Sprzęt krajowy',
@@ -55,9 +60,11 @@ export const MANUAL_SUBCATEGORIES: Record<string, Record<string, string>> = {
   },
 }
 
-// ─── Auto-klasyfikacja z opisu transakcji (MT940 / ręcznie) ──────────────────
-// Nierozpoznany przelew → ga/other (poza listą MT940_SAFE_SUBCATEGORIES), czyli NIE wchodzi
-// do RZiS, dopóki nie zdecyduje reguła bankowa lub użytkownik (lista „nierozpoznane przelewy").
+// ─── Auto-klasyfikacja z opisu (wpisy RĘCZNE) ─────────────────────────────────
+// Podpowiada kategorię kosztu wpisywanego ręcznie (POST /api/manual-costs bez kategorii).
+// Import wyciągu MT940 już z niej NIE korzysta — przelewy rozpoznaje klasyfikator strukturalny
+// (services/bank-classify: kod operacji, rachunek ZUS / mikrorachunek, dopiero potem tytuł).
+// Nierozpoznany opis → ga/other.
 export function autoClassifyManual(description: string, reference: string): {
   cost_category: string; subcategory: string; business_unit: string
 } {
@@ -74,9 +81,9 @@ export function autoClassifyManual(description: string, reference: string): {
   // niezakotwiczone `us\s` łapało GLOBUS/PLUS/BONUS/ASUS i cicho wyrzucało te koszty z RZiS.
   const taxOffice = /urząd.*skarb|urzad.*skarb|\bus\b|mikrorachun/.test(t)
   // PIT-4 / PIT-4R / PIT-8A(R) = zaliczki na podatek pracowników/zleceniobiorców potrącone z wynagrodzeń —
-  // to część kosztu pensji brutto (ga/salary_gross), NIE podatek dochodowy spółki (CIT).
+  // to część kosztu pracy (ga/salary_pit, jak w klasyfikatorze wyciągów), NIE podatek dochodowy spółki (CIT).
   if (/\bpit-?4r?\b|\bpit-?8ar?\b|pit.?4|pit.?8a|podat.*od wynagrodze|zaliczk.*od wynagrodze/.test(t))
-    return { cost_category: 'ga', subcategory: 'salary_gross', business_unit: 'shared' }
+    return { cost_category: 'ga', subcategory: 'salary_pit', business_unit: 'shared' }
   const incomeTax = taxOffice
     ? /\bcit\b|\bcit-?\d|\bpit\b|\bpit-?\d|podatek.*dochod|zaliczk.*podat/.test(t)
     : /\bcit-?\d|\bpit-?\d|\bcit\b.*zaliczk|zaliczk.*\bcit\b|\bpit\b.*zaliczk|zaliczk.*\bpit\b|podatek.*dochod|podatek.*\bcit\b|podatek.*\bpit\b/.test(t)
@@ -92,8 +99,12 @@ export function autoClassifyManual(description: string, reference: string): {
   if (taxOffice)
     return { cost_category: 'financial', subcategory: 'tax_other', business_unit: 'shared' }
 
-  // Wynagrodzenia
-  if (/wynagrodzeni|pensj|płac|wypłata|premia|urlop.*wypłac/.test(t))
+  // Wynagrodzenia. „płac" tylko jako osobne słowo (lista płac, płace, fundusz płac) — nie „opłacenie",
+  // „zapłacono", „wpłaca"; „wypłata" nie może być wypłatą gotówki (bankomat, kasa).
+  const payrollWord = /wynagrodzeni|pensj|premia|urlop.*wypłac/.test(t)
+    || /(?<![a-ząćęłńóśźż])płac(?:e|a|y)?(?![a-ząćęłńóśźż])/.test(t)
+  const cashWithdrawal = /gotówk|gotowk|bankomat|wpłatomat|wplatomat|\batm\b/.test(t)
+  if (payrollWord || (/wypłata/.test(t) && !cashWithdrawal))
     return { cost_category: 'ga', subcategory: 'salary_gross', business_unit: 'shared' }
 
   // Leasing
@@ -184,6 +195,19 @@ router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
       cost_category, subcategory, business_unit,
       period, notes, reference,
     } = req.body
+    // RZiS księguje koszt w miesiącu `period` (gdy jest), inaczej w miesiącu daty. Okres bywa tylko automatyczną
+    // kopią miesiąca daty (dodanie kosztu, zatwierdzenie dokumentu) — po poprawieniu daty musi pójść za nią,
+    // inaczej koszt zostawałby w starym miesiącu. Okres wpisany świadomie (inny niż miesiąc daty) zostaje.
+    let periodFollowsDate = false
+    if (date !== undefined) {
+      const cur = await prisma.manualCost.findUnique({ where: { id: req.params.id }, select: { date: true, period: true } })
+      const newDate = String(date)
+      if (cur && newDate !== cur.date) {
+        const autoFilled = !cur.period || cur.period === String(cur.date).slice(0, 7)
+        const periodUntouched = period === undefined || (period ?? null) === (cur.period ?? null)
+        periodFollowsDate = autoFilled && periodUntouched
+      }
+    }
     const updated = await prisma.manualCost.update({
       where: { id: req.params.id },
       data: {
@@ -194,7 +218,7 @@ router.put('/:id', requireAdmin, async (req: Request, res: Response) => {
         ...(cost_category !== undefined && { cost_category: String(cost_category) }),
         ...(subcategory   !== undefined && { subcategory: String(subcategory) }),
         ...(business_unit !== undefined && { business_unit: String(business_unit) }),
-        ...(period        !== undefined && { period: period ?? null }),
+        ...(periodFollowsDate ? { period: null } : (period !== undefined && { period: period ?? null })),
         ...(notes         !== undefined && { notes: String(notes) }),
         ...(reference     !== undefined && { reference: String(reference) }),
       },
@@ -212,8 +236,9 @@ router.delete('/:id', requireAdmin, async (req: Request, res: Response) => {
 })
 
 // ─── POST /api/manual-costs/import-mt940 — wgraj wyciąg MT940 (treść jako string) ──
-// Wspólny serwis z /api/payables/import-mt940: deduplikacja, auto-klasyfikacja,
-// reguły bankowe, zapis sald wyciągu.
+// Wspólny serwis z /api/payables/import-mt940: deduplikacja, naprawa wierszy starego importu,
+// klasyfikator przelewów (ZUS, podatki, pensje, przelewy własne, zagraniczne), reguły bankowe,
+// zapis sald wyciągu.
 router.post('/import-mt940', requireAdmin, async (req: Request, res: Response) => {
   try {
     const { content } = req.body  // treść pliku MT940 jako string
@@ -223,11 +248,19 @@ router.post('/import-mt940', requireAdmin, async (req: Request, res: Response) =
     if (!transactions.length)
       return res.status(400).json({ error: 'Nie znaleziono transakcji w pliku. Sprawdź, czy to poprawny wyciąg MT940.' })
 
+    // Wyciąg rachunku prowadzonego w innej firmie → odmowa, zanim cokolwiek zapiszemy
+    const otherCompany = await accountInOtherCompanyMessage([...transactions.map(t => t.account), ...balances.map(b => b.account)])
+    if (otherCompany) return res.status(409).json({ error: otherCompany, code: 'account_other_company' })
+
     // Koszty = obciążenia (bez storn)
     const outgoing = transactions.filter(t => t.amount < 0 && !t.is_reversal)
 
     const balances_saved = await saveBankBalances(balances)
-    const result = await upsertMt940Costs(transactions, { createdBy: (req as any).user?.email ?? '' })
+    const result = await upsertMt940Costs(transactions, {
+      createdBy: (req as any).user?.email ?? '',
+      accounts: balances.map(b => b.account), // rachunki wszystkich wyciągów z pliku = rachunki własne
+    })
+    const recognizedCount = result.recognized.reduce((s, r) => s + r.count, 0)
 
     res.json({
       total_parsed:     transactions.length,
@@ -236,9 +269,16 @@ router.post('/import-mt940', requireAdmin, async (req: Request, res: Response) =
       skipped_existing: result.skipped_existing,
       rules_applied:    result.rules_applied,
       balances_saved,
+      repaired:         result.repaired,     // wiersze starego importu uzupełnione na miejscu
+      recognized:       result.recognized,   // rozpoznane rodzaje przelewów: { kind, label, count, total }
+      to_review:        result.to_review,    // przelewy czekające na decyzję (nie weszły do RZiS)
+      to_review_from:   result.to_review_from, // najwcześniejszy miesiąc (YYYY-MM) wśród czekających
       message: `Zaimportowano ${result.created} transakcji kosztowych z wyciągu MT940`
         + (result.skipped_existing ? ` (${result.skipped_existing} już było w bazie)` : '')
+        + (result.repaired ? `, uzupełniono ${result.repaired} wcześniej zaimportowanych` : '')
+        + (recognizedCount ? `, rozpoznano automatycznie ${recognizedCount}` : '')
         + (result.rules_applied ? `, reguły bankowe rozpoznały ${result.rules_applied}` : '')
+        + (result.to_review ? `, do decyzji ${result.to_review}` : '')
         + (balances_saved ? `, zapisano ${balances_saved} sald` : '')
         + '.',
     })

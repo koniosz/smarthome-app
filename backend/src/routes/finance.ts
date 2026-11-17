@@ -9,6 +9,12 @@
  *   leasing traktowany operacyjnie (OPEX).
  * - Przychód: miesiąc z importem Firmao = Firmao (+ moduł niezdeduplikowany);
  *   miesiąc bez importu = KSeF sprzedaż + moduł (oznaczony jako wstępny).
+ * - Koszty spoza KSeF (ManualCost: wyciąg MT940, wpisy ręczne, dokumenty) księgowane MEMORIAŁOWO:
+ *   miesiąc = okres z tytułu przelewu (`period`), a dla kosztów pracy (pensje, PIT-4, ZUS) — wynik
+ *   services/payroll-accrual (pensja wypłacona 1.–15. → miesiąc poprzedni, ZUS/PIT-4 → miesiąc, którego
+ *   dotyczą, + SZACUNEK ZUS i PIT-4 za miesiące, za które przelewu jeszcze nie było). Jedna alokacja
+ *   (loadManualCosts → allocateManualCosts) dla RZiS, podziału kosztów, „Kondycji firmy" i uzgodnienia
+ *   z księgową — żeby wszystkie widoki pokazywały te same miesiące.
  */
 import { Router, Request, Response } from 'express'
 import multer from 'multer'
@@ -19,6 +25,8 @@ import db, { prisma } from '../db'
 import { inventoryChangeByMonth } from '../services/inventory-valuation'
 import { moduleInvoiceScope } from './companies'
 import { getCompanySettings } from '../settings-store'
+import { allocatePayroll, payrollGroupOf, type PayrollCost, type PayrollGroup, type PayrollMonth } from '../services/payroll-accrual'
+import { buildMatchedIndex, isKsefPayment, parseFxNote, type MatchedTxLite } from '../services/mt940-costs'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -349,11 +357,39 @@ export function depreciationForPeriod(assets: Array<{ value_net: number; depreci
   return Math.round(sum * 100) / 100
 }
 
+// ── Daty i etykiety miesięcy (wspólne z services/finance-health — tam re-eksport) ──
+export const MONTHS_PL = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień']
+
+/** Dzisiejsza data wg Europe/Warsaw (serwer na Render działa w UTC). */
+export function warsawToday(d: Date = new Date()): { year: number; month: number; day: number; iso: string; period: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d)
+  const get = (t: string) => Number(parts.find(p => p.type === t)?.value ?? 0)
+  const year = get('year'), month = get('month'), day = get('day')
+  const period = `${year}-${String(month).padStart(2, '0')}`
+  return { year, month, day, iso: `${period}-${String(day).padStart(2, '0')}`, period }
+}
+
+/** '2026-08' → 'Sierpień 2026'. */
+export function monthLabel(period: string): string {
+  const [y, m] = period.split('-').map(Number)
+  return `${MONTHS_PL[m - 1] ?? period} ${y}`
+}
+
+/** Ostatni dzień miesiąca: '2026-02' → '2026-02-28'. */
+export function lastDayOf(period: string): string {
+  const [y, m] = period.split('-').map(Number)
+  const d = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  return `${period}-${String(d).padStart(2, '0')}`
+}
+
 export const EMPTY_LINES = () => ({
   revenue: 0, revenue_firmao: 0, revenue_ksef: 0, revenue_module: 0, revenue_advances: 0,
   // cogs = cogs_purchases − inventory_change (zmiana stanu zapasów: dodatnia = magazyn urósł)
   cogs: 0, cogs_purchases: 0, inventory_change: 0, gross_margin: 0, gross_margin_pct: 0,
   opex: 0, opex_sales: 0, opex_ga: 0, opex_operations: 0, opex_leasing: 0,
+  // Koszty pracy — INFORMACYJNIE, to CZĘŚĆ opex_ga (nie dodawać do opex drugi raz):
+  // payroll = pensje + PIT-4 + ZUS ujęte w opex_ga, łącznie z szacunkiem; payroll_estimate = sama część szacowana
+  payroll: 0, payroll_estimate: 0,
   ebitda: 0, ebitda_pct: 0,
   depreciation: 0, ebit: 0,
   financial_costs: 0, cit: 0, net_result: 0,
@@ -367,7 +403,8 @@ export type PnlLines = ReturnType<typeof EMPTY_LINES>
 // dokument spoza KSeF) → zawsze; exclude (duplikat) → nigdy. Wpisy ręczne i z dokumentów → zawsze.
 // Koszt w walucie obcej (kwota NIE jest w PLN — np. wyciąg z rachunku EUR bez kursu NBP)
 // nigdy nie wchodzi do RZiS: sumowanie EUR jako PLN zaniżałoby koszt ~4×.
-export const MT940_SAFE_SUBCATEGORIES = new Set(['salary_gross', 'salary_admin', 'zus_employer', 'tax_income', 'tax_vat', 'bank_fee', 'interest', 'fx'])
+// salary_pit = zaliczka PIT-4 (podatek potrącony z pensji i odprowadzony do US) — część kosztu pracy.
+export const MT940_SAFE_SUBCATEGORIES = new Set(['salary_gross', 'salary_admin', 'salary_pit', 'zus_employer', 'tax_income', 'tax_vat', 'bank_fee', 'interest', 'fx'])
 export function isForeignCurrencyCost(c: { currency?: string | null }): boolean {
   const cur = String(c.currency ?? '').trim().toUpperCase()
   return cur !== '' && cur !== 'PLN'
@@ -384,6 +421,7 @@ export function includeManualCostInPnl(c: { source?: string | null; subcategory?
 export function costLine(cost_category: string, subcategory: string):
   'cogs' | 'opex_sales' | 'opex_ga' | 'opex_operations' | 'opex_leasing' | 'financial' | 'cit' | 'excluded' {
   if (subcategory === 'tax_vat') return 'excluded'   // VAT jest neutralny — nie jest kosztem
+  if (subcategory === 'internal_transfer') return 'excluded' // przelew własny / rachunek VAT / wymiana walut — nie jest kosztem
   if (subcategory === 'tax_income') return 'cit'
   if (cost_category === 'cogs') return 'cogs'
   if (cost_category === 'sales') return 'opex_sales'
@@ -406,7 +444,8 @@ export function finalizeLines(L: PnlLines): PnlLines {
   L.ebitda_pct = L.revenue > 0 ? r2(L.ebitda / L.revenue * 100) : 0
   L.ebit = r2(L.ebitda - L.depreciation)
   L.net_result = r2(L.ebit - L.financial_costs - L.cit)
-  for (const k of ['revenue', 'revenue_firmao', 'revenue_ksef', 'revenue_module', 'revenue_advances', 'cogs', 'cogs_purchases', 'inventory_change', 'opex_sales', 'opex_ga', 'opex_operations', 'opex_leasing', 'depreciation', 'financial_costs', 'cit'] as const) {
+  // payroll / payroll_estimate są częścią opex_ga (informacyjnie) — tylko zaokrąglamy, NIE wchodzą do opex drugi raz
+  for (const k of ['revenue', 'revenue_firmao', 'revenue_ksef', 'revenue_module', 'revenue_advances', 'cogs', 'cogs_purchases', 'inventory_change', 'opex_sales', 'opex_ga', 'opex_operations', 'opex_leasing', 'payroll', 'payroll_estimate', 'depreciation', 'financial_costs', 'cit'] as const) {
     L[k] = r2(L[k])
   }
   return L
@@ -421,6 +460,360 @@ export function sumLines(parts: PnlLines[]): PnlLines {
   }
   L.provisional = parts.some(p => p.provisional)
   return finalizeLines(L)
+}
+
+// ── Koszty spoza KSeF (ManualCost): miesiąc memoriałowy, koszty pracy, ochrona przed podwójnym liczeniem ──
+// Czyste funkcje (bez bazy) — testy: src/__tests__/finance-payroll.test.ts.
+
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+
+/** Miesiąc memoriałowy kosztu: poprawny `period` (YYYY-MM) wygrywa, inaczej miesiąc daty przelewu / dokumentu. */
+export function effectiveCostMonth(c: { date: string; period?: string | null }): string {
+  const p = String(c.period ?? '').trim()
+  const dateMonth = String(c.date ?? '').slice(0, 7)
+  if (!PERIOD_RE.test(p)) return dateMonth
+  // okres oddalony od daty o ponad 3 lata to pomyłka (np. literówka w roku) — nie przenosimy kosztu o lata
+  if (PERIOD_RE.test(dateMonth)) {
+    const idx = (m: string) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7))
+    if (Math.abs(idx(p) - idx(dateMonth)) > 36) return dateMonth
+  }
+  return p
+}
+
+/** Pola ManualCost potrzebne silnikowi RZiS. */
+export interface ManualCostLike {
+  id: string
+  date: string                    // data przelewu / dokumentu YYYY-MM-DD
+  period?: string | null          // miesiąc, którego koszt dotyczy (YYYY-MM) — z tytułu przelewu albo wpisany ręcznie
+  amount: number                  // dodatnia, w walucie `currency`
+  currency?: string | null
+  cost_category: string
+  subcategory: string
+  business_unit?: string | null
+  source?: string | null          // manual | mt940 | document
+  pnl_mode?: string | null        // auto | include | exclude
+  reference?: string | null
+  notes?: string | null           // notatka kursowa NBP → kwota oryginalna do porównania z transakcją bankową
+}
+
+export type ManualCostLine = Exclude<ReturnType<typeof costLine>, 'excluded'>
+
+/** Koszt, który wchodzi do RZiS: w którym miesiącu, w której linii i czy jest kosztem pracy. */
+export interface BookedManualCost<T extends ManualCostLike = ManualCostLike> {
+  cost: T
+  month: string                   // miesiąc RZiS (YYYY-MM)
+  line: ManualCostLine
+  payroll: PayrollGroup | null    // 'salaries' | 'pit' | 'zus' — po podkategorii (niezależnie od linii)
+}
+
+export interface ManualAllocation<T extends ManualCostLike = ManualCostLike> {
+  booked: BookedManualCost<T>[]               // wszystkie koszty wchodzące do RZiS (cała historia, wszystkie jednostki)
+  skipped_ksef: T[]                           // przelewy, które weszłyby do RZiS, ale są płatnością za fakturę KSeF
+  ksef_payment_ids: Set<string>               // WSZYSTKIE przelewy z wyciągu będące płatnością za fakturę KSeF (także te i tak nieliczone)
+  payroll_months: Map<string, PayrollMonth>   // koszty pracy per miesiąc — z szacunkiem ZUS / PIT-4 (cała spółka)
+}
+
+/**
+ * Czy koszt z wyciągu jest płatnością za fakturę KSeF (przelew przypisany do faktury w Płatnościach).
+ * Koszt liczy wtedy alokacja faktury (netto) — przelew (brutto) byłby drugim razem. Sprawdzane przy ODCZYCIE,
+ * bo fakturę można przypisać do przelewu długo po imporcie wyciągu. Reguła jak przy imporcie (isKsefPayment:
+ * ta sama data, kwota ±0,01, zgodna referencja); koszt przeliczony z waluty obcej porównujemy też po kwocie
+ * oryginalnej z notatki kursowej, bo transakcja bankowa jest zapisana w walucie rachunku.
+ */
+export function isKsefInvoicePayment(c: ManualCostLike, matched: Map<string, MatchedTxLite[]>): boolean {
+  if (c.source !== 'mt940' || !matched.size) return false
+  const probe = { date: c.date, amount: c.amount, reference: c.reference }
+  if (isKsefPayment(probe, matched)) return true
+  const fx = parseFxNote(c.notes)
+  return !!fx && isKsefPayment({ ...probe, amount: fx.amount }, matched)
+}
+
+/**
+ * Jedna alokacja kosztów spoza KSeF dla całej historii: które koszty wchodzą do RZiS, w którym miesiącu
+ * i w której linii.
+ *  1. reguła włączania (includeManualCostInPnl: PLN, pnl_mode, lista bezpieczna MT940),
+ *  2. VAT i przelewy własne (costLine = excluded) nigdy nie są kosztem,
+ *  3. przelew będący płatnością za fakturę KSeF → pominięty (`skipped_ksef`),
+ *  4. koszty pracy (pensje, PIT-4, ZUS) → miesiąc z allocatePayroll (liczone RAZ na całej historii, żeby
+ *     spóźnione przelewy i miesiące odniesienia do szacunku nie zależały od oglądanego roku); heurystyki dat
+ *     przelewów dotyczą tylko wierszy z wyciągu — wpis ręczny / dokument zostaje w miesiącu wskazanym przez
+ *     użytkownika (effectiveCostMonth); pozostałe koszty → effectiveCostMonth.
+ * `today` = bieżący miesiąc (YYYY-MM, Europe/Warsaw): szacunków za miesiące późniejsze nie ma.
+ * Alokacja jest wspólna dla całej spółki — filtr jednostki działa dopiero w manualLinesByMonth.
+ */
+export function allocateManualCosts<T extends ManualCostLike>(
+  costs: T[],
+  matched: Map<string, MatchedTxLite[]>,
+  today: string,
+  opts: { estimate?: boolean } = {},
+): ManualAllocation<T> {
+  const counted: Array<{ cost: T; line: ManualCostLine; payroll: PayrollGroup | null }> = []
+  const skipped_ksef: T[] = []
+  const ksef_payment_ids = new Set<string>()
+  for (const c of costs ?? []) {
+    if (!c) continue
+    // płatność za fakturę KSeF sprawdzamy dla KAŻDEGO przelewu — także nierozpoznanego (ga/other, auto), który
+    // i tak nie wchodzi do RZiS: podział kosztów musi odróżnić „opłacona faktura" od „czeka na decyzję"
+    const ksefPayment = isKsefInvoicePayment(c, matched)
+    if (ksefPayment) ksef_payment_ids.add(String(c.id))
+    if (!includeManualCostInPnl(c)) continue
+    const line = costLine(c.cost_category, c.subcategory)
+    if (line === 'excluded') continue
+    if (ksefPayment) { skipped_ksef.push(c); continue }
+    counted.push({ cost: c, line, payroll: payrollGroupOf(c.subcategory) })
+  }
+
+  const payrollInput: PayrollCost[] = counted
+    .filter(x => x.payroll)
+    .map(x => {
+      const c = x.cost
+      const row = { id: String(c.id), subcategory: c.subcategory, amount: Number(c.amount) || 0 }
+      // Przelew z wyciągu: data = dzień przelewu, okres tylko gdy podał go tytuł → resztę rozstrzyga allocatePayroll.
+      if (c.source === 'mt940') return { ...row, date: c.date, period: c.period ?? null }
+      // Wpis ręczny / dokument: miesiąc wskazał użytkownik (period, a bez niego data) — nie stosujemy do niego
+      // heurystyk dat przelewów („do 15. → miesiąc poprzedni"). Dla alokatora to koszt z okresem podanym wprost,
+      // więc nadal pokrywa swój miesiąc i liczy się do wskaźników szacunku.
+      const m = effectiveCostMonth(c)
+      return { ...row, date: PERIOD_RE.test(m) ? lastDayOf(m) : c.date, period: m }
+    })
+  const { monthOf, months } = allocatePayroll(payrollInput, { today, estimate: opts.estimate })
+
+  const booked = counted.map(x => ({
+    cost: x.cost,
+    // allocatePayroll pomija wiersze z niepoprawną datą — wtedy zostajemy przy zwykłej regule miesiąca
+    month: (x.payroll && monthOf.get(String(x.cost.id))) || effectiveCostMonth(x.cost),
+    line: x.line,
+    payroll: x.payroll,
+  }))
+  return { booked, skipped_ksef, ksef_payment_ids, payroll_months: months }
+}
+
+/** Koszty spoza KSeF jednego miesiąca w układzie linii RZiS + składniki kosztów pracy. */
+export interface ManualMonth {
+  cogs_purchases: number; opex_sales: number; opex_ga: number; opex_operations: number; opex_leasing: number
+  financial_costs: number; cit: number
+  payroll: number            // pensje + PIT-4 + ZUS ujęte w opex_ga, ŁĄCZNIE z szacunkiem (część opex_ga)
+  payroll_estimate: number   // szacowana część payroll (zus_estimate + pit4_estimate)
+  salaries: number; pit4: number; zus: number           // rzeczywiste przelewy (składniki payroll)
+  zus_estimate: number; pit4_estimate: number           // szacunek za miesiące bez przelewu
+}
+
+const EMPTY_MANUAL_MONTH = (): ManualMonth => ({
+  cogs_purchases: 0, opex_sales: 0, opex_ga: 0, opex_operations: 0, opex_leasing: 0, financial_costs: 0, cit: 0,
+  payroll: 0, payroll_estimate: 0, salaries: 0, pit4: 0, zus: 0, zus_estimate: 0, pit4_estimate: 0,
+})
+
+/**
+ * Sumy kosztów spoza KSeF dla podanych miesięcy (koszty spoza listy są pomijane).
+ * Jednostka: `bu` ≠ 'all' zostawia tylko koszty z dokładnie tą jednostką (jak dotychczasowy filtr w bazie).
+ * SZACUNEK ZUS / PIT-4 jest liczony dla całej spółki i zastępuje przyszły przelew z wyciągu, a przelewy
+ * z wyciągu mają jednostkę 'shared' — dlatego szacunek wchodzi tylko do widoku 'all' i 'shared'
+ * (dzięki temu all = shc + gatelynk + shared także w miesiącach z szacunkiem).
+ */
+export function manualLinesByMonth(alloc: ManualAllocation, months: string[], bu = 'all'): Map<string, ManualMonth> {
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  const out = new Map<string, ManualMonth>(months.map(m => [m, EMPTY_MANUAL_MONTH()]))
+  for (const b of alloc.booked) {
+    const l = out.get(b.month)
+    if (!l) continue
+    if (bu !== 'all' && b.cost.business_unit !== bu) continue
+    const amt = Number(b.cost.amount) || 0
+    if (b.line === 'cogs') l.cogs_purchases += amt
+    else if (b.line === 'financial') l.financial_costs += amt
+    else l[b.line] += amt
+    if (b.payroll && b.line === 'opex_ga') {
+      l.payroll += amt
+      if (b.payroll === 'salaries') l.salaries += amt
+      else if (b.payroll === 'pit') l.pit4 += amt
+      else l.zus += amt
+    }
+  }
+  if (bu === 'all' || bu === 'shared') {
+    for (const m of months) {
+      const p = alloc.payroll_months.get(m)
+      if (!p) continue
+      const l = out.get(m)!
+      const zusEst = Math.max(0, p.zus_estimate || 0), pitEst = Math.max(0, p.pit_estimate || 0)
+      l.zus_estimate += zusEst
+      l.pit4_estimate += pitEst
+      l.payroll_estimate += zusEst + pitEst
+      l.payroll += zusEst + pitEst
+      l.opex_ga += zusEst + pitEst
+    }
+  }
+  for (const l of out.values()) for (const k of Object.keys(l) as (keyof ManualMonth)[]) l[k] = r2(l[k])
+  return out
+}
+
+/**
+ * Księgowanie kosztów spoza KSeF w miesiącach roku — to, co silnik RZiS (computePnlYear) dodaje do linii.
+ * Czysta funkcja: koszty (cała historia, nie tylko rok), indeks przelewów dopasowanych do faktur KSeF,
+ * rok i bieżący miesiąc.
+ */
+export function bookManualCosts(
+  costs: ManualCostLike[],
+  matched: Map<string, MatchedTxLite[]>,
+  year: number,
+  today: string,
+  opts: { bu?: string; estimate?: boolean } = {},
+): Map<string, ManualMonth> {
+  return manualLinesByMonth(allocateManualCosts(costs, matched, today, { estimate: opts.estimate }), monthsOf(year), opts.bu ?? 'all')
+}
+
+/** Koszty pracy okresu (suma miesięcy): rzeczywiste przelewy + szacunek; `total` = PnlLines.payroll tego okresu. */
+export interface PayrollSummary {
+  salaries: number; pit4: number; zus: number
+  zus_estimate: number; pit4_estimate: number
+  total: number
+  estimated_months: string[]   // miesiące, w których jest jakikolwiek szacunek
+}
+
+export function payrollSummary(byMonth: Map<string, ManualMonth>, months: string[]): PayrollSummary {
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  const s: PayrollSummary = { salaries: 0, pit4: 0, zus: 0, zus_estimate: 0, pit4_estimate: 0, total: 0, estimated_months: [] }
+  for (const m of months) {
+    const l = byMonth.get(m)
+    if (!l) continue
+    s.salaries += l.salaries; s.pit4 += l.pit4; s.zus += l.zus
+    s.zus_estimate += l.zus_estimate; s.pit4_estimate += l.pit4_estimate
+    if (l.payroll_estimate > 0) s.estimated_months.push(m)
+  }
+  for (const k of ['salaries', 'pit4', 'zus', 'zus_estimate', 'pit4_estimate'] as const) s[k] = r2(s[k])
+  s.total = r2(s.salaries + s.pit4 + s.zus + s.zus_estimate + s.pit4_estimate)
+  return s
+}
+
+/** Wiersz ManualCost w zakresie potrzebnym silnikowi, podziałowi kosztów i „Kondycji firmy". */
+export type ManualCostRow = ManualCostLike & { description: string; document_id: string | null; op_code: string | null }
+export type LoadedManualCosts = ManualAllocation<ManualCostRow> & { costs: ManualCostRow[] }
+
+/**
+ * Wczytuje koszty spoza KSeF (cała historia — to setki–tysiące wierszy) i przelewy dopasowane do faktur
+ * KSeF, po czym liczy JEDNĄ alokację. Cała historia zamiast okna rocznego: spóźniony ZUS (opłacony po kilku
+ * miesiącach), miesiące odniesienia do szacunku i 6-miesięczne cofanie przelewów do ZUS bez okresu dają wtedy
+ * ten sam wynik niezależnie od tego, który rok lub okres jest oglądany.
+ */
+export async function loadManualCosts(today: string = warsawToday().period): Promise<LoadedManualCosts> {
+  const [costs, matchedTx] = await Promise.all([
+    prisma.manualCost.findMany({
+      select: {
+        id: true, date: true, period: true, amount: true, currency: true, cost_category: true, subcategory: true,
+        business_unit: true, source: true, pnl_mode: true, reference: true, notes: true,
+        description: true, document_id: true, op_code: true,
+      },
+    }),
+    prisma.bankTransaction.findMany({
+      where: { source: 'mt940', matched_invoice_id: { not: null } },
+      select: { transaction_date: true, amount: true, reference: true },
+    }),
+  ])
+  const rows = costs as ManualCostRow[]
+  return { costs: rows, ...allocateManualCosts(rows, buildMatchedIndex(matchedTx), today) }
+}
+
+// ── Podział kosztów spoza KSeF (część GET /cost-details) — czysta funkcja na TEJ SAMEJ alokacji co silnik ──
+/** Pozycja podziału kosztów; `period` = miesiąc RZiS pozycji (może różnić się od miesiąca daty przelewu). */
+export type CostDetailItem = { date: string; description: string; amount: number; source: string; category?: string; period?: string }
+export type ManualDetailGroup = 'salaries' | 'zus' | 'taxes' | 'import' | 'non_ksef' | 'other_manual'
+/** `source` pozycji szacunku ZUS / PIT-4 (nie jest wierszem z bazy; frontend pokazuje źródło jako etykietę). */
+export const ESTIMATE_SOURCE = 'szacunek'
+/** Import towaru: osobna grupa w podziale kosztów (faktury KSeF i koszty ręczne). */
+export const IMPORT_SUBCATEGORIES = new Set(['hardware_noneu', 'hardware_eu', 'import_duty', 'import_freight', 'import_agency', 'import_vat'])
+
+export interface ManualCostDetails {
+  groups: Record<ManualDetailGroup, { total: number; items: CostDetailItem[] }>
+  skipped_duplicates: { count: number; total: number }   // przelewy poza RZiS, o których już zdecydowano: płatność za fakturę KSeF / pnl_mode=exclude / kategoria fakturowana
+  awaiting_decision: { count: number; total: number }    // przelewy z wyciągu poza RZiS, o których NIKT jeszcze nie zdecydował (lista „nierozpoznane przelewy")
+  foreign_currency: { count: number; items: Array<CostDetailItem & { currency: string }> }
+}
+
+/**
+ * Koszty spoza KSeF miesięcy `from`..`to` (YYYY-MM) w grupach podziału kosztów. Miesiąc, linia i to, czy koszt
+ * w ogóle wchodzi do RZiS, pochodzą z alokacji silnika (`booked`), więc suma grup = suma linii RZiS z kosztów
+ * spoza KSeF za ten sam zakres (manualLinesByMonth, widok całej spółki) — test: finance-payroll.test.ts.
+ *  - pensje i zaliczki PIT-4 → `salaries`, ZUS → `zus`; SZACUNEK ZUS / PIT-4 to osobne, nazwane pozycje
+ *    (`source` = ESTIMATE_SOURCE) w tych samych grupach,
+ *  - VAT i przelewy własne nie są kosztem ani duplikatem; koszt w walucie obcej → `foreign_currency`,
+ *  - przelew z wyciągu poza RZiS bez żadnej decyzji (pnl_mode=auto, nie płatność za fakturę KSeF) →
+ *    `awaiting_decision` — to NIE jest duplikat, tylko koszt, którego być może brakuje w wyniku,
+ *  - reszta kosztów poza RZiS → `skipped_duplicates`.
+ * Sumy grup nie są zaokrąglane (robi to wywołujący po dodaniu faktur KSeF); pozycji nie przycinamy.
+ */
+export function manualCostDetails(
+  manual: Pick<LoadedManualCosts, 'costs' | 'booked' | 'payroll_months'> & { ksef_payment_ids?: Set<string> },
+  from: string,
+  to: string,
+): ManualCostDetails {
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  const inRange = (m: string) => m >= from && m <= to
+  const mk = () => ({ total: 0, items: [] as CostDetailItem[] })
+  const out: ManualCostDetails = {
+    groups: { salaries: mk(), zus: mk(), taxes: mk(), import: mk(), non_ksef: mk(), other_manual: mk() },
+    skipped_duplicates: { count: 0, total: 0 },
+    awaiting_decision: { count: 0, total: 0 },
+    foreign_currency: { count: 0, items: [] },
+  }
+  const ksefPaid = manual.ksef_payment_ids ?? new Set<string>()
+  const add = (g: ManualDetailGroup, item: CostDetailItem) => { out.groups[g].total += item.amount; out.groups[g].items.push(item) }
+
+  const bookedById = new Map(manual.booked.map(b => [b.cost.id, b]))
+  for (const c of manual.costs) {
+    const booked = bookedById.get(c.id)
+    const m = booked ? booked.month : effectiveCostMonth(c)
+    if (!inRange(m)) continue
+    const category = `${c.cost_category}/${c.subcategory}`
+    if (isForeignCurrencyCost(c)) {
+      // kwota w EUR/USD… nie jest w PLN — nie sumujemy jej z resztą ani nie liczymy jako duplikat
+      out.foreign_currency.count += 1
+      if (out.foreign_currency.items.length < 200) out.foreign_currency.items.push({
+        date: c.date, description: c.description, amount: r2(c.amount), currency: String(c.currency),
+        source: String(c.source ?? ''), category,
+      })
+      continue
+    }
+    // VAT i przelewy własne (rachunek VAT, między swoimi kontami) — poza RZiS; to nie koszt ani duplikat
+    if (costLine(c.cost_category, c.subcategory) === 'excluded') continue
+    if (!booked) {
+      // poza RZiS. Przelew z wyciągu, o którym nikt nie zdecydował (pnl_mode=auto, nierozpoznany, nie jest
+      // płatnością za fakturę KSeF) CZEKA NA DECYZJĘ — może to być koszt, którego w wyniku brakuje.
+      // Pozostałe: przelew przypisany w Płatnościach do faktury KSeF, pnl_mode=exclude, kategoria fakturowana.
+      const undecided = c.source === 'mt940' && (c.pnl_mode ?? 'auto') === 'auto' && !ksefPaid.has(String(c.id))
+      const bucket = undecided ? out.awaiting_decision : out.skipped_duplicates
+      bucket.count += 1; bucket.total += Number(c.amount) || 0
+      continue
+    }
+    const fromNonKsef = c.source === 'document' || (c.source === 'mt940' && c.pnl_mode === 'include')
+    // Koszty pracy tylko z linii G&A (tak liczy je payroll w RZiS); koszt pracy zaksięgowany w innej linii
+    // (np. umowa o dzieło w kosztach sprzedanych) zostaje w grupie swojego źródła
+    const payroll = booked.line === 'opex_ga' ? booked.payroll : null
+    const group: ManualDetailGroup = (payroll === 'salaries' || payroll === 'pit') ? 'salaries'
+      : payroll === 'zus' ? 'zus'
+      : booked.line === 'cit' ? 'taxes'
+      : IMPORT_SUBCATEGORIES.has(c.subcategory) ? 'import'
+      : fromNonKsef ? 'non_ksef'
+      : 'other_manual'
+    add(group, {
+      date: c.date,
+      // koszt ujęty w innym miesiącu niż data przelewu (np. spóźniony ZUS, pensja wypłacona 1.–2.) — mówimy to wprost
+      description: m !== String(c.date).slice(0, 7) ? `${c.description} (koszt za ${monthLabel(m)})` : c.description,
+      amount: r2(c.amount),
+      source: String(c.source ?? ''), category, period: m,
+    })
+  }
+
+  // Szacunek ZUS / PIT-4 za miesiące, za które przelewu jeszcze nie było (jest w RZiS — pokazujemy osobno)
+  for (const [m, p] of manual.payroll_months) {
+    if (!inRange(m)) continue
+    if (p.zus_estimate > 0) add('zus', {
+      date: lastDayOf(m), description: `ZUS — szacunek za ${monthLabel(m)} (przelewu jeszcze nie było)`,
+      amount: r2(p.zus_estimate), source: ESTIMATE_SOURCE, category: 'ga/zus_employer', period: m,
+    })
+    if (p.pit_estimate > 0) add('salaries', {
+      date: lastDayOf(m), description: `PIT-4 — szacunek za ${monthLabel(m)} (przelewu jeszcze nie było)`,
+      amount: r2(p.pit_estimate), source: ESTIMATE_SOURCE, category: 'ga/salary_pit', period: m,
+    })
+  }
+  return out
 }
 
 // ── POST /api/finance/manual-cost — ręczny koszt (np. import towaru z zagranicy) ──
@@ -455,9 +848,10 @@ router.post('/manual-cost', async (req: Request, res: Response) => {
 })
 
 // ── GET /api/finance/cost-details?from=YYYY-MM&to=YYYY-MM — pełny podział kosztów ──
-// Grupy spójne z regułami RZiS (te same wykluczenia i przeliczenia brutto→netto):
-// pensje / ZUS / podatki (CIT) / import / faktury KSeF / inne ręczne
-// + pominięte duplikaty MT940 + koszty per projekt.
+// Grupy spójne z regułami RZiS (te same wykluczenia, przeliczenia brutto→netto i TEN SAM miesiąc kosztu
+// co w silniku — loadManualCosts → manualCostDetails): pensje (+ PIT-4) / ZUS / podatki (CIT) / import /
+// faktury KSeF / inne ręczne + pominięte duplikaty MT940 + koszty per projekt.
+// Szacunek ZUS / PIT-4 jest osobną pozycją (source = ESTIMATE_SOURCE).
 router.get('/cost-details', async (req: Request, res: Response) => {
   try {
     const from = String(req.query.from ?? '').slice(0, 7)
@@ -467,34 +861,28 @@ router.get('/cost-details', async (req: Request, res: Response) => {
     }
     const inRange = (m: string) => m >= from && m <= to
 
-    const [allocations, manualCosts] = await Promise.all([
+    const [allocations, manual] = await Promise.all([
       prisma.ksefInvoiceAllocation.findMany({
         include: {
           invoice: { select: { invoice_number: true, seller_name: true, invoice_date: true, created_at: true, net_amount: true, gross_amount: true, invoice_direction: true } },
           project: { select: { id: true, name: true } },
         },
       }),
-      prisma.manualCost.findMany(),
+      loadManualCosts(),
     ])
 
     const r2 = (x: number) => Math.round(x * 100) / 100
-    type Item = { date: string; description: string; amount: number; source: string; category?: string }
-    const mkGroup = () => ({ total: 0, items: [] as Item[] })
+    const mkGroup = () => ({ total: 0, items: [] as CostDetailItem[] })
     const groups = {
-      salaries: mkGroup(),      // pensje (MT940/ręczne)
-      zus: mkGroup(),           // ZUS
+      salaries: mkGroup(),      // pensje + zaliczki PIT-4 (MT940/ręczne) + szacunek PIT-4
+      zus: mkGroup(),           // ZUS + szacunek ZUS
       taxes: mkGroup(),         // CIT (VAT poza RZiS — neutralny)
       import: mkGroup(),        // import towaru: cło, fracht, agencja, towar spoza UE
       ksef_invoices: mkGroup(), // pozostałe faktury kosztowe z KSeF
       non_ksef: mkGroup(),      // koszty spoza KSeF: dokumenty ze skrzynki + przelewy z reguł bankowych
       other_manual: mkGroup(),  // inne koszty ręczne
     }
-    const skippedDuplicates = { count: 0, total: 0 } // MT940 pominięte (kategorie fakturowane → są w KSeF)
-    // Koszty w walucie obcej bez przeliczenia na PLN — poza RZiS, do ręcznego przeliczenia
-    const foreignCurrency = { count: 0, items: [] as Array<Item & { currency: string }> }
     const projectMap = new Map<string, { project_id: string | null; name: string; total: number; count: number }>()
-
-    const IMPORT_SUBS = new Set(['hardware_noneu', 'hardware_eu', 'import_duty', 'import_freight', 'import_agency', 'import_vat'])
 
     // ── Alokacje KSeF (brutto → netto proporcją faktury) ──
     for (const a of allocations as any[]) {
@@ -506,12 +894,12 @@ router.get('/cost-details', async (req: Request, res: Response) => {
       if (line === 'excluded') continue
       const netRatio = inv.gross_amount > 0 && inv.net_amount > 0 ? inv.net_amount / inv.gross_amount : 1
       const amount = r2(a.amount * netRatio)
-      const item: Item = {
+      const item: CostDetailItem = {
         date: (inv.invoice_date || '').slice(0, 10),
         description: `${inv.seller_name ?? '—'} · ${inv.invoice_number ?? 'b/n'}`,
         amount, source: 'ksef', category: `${a.cost_category}/${a.subcategory}`,
       }
-      const g = IMPORT_SUBS.has(a.subcategory) ? groups.import : groups.ksef_invoices
+      const g = IMPORT_SUBCATEGORIES.has(a.subcategory) ? groups.import : groups.ksef_invoices
       g.total += amount; g.items.push(item)
 
       // per projekt
@@ -521,52 +909,31 @@ router.get('/cost-details', async (req: Request, res: Response) => {
       projectMap.set(key, cur)
     }
 
-    // ── Koszty ręczne/MT940 ──
-    for (const c of manualCosts as any[]) {
-      const m = (c.date || '').slice(0, 7)
-      if (!inRange(m)) continue
-      if (isForeignCurrencyCost(c)) {
-        // kwota w EUR/USD… nie jest w PLN — nie sumujemy jej z resztą ani nie liczymy jako duplikat
-        foreignCurrency.count += 1
-        if (foreignCurrency.items.length < 200) foreignCurrency.items.push({
-          date: c.date, description: c.description, amount: r2(c.amount), currency: String(c.currency),
-          source: c.source, category: `${c.cost_category}/${c.subcategory}`,
-        })
-        continue
-      }
-      if (!includeManualCostInPnl(c)) {
-        skippedDuplicates.count += 1; skippedDuplicates.total += c.amount
-        continue
-      }
-      const line = costLine(c.cost_category, c.subcategory)
-      if (line === 'excluded') continue // VAT — poza RZiS
-      const item: Item = {
-        date: c.date, description: c.description, amount: r2(c.amount),
-        source: c.source, category: `${c.cost_category}/${c.subcategory}`,
-      }
-      const fromNonKsef = c.source === 'document' || (c.source === 'mt940' && c.pnl_mode === 'include')
-      const g = (c.subcategory === 'salary_gross' || c.subcategory === 'salary_admin') ? groups.salaries
-        : c.subcategory === 'zus_employer' ? groups.zus
-        : c.subcategory === 'tax_income' ? groups.taxes
-        : IMPORT_SUBS.has(c.subcategory) ? groups.import
-        : fromNonKsef ? groups.non_ksef
-        : groups.other_manual
-      g.total += item.amount; g.items.push(item)
+    // ── Koszty ręczne/MT940 — miesiąc jak w silniku RZiS (koszty pracy memoriałowo, reszta: period / data),
+    // + szacunek ZUS / PIT-4 za miesiące, za które przelewu jeszcze nie było ──
+    const manualDetails = manualCostDetails(manual, from, to)
+    for (const k of Object.keys(manualDetails.groups) as ManualDetailGroup[]) {
+      groups[k].total += manualDetails.groups[k].total
+      groups[k].items.push(...manualDetails.groups[k].items)
     }
+    // MT940 pominięte (kategorie fakturowane → są w KSeF, płatności za faktury KSeF, pnl_mode=exclude)
+    const skippedDuplicates = { count: manualDetails.skipped_duplicates.count, total: r2(manualDetails.skipped_duplicates.total) }
+    // Koszty w walucie obcej bez przeliczenia na PLN — poza RZiS, do ręcznego przeliczenia
+    const foreignCurrency = manualDetails.foreign_currency
 
     for (const g of Object.values(groups)) {
       g.total = r2(g.total)
       g.items.sort((a, b) => b.date.localeCompare(a.date))
       if (g.items.length > 200) g.items = g.items.slice(0, 200)
     }
-    skippedDuplicates.total = r2(skippedDuplicates.total)
 
     const projects = [...projectMap.values()].map(p => ({ ...p, total: r2(p.total) })).sort((a, b) => b.total - a.total)
     const total = r2(Object.values(groups).reduce((s, g) => s + g.total, 0))
 
     foreignCurrency.items.sort((a, b) => b.date.localeCompare(a.date))
 
-    res.json({ from, to, groups, projects, skipped_mt940_duplicates: skippedDuplicates, foreign_currency_costs: foreignCurrency, total })
+    const awaitingDecision = { count: manualDetails.awaiting_decision.count, total: r2(manualDetails.awaiting_decision.total) }
+    res.json({ from, to, groups, projects, skipped_mt940_duplicates: skippedDuplicates, mt940_awaiting_decision: awaitingDecision, foreign_currency_costs: foreignCurrency, total })
   } catch (e) {
     console.error('[finance/cost-details]', e)
     res.status(500).json({ error: 'Błąd serwera' })
@@ -587,13 +954,19 @@ export type PnlYear = {
   quality: { unallocated_ksef_invoices: number; suspect_sales_records: number; fixed_assets_count: number }
 }
 
-export async function computePnlYear(year: number, bu = 'all'): Promise<PnlYear> {
+/**
+ * `manual` — gotowa alokacja kosztów spoza KSeF (loadManualCosts); podaj ją, gdy liczysz kilka lat lub łączysz
+ * RZiS z innym widokiem (Kondycja firmy, uzgodnienie z księgową), żeby wszystko opierało się na tych samych danych.
+ */
+export async function computePnlYear(year: number, bu = 'all', manual?: ManualAllocation): Promise<PnlYear> {
   {
     const months = monthsOf(year)
     const yFrom = `${year}-01-01`, yTo = `${year}-12-31`
 
-    // Źródła — jedno zapytanie na rok, agregacja w JS (skala: setki rekordów)
-    const [salesRecords, ksefOutgoing, moduleInvoices, allocations, manualCosts, assets] = await Promise.all([
+    // Źródła — jedno zapytanie na rok, agregacja w JS (skala: setki rekordów).
+    // Koszty spoza KSeF: cała historia, wszystkie jednostki (filtr jednostki w manualLinesByMonth) — koszt
+    // zapłacony w innym roku niż ten, którego dotyczy (ZUS z opóźnieniem, pensja 2 stycznia), musi być widoczny.
+    const [salesRecords, ksefOutgoing, moduleInvoices, allocations, manualAlloc, assets] = await Promise.all([
       prisma.salesRecord.findMany({ where: { period: { gte: months[0], lte: months[11] } } }),
       prisma.ksefInvoice.findMany({
         where: { invoice_direction: 'outgoing', invoice_date: { gte: yFrom, lte: yTo } },
@@ -607,7 +980,7 @@ export async function computePnlYear(year: number, bu = 'all'): Promise<PnlYear>
         where: bu !== 'all' ? { business_unit: bu } : {},
         include: { invoice: { select: { invoice_date: true, created_at: true, net_amount: true, gross_amount: true, invoice_direction: true } } },
       }),
-      prisma.manualCost.findMany({ where: { date: { gte: yFrom, lte: yTo }, ...(bu !== 'all' ? { business_unit: bu } : {}) } }),
+      manual ? Promise.resolve(manual) : loadManualCosts(),
       prisma.fixedAsset.findMany(),
     ])
 
@@ -663,17 +1036,21 @@ export async function computePnlYear(year: number, bu = 'all'): Promise<PnlYear>
       else l[line] += amountNet
     }
 
-    // ── Koszty: MT940/ręczne/dokumenty (reguła włączania: includeManualCostInPnl) ──
-    for (const c of manualCosts as any[]) {
-      if (!includeManualCostInPnl(c)) continue
-      const m = (c.date || '').slice(0, 7)
-      const l = L(m); if (!l) continue
-      const line = costLine(c.cost_category, c.subcategory)
-      if (line === 'excluded') continue
-      if (line === 'cit') l.cit += c.amount
-      else if (line === 'financial') l.financial_costs += c.amount
-      else if (line === 'cogs') l.cogs_purchases += c.amount
-      else l[line] += c.amount
+    // ── Koszty: MT940/ręczne/dokumenty — memoriałowo (allocateManualCosts): reguła włączania
+    // includeManualCostInPnl, bez płatności za faktury KSeF, koszty pracy w miesiącu, którego dotyczą,
+    // + szacunek ZUS / PIT-4 za miesiące bez przelewu (w opex_ga; payroll / payroll_estimate informacyjnie) ──
+    const manualMonths = manualLinesByMonth(manualAlloc, months, bu)
+    for (const m of months) {
+      const l = L(m)!, x = manualMonths.get(m)!
+      l.cogs_purchases += x.cogs_purchases
+      l.opex_sales += x.opex_sales
+      l.opex_ga += x.opex_ga
+      l.opex_operations += x.opex_operations
+      l.opex_leasing += x.opex_leasing
+      l.financial_costs += x.financial_costs
+      l.cit += x.cit
+      l.payroll += x.payroll
+      l.payroll_estimate += x.payroll_estimate
     }
 
     // ── Amortyzacja ──

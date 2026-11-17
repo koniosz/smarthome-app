@@ -15,7 +15,7 @@ import nodemailer from 'nodemailer'
 import { v4 as uuidv4 } from 'uuid'
 import { prisma } from '../db'
 import { getSmtpConfig } from './mailer'
-import { computeHealth, formatPln, plural, warsawToday, type HealthResponse, type HealthKind, type HealthCheck } from './finance-health'
+import { computeHealth, formatPln, plural, warsawToday, monthLabel, type HealthResponse, type HealthKind, type HealthCheck, estimateNoun } from './finance-health'
 import { getCompanySettings } from '../settings-store'
 import { currentCompanyId, getDefaultCompanyId } from '../tenant'
 
@@ -73,6 +73,40 @@ function checksHtml(checks: HealthCheck[]): string {
   return `<ul style="padding-left:18px;margin:8px 0;font-size:14px;line-height:1.45;">${items}</ul>`
 }
 
+/** „Lipiec 2026" / „Lipiec 2026 i Sierpień 2026" / „Lipiec 2026, Sierpień 2026 i Wrzesień 2026". */
+function joinMonths(periods: string[]): string {
+  const labels = periods.map(monthLabel)
+  return labels.length <= 1 ? (labels[0] ?? '') : `${labels.slice(0, -1).join(', ')} i ${labels[labels.length - 1]}`
+}
+
+/**
+ * Blok „Koszty pracy": przelewy wynagrodzeń, PIT-4 i ZUS okresu (część kosztów G&A — nie ma ich w KSeF,
+ * pochodzą z wyciągu bankowego) + szacunek ZUS / PIT-4 za miesiące, za które przelewu jeszcze nie było.
+ */
+export function payrollHtml(p: HealthResponse['payroll'] | undefined): string {
+  const heading = h2('Koszty pracy')
+  if (!p || !(p.total > 0)) {
+    return `${heading}
+      <p style="font-size:13px;color:#6b7280;margin:8px 0 0;">W tym okresie nie ma przelewów wynagrodzeń, PIT-4 ani ZUS — jeśli firma wypłaca pensje, sprawdź, czy wyciąg bankowy za ten okres jest wgrany.</p>`
+  }
+  const estimate = Math.round((p.zus_estimate + p.pit4_estimate) * 100) / 100
+  const row = (label: string, hint: string, value: number, extra = '') =>
+    `<tr>${td(`${esc(label)}${hint ? `<br><span style="font-size:11px;color:#9ca3af;">${esc(hint)}</span>` : ''}`, extra)}${td(formatPln(value), `text-align:right;font-weight:600;white-space:nowrap;${extra}`)}</tr>`
+  const rows = [
+    row('Wynagrodzenia', 'przelewy do pracowników (netto)', p.salaries),
+    row('PIT-4', 'zaliczki na podatek od wynagrodzeń', p.pit4 + p.pit4_estimate),
+    row('ZUS', 'składki od wynagrodzeń', p.zus + p.zus_estimate),
+    ...(estimate > 0 ? [row('w tym szacunek', `ZUS ${formatPln(p.zus_estimate)} · PIT-4 ${formatPln(p.pit4_estimate)} — przelewu jeszcze nie było`, estimate, 'color:#a16207;')] : []),
+    row('Razem koszty pracy', '', p.total, 'background:#faf5ff;'),
+  ].join('')
+  const note = estimate > 0
+    ? `${estimateNoun(p.zus_estimate, p.pit4_estimate)} za ${esc(joinMonths(p.estimated_months) || 'ten okres')} to na razie szacunek (${formatPln(estimate)}) — po wgraniu wyciągu z ${p.zus_estimate > 0 && p.pit4_estimate > 0 ? 'tymi przelewami' : 'tym przelewem'} zastąpią go rzeczywiste kwoty.`
+    : 'Kwoty z wyciągu bankowego, przypisane do miesiąca, którego dotyczą (nie do dnia przelewu).'
+  return `${heading}
+      ${table(`${th('Pozycja')}${th('Kwota', 'text-align:right;')}`, rows)}
+      ${muted(note)}`
+}
+
 function footer(): string {
   return `<p style="font-size:11px;color:#9ca3af;margin-top:28px;border-top:1px solid #e5e7eb;padding-top:12px;">
     Raport wygenerowany automatycznie przez SHC Manager; liczby zarządcze, ostateczne — biuro rachunkowe.
@@ -106,7 +140,9 @@ export function buildReportEmail(health: HealthResponse, companyName: string): {
     [`CIT — szacunek od stycznia (${x.cit_rate} %)`, formatPln(x.cit_estimate_ytd), `podstawa ${formatPln(x.cit_base_ytd)}`],
     ['CIT zapłacony od stycznia', formatPln(x.cit_paid_ytd), ''],
     ['CIT do dopłaty (szacunek)', formatPln(x.cit_to_pay_estimate), ''],
-    ['ZUS w tym okresie', formatPln(x.zus), ''],
+    ['ZUS zapłacony za ten okres', formatPln(x.zus), (health.payroll?.zus_estimate ?? 0) > 0
+      ? `bez szacunku — w „Kosztach pracy” ZUS jest o ${formatPln(health.payroll!.zus_estimate)} wyższy (przelewu jeszcze nie było)`
+      : 'składki pracownika i pracodawcy, liczone za miesiąc, którego dotyczą'],
   ].map(([l, v, h]) => `<tr>${td(`${esc(l)}${h ? `<br><span style="font-size:11px;color:#9ca3af;">${esc(h)}</span>` : ''}`)}${td(v, 'text-align:right;font-weight:600;white-space:nowrap;')}</tr>`).join('')
 
   const html = `
@@ -139,6 +175,8 @@ export function buildReportEmail(health: HealthResponse, companyName: string): {
       ${h2('Na co idą pieniądze')}
       ${table(`${th('Kategoria')}${th('Kwota', 'text-align:right;')}${th('Udział', 'text-align:right;')}`, breakdownRows)}
       ${muted('Sześć największych grup kosztów (netto) w tym okresie.')}
+
+      ${payrollHtml(health.payroll)}
 
       ${h2('Podatki')}
       ${table(`${th('Pozycja')}${th('Kwota', 'text-align:right;')}`, taxRows)}

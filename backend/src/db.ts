@@ -473,7 +473,8 @@ export const db = {
     insert: (data: any) =>
       prisma.bankTransaction.create({ data }),
     list: (filter?: any) =>
-      prisma.bankTransaction.findMany({ where: filter, orderBy: { transaction_date: 'desc' } }),
+      // kolejność w obrębie dnia jest stała (created_at, id) — plan importu paruje wiersze po kolei
+      prisma.bankTransaction.findMany({ where: filter, orderBy: [{ transaction_date: 'desc' }, { created_at: 'asc' }, { id: 'asc' }] }),
     find: (id: string) =>
       prisma.bankTransaction.findUnique({ where: { id } }),
     update: (id: string, data: any) =>

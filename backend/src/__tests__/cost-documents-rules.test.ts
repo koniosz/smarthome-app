@@ -3,12 +3,12 @@
  * czy nie), znacznik „wykluczony przez dokument” w notes przelewu MT940, widok dla pracownika, notatka NBP.
  * Uruchom: cd backend && npx tsx --test src/__tests__/cost-documents-rules.test.ts
  */
-import { describe, it } from 'node:test'
+import { describe, it, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   pnlAmountForDocument, isVatDeductible,
   excludedByDocumentMarker, parseExcludedByDocument, stripExcludedByDocument, appendNote,
-  employeeView, EMPLOYEE_EXTRACT_ERROR, stripNbpFailNote,
+  employeeView, EMPLOYEE_EXTRACT_ERROR, stripNbpFailNote, restoredPnlMode, stripDocumentDuplicateNote,
 } from '../routes/cost-documents'
 
 describe('kwota kosztu do RZiS (pnlAmountForDocument)', () => {
@@ -94,4 +94,25 @@ describe('notatka o braku kursu NBP', () => {
     assert.equal(stripNbpFailNote('Nie udało się pobrać kursu NBP dla EUR — popraw datę/walutę lub wpisz kwoty w PLN. · uwaga księgowej'), 'uwaga księgowej')
     assert.equal(stripNbpFailNote('zwykła notatka'), 'zwykła notatka')
   })
+})
+
+// ── Odrzucenie dokumentu sparowanego z przelewem rozpoznanym przez klasyfikator ──
+
+test('restoredPnlMode: bez reguły przelew wraca do wyniku klasyfikatora (dostawca zagraniczny → include), nie do gołego auto', () => {
+  assert.equal(restoredPnlMode('auto', 'foreign_vendor'), 'include')
+  assert.equal(restoredPnlMode('auto', 'foreign_transfer'), 'include')
+  assert.equal(restoredPnlMode('include', null), 'include', 'przed wykluczeniem był liczony — znów jest')
+  assert.equal(restoredPnlMode('auto', null), 'auto', 'nierozpoznany przelew wraca na listę do decyzji')
+  assert.equal(restoredPnlMode('auto', 'salary'), 'auto', 'pensja liczy się z listy bezpiecznej (auto)')
+  assert.equal(restoredPnlMode('auto', 'internal'), 'exclude', 'przelew własny nigdy nie jest kosztem')
+  assert.equal(restoredPnlMode('auto', 'cos-nieznanego'), 'auto')
+})
+
+test('stripDocumentDuplicateNote: usuwa ślad strażnika importu, zostawia resztę notatki', () => {
+  const id = 'doc-123'
+  assert.equal(stripDocumentDuplicateNote(`rozpoznano: Dostawca zagraniczny (bez KSeF) — sprzedawca X · duplikat dokumentu ${id} —`, id),
+    'rozpoznano: Dostawca zagraniczny (bez KSeF) — sprzedawca X')
+  assert.equal(stripDocumentDuplicateNote(`duplikat dokumentu ${id} —`, id), '')
+  assert.equal(stripDocumentDuplicateNote(`duplikat dokumentu inny-dokument — · uwaga`, id), 'duplikat dokumentu inny-dokument — · uwaga')
+  assert.equal(stripDocumentDuplicateNote(null, id), '')
 })

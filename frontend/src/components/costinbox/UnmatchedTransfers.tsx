@@ -3,16 +3,35 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Plus, Check, Ban, RotateCcw } from 'lucide-react'
 import { bankRulesApi, type UnmatchedTransfer } from '../../api/costInbox'
-import { BUSINESS_UNITS, categoryForSubcategory, subcategoryLabel } from '../../constants/costTaxonomy'
+import { BUSINESS_UNITS, categoryForSubcategory, subcategoryLabel, bankKindLabel } from '../../constants/costTaxonomy'
 import { money, fmtDate, currentMonth, errorMessage, inputCls, labelCls, cardCls, btnPrimary, btnSecondary, btnGhost, Badge, Alert, SubcategorySelect } from './shared'
 
-export default function UnmatchedTransfers({ refreshKey, onMakeRule }: {
+// Serwer zwraca najwyżej tyle pozycji — największe kwoty z zakresu (backend: routes/bank-rules.ts GET /unmatched, slice(0, 300)).
+// Po ponownym wgraniu wyciągów z wielu miesięcy lista bywa dłuższa; pełna odpowiedź = sygnał, że reszty nie widać.
+const SERVER_LIMIT = 300
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+
+// Odmiana po liczebniku: 1 przelew · 2–4 przelewy · 5+ przelewów (12–14 też „przelewów”)
+function transfersWord(n: number): string {
+  const d = n % 10, h = n % 100
+  if (n === 1) return 'przelew'
+  return d >= 2 && d <= 4 && !(h >= 12 && h <= 14) ? 'przelewy' : 'przelewów'
+}
+
+export default function UnmatchedTransfers({ refreshKey, onMakeRule, initialFrom }: {
   refreshKey: number
   onMakeRule: (t: UnmatchedTransfer) => void
+  /** YYYY-MM — od którego miesiąca otworzyć listę (link z Płatności po imporcie wyciągu); bez niego: 3 ostatnie miesiące */
+  initialFrom?: string
 }) {
-  const [from, setFrom] = useState(currentMonth(-2))
+  // Wartość początkowa czytana raz, przy pierwszym renderze; potem zakresem rządzą pola „Od” / „Do”
+  const [from, setFrom] = useState(() =>
+    initialFrom && MONTH_RE.test(initialFrom) && initialFrom <= currentMonth(0) ? initialFrom : currentMonth(-2))
   const [to, setTo] = useState(currentMonth(0))
   const [items, setItems] = useState<UnmatchedTransfer[]>([])
+  // Czy ostatnia odpowiedź serwera była pełna (300) — zapamiętane przy pobraniu, bo po decyzjach lista lokalnie się kurczy
+  const [capped, setCapped] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showExcluded, setShowExcluded] = useState(false)
@@ -31,6 +50,7 @@ export default function UnmatchedTransfers({ refreshKey, onMakeRule }: {
       const list = await bankRulesApi.unmatched(from, to)
       if (my !== seq.current) return
       setItems(list)
+      setCapped(list.length >= SERVER_LIMIT)
     } catch (e) {
       if (my !== seq.current) return
       setError(errorMessage(e, 'Nie udało się pobrać przelewów.'))
@@ -100,8 +120,22 @@ export default function UnmatchedTransfers({ refreshKey, onMakeRule }: {
 
       {error && <div className="mb-3"><Alert tone="red">{error}</Alert></div>}
 
+      {/* Pełna odpowiedź serwera: pokazujemy tylko największe — żeby nikt nie uznał, że to wszystko.
+          Pominięte też zajmują miejsce w tych 300, dlatego radzimy zawęzić zakres, a nie „odświeżyć”. */}
+      {capped && !loading && (
+        <div className="mb-3">
+          <Alert tone="amber">
+            Lista mieści najwyżej {SERVER_LIMIT} pozycji — widzisz <b>tylko {SERVER_LIMIT} największych przelewów</b> z tego zakresu, może ich być więcej.
+            Zawęź zakres dat (Od / Do), żeby zobaczyć pozostałe.
+          </Alert>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 mb-2 flex-wrap">
-        <span>{visible.length} przelewów · razem <b className="text-gray-700 dark:text-gray-200">{money(total)}</b></span>
+        <span>
+          <b className="text-gray-700 dark:text-gray-200">{visible.length}</b> {transfersWord(visible.length)}
+          {capped && ' (największe z zakresu)'} · razem <b className="text-gray-700 dark:text-gray-200">{money(total)}</b>
+        </span>
         {excludedCount > 0 && (
           <label className="inline-flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" checked={showExcluded} onChange={e => setShowExcluded(e.target.checked)} className="accent-violet-600" />
@@ -113,20 +147,29 @@ export default function UnmatchedTransfers({ refreshKey, onMakeRule }: {
       {loading ? (
         <div className="p-8 text-center text-gray-400 text-sm">Ładowanie…</div>
       ) : visible.length === 0 ? (
-        <div className="p-8 text-center text-gray-400 text-sm">Wszystkie przelewy w tym zakresie są rozpoznane. 🎉</div>
+        <div className="p-8 text-center text-gray-400 text-sm">
+          {/* przy obciętej liście nie wolno twierdzić, że rozpoznane jest wszystko — widać tylko część zakresu */}
+          {capped
+            ? `Wśród ${SERVER_LIMIT} największych przelewów nie ma już żadnego do decyzji — zawęź zakres dat, żeby sprawdzić pozostałe.`
+            : 'Wszystkie przelewy w tym zakresie są rozpoznane. 🎉'}
+        </div>
       ) : (
         <div className="divide-y divide-gray-100 dark:divide-gray-800 border-t border-gray-100 dark:border-gray-800">
           {visible.map(t => {
             const busy = busyId === t.id
             const isExcluded = t.pnl_mode === 'exclude'
+            // Rodzaj rozpoznany automatycznie z wyciągu (np. „Przelew własny / rachunek VAT”) — brak w starszych odpowiedziach
+            const autoLabel = bankKindLabel(t.auto_kind, t.auto_label)
             return (
               <div key={t.id} className={`py-2.5 ${isExcluded ? 'opacity-60' : ''}`}>
                 <div className="flex items-center gap-3 flex-wrap md:flex-nowrap text-sm">
                   <span className="text-xs text-gray-400 tabular-nums w-20 flex-shrink-0">{fmtDate(t.date)}</span>
                   <span className="font-bold tabular-nums text-gray-800 dark:text-gray-100 w-28 text-right flex-shrink-0">{money(t.amount)}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-gray-700 dark:text-gray-200 truncate" title={t.description}>{t.description || '(bez opisu)'}</div>
+                    {/* operacje bez tytułu (opłaty, przewalutowania) mają pusty opis — pokaż wtedy rozpoznany rodzaj */}
+                    <div className="text-gray-700 dark:text-gray-200 truncate" title={t.description || autoLabel}>{t.description || autoLabel || '(bez opisu)'}</div>
                     <div className="text-[11px] text-gray-400 truncate">
+                      {autoLabel && <><Badge tone="blue" title="Rodzaj przelewu rozpoznany automatycznie z wyciągu">{autoLabel}</Badge> · </>}
                       {t.reference && <span title="Referencja bankowa">ref. {t.reference} · </span>}
                       <span title="Kategoria nadana automatycznie">{subcategoryLabel(t.subcategory)}</span>
                       {isExcluded && <> · <Badge tone="gray">pominięty</Badge></>}

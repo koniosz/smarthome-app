@@ -12,7 +12,7 @@ import {
 } from '../services/mt940-costs'
 import {
   suggestPattern, isKsefPayment, buildMatchedIndex, hasDecisionMarker, isDecidedOutsideRules,
-  withManualDecisionMarker, withoutManualDecisionMarker,
+  withManualDecisionMarker, withoutManualDecisionMarker, patternSourceTitle,
 } from '../routes/bank-rules'
 
 const rule = (over: Partial<BankRuleLike> & { id: string; pattern: string }): BankRuleLike => ({
@@ -109,12 +109,37 @@ test('mt940CostKey: data|kwota|referencja; NONREF/brak referencji → początek 
   assert.equal(mt940CostKey({ date: '2026-03-05', amount: -10, reference: '', description: 'opis' }), '2026-03-05|10.00|opis')
 })
 
-test('suggestPattern: najdłuższe słowo ≥ 4 liter bez cyfr, kontrahent przed opisem, bez słów ogólnych', () => {
+test('suggestPattern: pierwsze wyróżniające słowo ≥ 4 liter bez cyfr, kontrahent przed opisem, bez słów ogólnych', () => {
   assert.equal(suggestPattern('ZAKLAD UBEZPIECZEN SPOLECZNYCH', 'Przelew skladki'), 'UBEZPIECZEN')
   assert.equal(suggestPattern('', 'Przelew za fakture FV/12/2024 ORANGE'), 'ORANGE')
   assert.equal(suggestPattern('Faktura', 'Płatność'), '', 'same słowa ogólne → brak propozycji')
   assert.equal(suggestPattern('AB12CD', 'x'), '', 'tokeny z cyframi rozbijają się na krótkie fragmenty')
   assert.equal(suggestPattern('Sp. z o.o. Żabka', ''), 'Żabka')
+})
+
+test('suggestPattern: płatność kartą → sprzedawca, nigdy „TRANSAKCJI" ani miasto; nazwa firmy → marka, nie forma prawna', () => {
+  // tytuł płatności kartą z wyciągu: „SPRZEDAWCA/MIASTO DATA TRANSAKCJI: RRRR-MM-DD", bez kontrahenta
+  assert.equal(suggestPattern('', 'BUDOMARKET KASA 8/WARSZAWA DATA TRANSAKCJI: 2026-09-01'), 'BUDOMARKET')
+  assert.equal(suggestPattern('', 'PRZYKLADSOFT *SUBSKRYPCJA/PRZYKLADSOFT.COM DATA TRANSAKCJI: 2026-01-03'), 'PRZYKLADSOFT')
+  assert.equal(suggestPattern('', 'STACJA PALIW NR 459/WOLA TESTOWA DATA TRANSAKCJI: 2026-05-07'), 'PALIW')
+  assert.notEqual(suggestPattern('', 'XYZ/WARSZAWA DATA TRANSAKCJI: 2026-09-01'), 'TRANSAKCJI')
+  assert.equal(suggestPattern('', 'XYZ/WARSZAWA DATA TRANSAKCJI: 2026-09-01'), '', 'sprzedawca bez słowa ≥ 4 liter → brak propozycji zamiast miasta')
+  // nazwa firmy: pierwsze wyróżniające słowo, nie najdłuższy ogólnik
+  assert.equal(suggestPattern('ELMAX SPÓŁKA Z OGRANICZONĄ ODPOWIEDZIALNOŚCIĄ', 'faktura 12/2026'), 'ELMAX')
+  assert.equal(suggestPattern('PRZEDSIĘBIORSTWO HANDLOWO-USŁUGOWE ELMAX', 'faktura 12/2026'), 'ELMAX')
+  // urząd skarbowy: żadnego „SKARBOWY" (pasowałby do VAT, PIT-4 i CIT naraz) — zostaje nazwa dzielnicy / miasta spoza listy
+  assert.equal(suggestPattern('URZĄD SKARBOWY', 'PCC-3 opłata'), '', 'same ogólniki → brak propozycji')
+  assert.notEqual(suggestPattern('URZĄD SKARBOWY WARSZAWA-MOKOTÓW', 'PCC-3'), 'SKARBOWY')
+  // split payment: struktura /VAT/…/IDC/…/INV/… to numery, nie nazwa → wzorzec z kontrahenta albo brak
+  assert.equal(suggestPattern('', '/VAT/123,45/IDC/5210000001/INV/FS/211/02/2026/TXT/PRZELEW ŚRODKÓW'), '')
+  assert.equal(suggestPattern('HURTOWNIA PRZYKŁAD SP. Z O.O.', '/VAT/123,45/IDC/5210000001/INV/FS/211/02/2026/TXT/PRZELEW ŚRODKÓW'), 'HURTOWNIA')
+})
+
+test('patternSourceTitle: obcina stopkę płatności kartą i miasto po „/"; zwykły tytuł zostaje', () => {
+  assert.equal(patternSourceTitle('BUDOMARKET KASA 8/WARSZAWA DATA TRANSAKCJI: 2026-09-01'), 'BUDOMARKET KASA 8')
+  assert.equal(patternSourceTitle('Zapłata za fakturę 12/2026'), 'Zapłata za fakturę 12/2026')
+  assert.equal(patternSourceTitle('/VAT/1,00/IDC/5210000001/INV/1/2026/TXT/x'), '')
+  assert.equal(patternSourceTitle(null), '')
 })
 
 test('isKsefPayment: data + kwota ± 0,01 + zgodna referencja (brak referencji → data + kwota)', () => {

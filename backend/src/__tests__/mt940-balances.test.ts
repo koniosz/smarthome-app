@@ -73,7 +73,11 @@ test('parseMT940Statements: transakcje dostają rachunek i walutę wyciągu', ()
     assert.equal(t.is_reversal, false)
   }
   assert.equal(transactions[0].reference, '8734501')
-  assert.ok(transactions[0].description.includes('~32ZAKLAD UBEZPIECZEN'), 'surowe subpola ~NN zostają (czyści je cleanMt940Fields)')
+  // subpola ~NN rozkłada już parser: opis = czysty tytuł, kontrahent i IBAN w osobnych polach
+  assert.equal(transactions[0].description, 'Faktura FV/2024/01/12 skladki')
+  assert.equal(transactions[0].counterparty, 'ZAKLAD UBEZPIECZEN SPOLECZNYCH')
+  assert.equal(transactions[0].counterparty_iban, 'PL12345678901234567890123456')
+  assert.ok(!transactions.some(t => t.description.includes('~')), 'opis bez znaczników subpól')
   // „-" (koniec komunikatu SWIFT) nie trafia do opisu
   assert.ok(!transactions[3].description.endsWith('-'))
 })
@@ -129,4 +133,64 @@ test('parseBalanceField: C dodatnie, D ujemne, błędny format → null', () => 
   assert.deepEqual(parseBalanceField('D240116PLN3765,44'), { date: '2024-01-16', currency: 'PLN', amount: -3765.44 })
   assert.equal(parseBalanceField('240116PLN1,00'), null)
   assert.equal(parseBalanceField(''), null)
+})
+
+// ── Znak salda uzgadniany z ruchem na wyciągu (mBank oznacza literą „D" zwykłe, dodatnie saldo) ──
+
+const stmt = (opening: string, closing: string, txLines: string[], account = 'PL61114020040000300299990001', no = '00001/001') => [
+  ':20:MT940', `:25:/${account}`, `:28C:${no}`, `:60F:${opening}`, ...txLines, `:62F:${closing}`,
+].join('\r\n')
+const debit = (amount: string, ref: string) => [`:61:2609100910D${amount}S152${ref}`, ':86:152', ':86:152~00B152PRZELEW ZEWNĘTRZNY WYCH', '~20FAKTURA 1/2026', '~32FIRMA TESTOWA', '~34152', '~38PL']
+const credit = (amount: string, ref: string) => [`:61:2609110911C${amount}S150${ref}`, ':86:150', ':86:150~00B150PRZELEW ZEWNĘTRZNY PRZY', '~20ZAPLATA', '~32KLIENT TESTOWY', '~34150', '~38PL']
+
+test('saldo oznaczone „D", które rośnie z uznaniami i maleje z obciążeniami, jest DODATNIE (konwencja mBanku)', () => {
+  // 10 000 − 6 100 + 2 000 = 5 900; bank zapisał oba salda z literą D
+  const { balances } = parseMT940Statements(stmt('D260901PLN10000,00', 'D260930PLN5900,00', [...debit('6100,00', '00000000001'), ...credit('2000,00', '00000000002')]))
+  assert.equal(balances.length, 1)
+  assert.equal(balances[0].opening, 10000)
+  assert.equal(balances[0].closing, 5900)
+})
+
+test('prawdziwy debet (saldo „D" rośnie z obciążeniami) zostaje ujemny; saldo „C" zostaje dodatnie', () => {
+  // debet 10 000, przelew 6 100 pogłębia go do 16 100
+  const overdraft = parseMT940Statements(stmt('D260901PLN10000,00', 'D260930PLN16100,00', debit('6100,00', '00000000001'))).balances[0]
+  assert.equal(overdraft.opening, -10000)
+  assert.equal(overdraft.closing, -16100)
+  const normal = parseMT940Statements(stmt('C260901PLN10000,00', 'C260930PLN3900,00', debit('6100,00', '00000000001'))).balances[0]
+  assert.equal(normal.opening, 10000)
+  assert.equal(normal.closing, 3900)
+  // przejście z plusa w debet w zwykłej konwencji (C → D) też zostaje nietknięte
+  const cross = parseMT940Statements(stmt('C260901PLN1000,00', 'D260930PLN5100,00', debit('6100,00', '00000000001'))).balances[0]
+  assert.equal(cross.opening, 1000)
+  assert.equal(cross.closing, -5100)
+})
+
+test('wyciąg bez ruchu przejmuje decyzję innego wyciągu tego samego rachunku z pliku; sam — zostaje przy literze', () => {
+  const withMove = stmt('D260901PLN10000,00', 'D260930PLN5900,00', [...debit('6100,00', '00000000001'), ...credit('2000,00', '00000000002')], 'PL61114020040000300299990001', '00001/001')
+  const noMove = stmt('D261001PLN5900,00', 'D261001PLN5900,00', [], 'PL61114020040000300299990001', '00002/001')
+  const other = stmt('D261001PLN700,00', 'D261001PLN700,00', [], 'PL22114020040000300288880002', '00001/001')
+  const { balances } = parseMT940Statements([withMove, noMove, other].join('\r\n'))
+  assert.equal(balances.length, 3)
+  assert.deepEqual(balances.map(b => b.closing), [5900, 5900, -700])   // trzeci: inny rachunek, brak ruchu → litera D = minus
+  // pojedynczy wyciąg bez ruchu: nic nie rozstrzyga
+  assert.equal(parseMT940Statements(noMove).balances[0].closing, -5900)
+})
+
+test('znak salda: wyciąg, którego arytmetyka nie zgadza się w żadną stronę, zostaje przy literze (nie zgadujemy)', () => {
+  const { balances } = parseMT940Statements(stmt('D260901PLN10000,00', 'D260930PLN1234,00', debit('6100,00', '00000000001')))
+  assert.equal(balances[0].opening, -10000)
+  assert.equal(balances[0].closing, -1234)
+})
+
+test('normalizacja linii: BOM w środku pliku (dwa sklejone wyciągi) i podwójny CR nie psują parsowania', () => {
+  const a = stmt('C260901PLN10000,00', 'C260930PLN3900,00', debit('6100,00', '00000000001'), 'PL61114020040000300299990001')
+  const b = stmt('C260901PLN500,00', 'C260930PLN2500,00', credit('2000,00', '00000000002'), 'PL22114020040000300288880002')
+  const glued = parseMT940Statements('﻿' + a + '\r\n' + '﻿' + b)
+  assert.equal(glued.balances.length, 2, 'drugi nagłówek :20: po BOM zaczyna nowy wyciąg')
+  assert.deepEqual(glued.transactions.map(t => t.account), ['PL61114020040000300299990001', 'PL22114020040000300288880002'])
+  // CR CR LF: 27-znakowy kawałek tytułu nadal skleja się bez spacji w środku słowa
+  const title = [':20:MT940', ':25:/PL61114020040000300299990001', ':28C:1/1', ':60F:C260901PLN10000,00',
+    ':61:2609100910D6100,00S15200000000003', ':86:152', ':86:152~00B152PRZELEW ZEWNĘTRZNY WYCH',
+    '~20PRZELEW ZA WRZESIEN - WYNAG', '~21RODZENIE 9/2026', '~32JAN TESTOWY', '~34152', '~38PL', ':62F:C260930PLN3900,00'].join('\r\r\n')
+  assert.equal(parseMT940Statements(title).transactions[0].description, 'PRZELEW ZA WRZESIEN - WYNAGRODZENIE 9/2026')
 })

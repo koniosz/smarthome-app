@@ -65,7 +65,7 @@ export const manualCostsApi = {
   remove: (id: string) =>
     api.delete(`/manual-costs/${id}`).then(r => r.data),
   importMt940: (content: string) =>
-    api.post<{ total_parsed: number; outgoing: number; saved: number; message: string; costs: import('../types').ManualCost[] }>(
+    api.post<import('../types').ManualCostsMt940ImportResult>(
       '/manual-costs/import-mt940', { content }
     ).then(r => r.data),
   summary: (params?: { dateFrom?: string; dateTo?: string; business_unit?: string }) =>

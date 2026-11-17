@@ -2,12 +2,12 @@
 // Dane: GET /finance/health (sekcja A), /finance/cashflow (B.5), /finance/inventory (C).
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Mail, Eye, Settings, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Mail, Eye, Settings, RefreshCw, Users } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
-import { healthApi, inventoryApi, type HealthResponse, type InventoryResponse, type ReportSettings } from '../api/health'
+import { healthApi, inventoryApi, type HealthResponse, type HealthPayroll, type InventoryResponse, type ReportSettings } from '../api/health'
 import { defaultPeriod, shiftPeriod, toMonth, toQuarter, kindOf, periodLabel, periodRange, yearOf, isFuture } from '../components/health/period'
-import { btnPrimary, btnSecondary, btnGhost, ErrorBox } from '../components/health/ui'
-import { fmt0 } from '../components/health/format'
+import { btnPrimary, btnSecondary, btnGhost, ErrorBox, Card, Hint } from '../components/health/ui'
+import { fmt0, money0 } from '../components/health/format'
 import StatusCard from '../components/health/StatusCard'
 import Tiles from '../components/health/Tiles'
 import CompareCard from '../components/health/CompareCard'
@@ -22,6 +22,80 @@ import ReportPreviewModal from '../components/health/ReportPreviewModal'
 import ReportSettingsModal from '../components/health/ReportSettingsModal'
 
 type Modal = null | 'send' | 'preview' | 'settings'
+
+// ── Karta „Koszty pracy” ──────────────────────────────────────────────────────
+const MONTHS_PL_LOWER = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień']
+
+/** ['2026-09', '2026-10'] → „wrzesień i październik 2026”; różne lata → „grudzień 2025 i styczeń 2026” */
+function monthsPl(periods: string[]): string {
+  const valid = [...new Set(periods)].filter(p => /^\d{4}-(0[1-9]|1[0-2])$/.test(p)).sort()
+  if (valid.length === 0) return ''
+  const sameYear = valid.every(p => p.slice(0, 4) === valid[0].slice(0, 4))
+  const names = valid.map(p => {
+    const name = MONTHS_PL_LOWER[parseInt(p.slice(5, 7), 10) - 1]
+    return sameYear ? name : `${name} ${p.slice(0, 4)}`
+  })
+  const joined = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} i ${names[names.length - 1]}`
+  return sameYear ? `${joined} ${valid[0].slice(0, 4)}` : joined
+}
+
+function PayrollRow({ label, value, hint, bold }: { label: string; value: number; hint?: string; bold?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-gray-50 dark:border-gray-800/60 last:border-0">
+      <div className="min-w-0">
+        <div className={`text-sm ${bold ? 'font-bold text-gray-800 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'}`}>{label}</div>
+        {hint && <div className="text-[11px] text-gray-400 leading-snug">{hint}</div>}
+      </div>
+      <div className={`text-sm tabular-nums whitespace-nowrap text-gray-800 dark:text-gray-100 ${bold ? 'font-bold' : 'font-semibold'}`}>{money0(value)}</div>
+    </div>
+  )
+}
+
+function PayrollCard({ payroll, onUpload }: { payroll: HealthPayroll; onUpload: () => void }) {
+  const n = (v: unknown) => (typeof v === 'number' && isFinite(v) ? v : 0)
+  const salaries = n(payroll.salaries)
+  const zusEst = n(payroll.zus_estimate), pitEst = n(payroll.pit4_estimate)
+  const estimate = zusEst + pitEst
+  const paid = salaries + n(payroll.pit4) + n(payroll.zus)
+  const total = n(payroll.total) || paid + estimate
+  // Wiersze mają się sumować do „Razem”. Gdy `zus` / `pit4` z backendu to same przelewy (bez szacunku),
+  // doliczamy szacunek do wiersza; gdy już go zawierają — nie dublujemy. Rozstrzyga suma `total`.
+  const separate = estimate > 0 && Math.abs(total - (paid + estimate)) < Math.abs(total - paid)
+  const zus = n(payroll.zus) + (separate ? zusEst : 0)
+  const pit4 = n(payroll.pit4) + (separate ? pitEst : 0)
+  const months = monthsPl(payroll.estimated_months ?? [])
+
+  return (
+    <Card title="Koszty pracy" subtitle="Pensje, podatek od pensji (PIT-4) i ZUS — odczytane z przelewów na wyciągu bankowym."
+      right={<Users size={16} className="text-gray-300 dark:text-gray-600" />}>
+      {total <= 0 ? (
+        <div className="text-sm text-gray-500 dark:text-gray-400">
+          W tym okresie system nie widzi wypłat, ZUS ani PIT-4.{' '}
+          <button onClick={onUpload} className="text-violet-600 dark:text-violet-400 font-semibold hover:underline">Wgraj wyciąg MT940 →</button>
+        </div>
+      ) : (
+        <>
+          <div>
+            <PayrollRow label="Wynagrodzenia" value={salaries} hint="przelewy pensji na konta pracowników" />
+            <PayrollRow label="PIT-4" value={pit4} hint={pitEst > 0 ? `podatek od pensji do urzędu skarbowego · w tym szacunek ${money0(pitEst)}` : 'podatek od pensji do urzędu skarbowego'} />
+            <PayrollRow label="ZUS" value={zus} hint={zusEst > 0 ? `składki pracownika i pracodawcy · w tym szacunek ${money0(zusEst)}` : 'składki pracownika i pracodawcy'} />
+            <PayrollRow label="Razem koszty pracy" value={total} bold />
+          </div>
+          {estimate > 0 && (
+            <div className="text-xs text-gray-400 dark:text-gray-500 mt-2 leading-snug">
+              w tym szacunek ZUS/PIT-4: <span className="font-semibold tabular-nums">{money0(estimate)}</span>
+              {months ? <> — przelewów za {months} jeszcze nie było</> : <> — przelewów za ten okres jeszcze nie było</>}
+            </div>
+          )}
+          <Hint>
+            Koszt jest przypisany do miesiąca, którego dotyczy, a nie do dnia przelewu (ZUS i PIT-4 płaci się w następnym miesiącu).
+            {estimate > 0 && <> Szacunek liczymy na podstawie innych miesięcy — zniknie sam, gdy wgrasz wyciąg z prawdziwym przelewem.</>}
+          </Hint>
+        </>
+      )}
+    </Card>
+  )
+}
 
 export default function KondycjaPage() {
   const { user } = useAuth()
@@ -151,9 +225,16 @@ export default function KondycjaPage() {
           </div>
 
           <div className="grid lg:grid-cols-2 gap-4">
-            <CostBreakdown items={data.cost_breakdown} total={totalCosts} />
+            {data.payroll ? (
+              <div className="space-y-4">
+                <CostBreakdown items={data.cost_breakdown} total={totalCosts} />
+                <PayrollCard payroll={data.payroll} onUpload={() => navigate('/platnosci')} />
+              </div>
+            ) : (
+              <CostBreakdown items={data.cost_breakdown} total={totalCosts} />
+            )}
             <div className="space-y-4">
-              <TaxesCard taxes={data.taxes} yearLabel={String(year)} />
+              <TaxesCard taxes={data.taxes} yearLabel={String(year)} payroll={data.payroll} />
               {inventory && inventory.year === year && (
                 <InventoryCard inv={inventory} range={range} inPnl={settings?.inventory_in_pnl} />
               )}

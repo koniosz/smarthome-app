@@ -179,6 +179,9 @@ export interface UnmatchedTransfer {
   cost_category: string
   pnl_mode: PnlMode | string
   suggested_pattern: string
+  /** Rodzaj rozpoznany automatycznie (zus, salary, foreign_vendor…) i jego etykieta; null/brak = nierozpoznany lub stary import */
+  auto_kind?: string | null
+  auto_label?: string | null
 }
 
 export interface UnmatchedCostPatch {

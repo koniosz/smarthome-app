@@ -2,7 +2,10 @@
  * „Kondycja firmy" — zdrowie finansowe spółki za miesiąc lub kwartał, językiem laika.
  *
  * Składa RZiS (computePnlYear z routes/finance.ts) z:
- *  - kontrolami kompletności danych (MT940, Firmao, KSeF, skrzynka kosztów, księgowa),
+ *  - kontrolami kompletności danych (MT940 — także wyciągi wgrane starym importem bez tytułów przelewów,
+ *    Firmao, KSeF, skrzynka kosztów, księgowa, miesiące bez pensji),
+ *  - kosztami pracy (pensje, PIT-4, ZUS z wyciągu — w miesiącu, którego dotyczą — + szacunek ZUS / PIT-4
+ *    za miesiące bez przelewu); koszty spoza KSeF bierzemy z TEJ SAMEJ alokacji co silnik RZiS (loadManualCosts),
  *  - szacunkiem podatków (VAT, CIT, ZUS),
  *  - gotówką (salda MT940, należności, zobowiązania),
  *  - porównaniami (poprzedni okres, rok temu) i trendem 12 miesięcy.
@@ -14,7 +17,9 @@
 import { prisma } from '../db'
 import {
   computePnlYear, sumLines, addMonths, costLine, includeManualCostInPnl,
-  type PnlLines,
+  effectiveCostMonth, loadManualCosts, manualLinesByMonth, payrollSummary,
+  warsawToday, monthLabel, lastDayOf, MONTHS_PL,
+  type PnlLines, type PayrollSummary,
 } from '../routes/finance'
 import { COST_TAXONOMY } from '../routes/ksef'
 import { MANUAL_SUBCATEGORIES } from '../routes/manual-costs'
@@ -55,6 +60,11 @@ export type HealthResponse = {
     cit_rate: number; cit_base_ytd: number; cit_estimate_ytd: number; cit_paid_ytd: number; cit_to_pay_estimate: number
     zus: number; note: string
   }
+  // Koszty pracy okresu (część kosztów G&A): przelewy wynagrodzeń, PIT-4 i ZUS + szacunek ZUS / PIT-4 za miesiące,
+  // za które przelewu jeszcze nie było. Wszystko MEMORIAŁOWO (miesiąc, którego koszt dotyczy, nie dzień przelewu).
+  // zus / pit4 = same rzeczywiste przelewy (bez szacunku); total = salaries + pit4 + zus + zus_estimate + pit4_estimate
+  // = lines.payroll; taxes.zus = payroll.zus (ta sama kwota).
+  payroll: PayrollSummary
   checks: HealthCheck[]
   cash: {
     balances: Array<{ account: string; currency: string; closing: number; date: string }>
@@ -87,7 +97,9 @@ export function plural(n: number, one: string, few: string, many: string): strin
 }
 
 // ── Okresy ───────────────────────────────────────────────────────────────────
-export const MONTHS_PL = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień']
+// MONTHS_PL, warsawToday, monthLabel i lastDayOf mieszkają w routes/finance (potrzebuje ich też silnik RZiS,
+// a import w drugą stronę byłby cyklem) — tutaj re-eksport, żeby dotychczasowe importy działały bez zmian.
+export { MONTHS_PL, warsawToday, monthLabel, lastDayOf }
 export const MONTHS_SHORT_PL = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru']
 const ROMAN = ['I', 'II', 'III', 'IV']
 
@@ -100,22 +112,8 @@ export type PeriodInfo = {
   label: string
 }
 
-/** Dzisiejsza data wg Europe/Warsaw (serwer na Render działa w UTC). */
-export function warsawToday(d: Date = new Date()): { year: number; month: number; day: number; iso: string; period: string } {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d)
-  const get = (t: string) => Number(parts.find(p => p.type === t)?.value ?? 0)
-  const year = get('year'), month = get('month'), day = get('day')
-  const period = `${year}-${String(month).padStart(2, '0')}`
-  return { year, month, day, iso: `${period}-${String(day).padStart(2, '0')}`, period }
-}
-
 export function previousMonthPeriod(d: Date = new Date()): string {
   return addMonths(warsawToday(d).period, -1)
-}
-
-export function monthLabel(period: string): string {
-  const [y, m] = period.split('-').map(Number)
-  return `${MONTHS_PL[m - 1] ?? period} ${y}`
 }
 
 /** 'Sie 26' — etykieta słupka na wykresie trendu. */
@@ -134,13 +132,6 @@ export function monthsInRange(from: string, to: string): string[] {
   let m = from, guard = 0
   while (m <= to && guard++ < 240) { out.push(m); m = addMonths(m, 1) }
   return out
-}
-
-/** Ostatni dzień miesiąca: '2026-02' → '2026-02-28'. */
-export function lastDayOf(period: string): string {
-  const [y, m] = period.split('-').map(Number)
-  const d = new Date(Date.UTC(y, m, 0)).getUTCDate()
-  return `${period}-${String(d).padStart(2, '0')}`
 }
 
 const PERIOD_ERROR = 'Nieprawidłowy okres — użyj YYYY-MM (miesiąc) lub YYYY-Qn (kwartał)'
@@ -206,12 +197,30 @@ export function buildSubline(checks: HealthCheck[]): string {
   const errors = checks.filter(c => c.severity === 'error')
   if (!errors.length) {
     const warns = checks.filter(c => c.severity === 'warn').length
+    // Wynagrodzenia dużo niższe niż zwykle to ostrzeżenie (nie blokuje raportu), ale wynik może być zawyżony —
+    // nie piszemy wtedy „Dane kompletne". (Całkowity brak wypłat w miesiącu jest błędem — patrz niżej.)
+    if (checks.some(c => c.severity === 'warn' && c.key === 'payroll_missing')) {
+      const rest = warns - 1
+      return `Wynagrodzenia są dużo niższe niż zwykle — w kosztach może ich brakować, wynik może być zawyżony.${rest ? ` Do sprawdzenia jeszcze: ${rest} ${plural(rest, 'uwaga', 'uwagi', 'uwag')}.` : ''}`
+    }
     return warns ? `Dane kompletne. Do sprawdzenia: ${warns} ${plural(warns, 'uwaga', 'uwagi', 'uwag')}.` : 'Dane kompletne.'
   }
   const mt = errors.some(e => e.key === 'mt940_missing')
   const firmao = errors.some(e => e.key === 'firmao_missing')
+  // Wyciągi wgrane starszą wersją importu (same kody operacji, bez tytułów) — pensje, ZUS i podatki nie zostały rozpoznane
+  if (errors.some(e => e.key === 'mt940_legacy_rows')) {
+    const noPayroll = 'w kosztach nie ma pensji, ZUS i podatków'
+    if (mt && firmao) return `Brakuje wyciągu MT940 i importu Firmao, a wcześniej wgrane wyciągi trzeba wgrać ponownie (${noPayroll}) — wynik jest wstępny.`
+    if (firmao) return `Wyciągi bankowe trzeba wgrać ponownie (${noPayroll}) i brakuje importu Firmao — wynik jest wstępny.`
+    if (mt) return `Brakuje wyciągu MT940, a wcześniej wgrane wyciągi trzeba wgrać ponownie — ${noPayroll}, wynik może być zawyżony.`
+    return `Wyciągi bankowe trzeba wgrać ponownie — ${noPayroll}, wynik może być zawyżony.`
+  }
+  // Miesiąc bez przelewów wynagrodzeń (wyciąg jest, ale wypłat na nim nie ma — np. pensje wyszły 1.–2. dnia następnego miesiąca)
+  const noSalaries = errors.some(e => e.key === 'payroll_missing')
   if (mt && firmao) return 'Brakuje wyciągu MT940 i importu Firmao — wynik jest wstępny.'
   if (mt) return 'Brakuje wyciągu MT940 — wynik może być zawyżony.'
+  if (noSalaries && firmao) return 'W kosztach brakuje wynagrodzeń (nie ma ich jeszcze na wyciągu) i brakuje importu Firmao — wynik jest wstępny.'
+  if (noSalaries) return 'W kosztach brakuje wynagrodzeń (nie ma ich jeszcze na wyciągu) — wynik jest zawyżony o koszt pracy. Wgraj wyciąg z wypłatami.'
   if (firmao) return 'Brak importu Firmao — przychód wstępny (z KSeF), wynik może się zmienić.'
   return errors.map(e => e.message).join(' ')
 }
@@ -232,7 +241,90 @@ export type CheckFacts = {
   latest_ksef_created_at: string | null
   cost_doc_ksef_overlap?: number          // zatwierdzone dokumenty spoza KSeF, które mają odpowiednik wśród faktur KSeF (koszt ×2)
   foreign_currency_costs?: number         // koszty ręczne/MT940 w walucie ≠ PLN (bez kursu NBP) — pominięte w sumach
+  legacy_bank_rows?: number               // obciążenia z wyciągu zapisane starym importem: bez tytułu i kontrahenta (sam kod operacji)
+  legacy_bank_months?: string[]           // miesiące, w których są takie wiersze
+  payroll_estimate?: number               // szacunek ZUS + PIT-4 ujęty w wyniku okresu (zł)
+  payroll_estimate_months?: string[]      // miesiące okresu z szacunkiem
+  payroll_zus_estimate?: number           // część szacunku przypadająca na ZUS (do nazwania w komunikacie)
+  payroll_pit4_estimate?: number          // część szacunku przypadająca na PIT-4
+  legacy_other_months?: string[]          // miesiące SPOZA okresu, w których wciąż są wiersze starego importu
+  fx_exchange_out?: number                // zł wymienione w okresie na walutę (natychmiastowe transakcje walutowe z wyciągu)
+  has_fx_account?: boolean                // czy w systemie jest wyciąg jakiegokolwiek rachunku walutowego
+  salaries_by_month?: Record<string, number>  // przelewy wynagrodzeń per miesiąc RZiS — miesiące okresu ORAZ trzy poprzedzające
   now?: Date
+}
+
+/** „ZUS", „PIT-4" albo „ZUS i PIT-4" — zależnie od tego, co naprawdę jest szacowane (bez danych: oba). */
+export function estimateNoun(zus?: number | null, pit4?: number | null): string {
+  const z = (zus ?? 0) > 0, p = (pit4 ?? 0) > 0
+  if (z && !p) return 'ZUS'
+  if (p && !z) return 'PIT-4'
+  return 'ZUS i PIT-4'
+}
+
+// ── Koszty pracy: wiersze starego importu i miesiące bez pensji ───────────────
+/**
+ * Wiersz zapisany importem sprzed poprawki parsera MT940: w opisie (i ewentualnie w kontrahencie) jest tylko
+ * 3-znakowy kod operacji banku, bez tytułu, kontrahenta i rachunku. Nowy import zapisuje kod w `op_code`,
+ * a operacje bez tytułu (opłaty) mają opis pusty — nie są więc mylone ze starymi wierszami.
+ */
+export function isLegacyBankRow(t: { description?: string | null; counterparty?: string | null; op_code?: string | null }): boolean {
+  // Nowy import ZAWSZE zapisuje op_code (kod operacji albo '' dla banku bez kodów) — NULL ma tylko stary import.
+  // Dzięki temu krótki, ale prawdziwy tytuł z innego banku („ZUS", „VAT") nie udaje wiersza starego importu.
+  if (t.op_code != null) return false
+  const d = String(t.description ?? '').trim()
+  if (!/^[A-Za-z0-9]{1,3}$/.test(d)) return false
+  const cp = String(t.counterparty ?? '').trim()
+  return cp === '' || cp === d || /^[A-Za-z0-9]{1,3}$/.test(cp)
+}
+
+/**
+ * Wiersze starego importu w okresie (czysta funkcja). Liczymy po DACIE OPERACJI w [fromDate, toDate] — tu chodzi
+ * o wgrane wyciągi, a nie o miesiąc RZiS:
+ *  - obciążenia z wyciągu w transakcjach bankowych (kwota < 0),
+ *  - wiersze kosztów z wyciągu (source = mt940) — na wypadek wyciągu wgranego tylko jako koszty.
+ * Ten sam przelew jest zwykle w obu tabelach, więc liczba = większa z obu (nie suma); miesiące = z obu źródeł.
+ */
+export function legacyBankFacts(
+  txs: Array<{ transaction_date: string; amount: number; description?: string | null; counterparty?: string | null; op_code?: string | null }>,
+  costs: Array<{ date: string; source?: string | null; description?: string | null; op_code?: string | null }>,
+  fromDate: string,
+  toDate: string,
+): { rows: number; months: string[] } {
+  const inRange = (d: string | null | undefined) => !!d && d >= fromDate && d <= toDate
+  const legacyTx = txs.filter(t => inRange(t.transaction_date) && Number(t.amount) < 0 && isLegacyBankRow(t))
+  const legacyCosts = costs.filter(c => c.source === 'mt940' && inRange(c.date) && isLegacyBankRow({ description: c.description, op_code: c.op_code }))
+  const months = new Set<string>([
+    ...legacyTx.map(t => String(t.transaction_date).slice(0, 7)),
+    ...legacyCosts.map(c => String(c.date).slice(0, 7)),
+  ])
+  return { rows: Math.max(legacyTx.length, legacyCosts.length), months: [...months].sort() }
+}
+
+/** Pensje poniżej tej części średniej z poprzednich miesięcy = „dużo mniej niż zwykle". */
+export const PAYROLL_LOW_SHARE = 0.5
+
+/**
+ * Miesiące, w których koszt pracy jest prawdopodobnie niepełny: brak przelewów wynagrodzeń (albo dużo mniej niż
+ * zwykle), choć co najmniej dwa z trzech poprzednich miesięcy je miały. Typowe przyczyny: niewgrany wyciąg,
+ * pensje wypłacane 1.–2. dnia (są dopiero na wyciągu następnego miesiąca) albo wypłata z innego rachunku.
+ */
+export function payrollGapMonths(
+  salariesByMonth: Record<string, number>,
+  months: string[],
+): { missing: string[]; low: Array<{ period: string; salaries: number; usual: number }> } {
+  const missing: string[] = []
+  const low: Array<{ period: string; salaries: number; usual: number }> = []
+  const of = (m: string) => Math.max(0, Number(salariesByMonth[m]) || 0)
+  for (const m of months) {
+    const prev = [1, 2, 3].map(n => of(addMonths(m, -n))).filter(v => v > 0)
+    if (prev.length < 2) continue
+    const usual = r2(prev.reduce((s, v) => s + v, 0) / prev.length)
+    const cur = of(m)
+    if (cur <= 0) missing.push(m)
+    else if (cur < PAYROLL_LOW_SHARE * usual) low.push({ period: m, salaries: r2(cur), usual })
+  }
+  return { missing, low }
 }
 
 export function buildChecks(f: CheckFacts): HealthCheck[] {
@@ -248,12 +340,51 @@ export function buildChecks(f: CheckFacts): HealthCheck[] {
     message: `Brak wyciągu bankowego MT940 za ${list(mtMissing)} — bez niego w kosztach nie ma pensji, ZUS i podatków.`,
   })
 
+  // Wyciąg jest, ale wgrany starszą wersją importu: przelewy bez tytułu i kontrahenta → nic nie zostało rozpoznane
+  const legacy = f.legacy_bank_rows ?? 0
+  const legacyMonths = [...new Set(f.legacy_bank_months ?? [])].sort()
+  if (legacy > 0) checks.push({
+    key: 'mt940_legacy_rows', severity: 'error', count: legacy, link: '/platnosci',
+    message: `${legacy} ${plural(legacy, 'przelew', 'przelewy', 'przelewów')} z wyciągu${legacyMonths.length ? ` za ${list(legacyMonths)}` : ''} `
+      + `${plural(legacy, 'jest zapisany', 'są zapisane', 'jest zapisanych')} bez tytułu i kontrahenta (wyciąg wgrany starszą wersją importu) — `
+      + 'system nie rozpoznał w nich pensji, ZUS i podatków. Wgraj te wyciągi jeszcze raz w Płatnościach: istniejące wpisy zostaną uzupełnione.',
+  })
+
+  // …i w miesiącach SPOZA oglądanego okresu: porównania, trend i CIT liczony od stycznia też nie mają wtedy pensji
+  const legacyOther = [...new Set(f.legacy_other_months ?? [])].filter(m => !legacyMonths.includes(m)).sort()
+  if (legacyOther.length) checks.push({
+    key: 'mt940_legacy_rows_other', severity: 'warn', count: legacyOther.length, link: '/platnosci',
+    message: `Także wyciągi za ${legacyOther.length > 6 ? `${monthLabel(legacyOther[0])} – ${monthLabel(legacyOther[legacyOther.length - 1])}` : list(legacyOther)} `
+      + 'są zapisane bez tytułów przelewów (starsza wersja importu). Dopóki nie wgrasz ich ponownie w Płatnościach, '
+      + 'porównania z poprzednimi okresami, wykres 12 miesięcy i CIT liczony od stycznia nie zawierają pensji, ZUS i podatków z tych miesięcy.',
+  })
+
   const prov = new Set(f.provisional_months)
   const provMissing = pastMonths.filter(m => prov.has(m))
   if (provMissing.length) checks.push({
     key: 'firmao_missing', severity: 'error', count: provMissing.length, link: '/rentownosc',
     message: `Brak importu sprzedaży z Firmao za ${list(provMissing)} — przychód policzony wstępnie (KSeF + moduł faktur).`,
   })
+
+  // Miesiąc bez pensji (albo z pensjami dużo niższymi niż zwykle). Tylko miesiące ZAKOŃCZONE — w bieżącym pensje
+  // mogły jeszcze nie wyjść — i tylko te, o których nie mówi już błąd o braku / starym imporcie wyciągu.
+  if (f.salaries_by_month) {
+    const skip = new Set([...mtMissing, ...legacyMonths])
+    const closed = (f.today_month ? f.months.filter(m => m < f.today_month!) : f.months).filter(m => !skip.has(m))
+    const gap = payrollGapMonths(f.salaries_by_month, closed)
+    const parts: string[] = []
+    if (gap.missing.length) parts.push(
+      `Brak przelewów wynagrodzeń za ${list(gap.missing)}, choć w poprzednich miesiącach były — w kosztach prawdopodobnie brakuje pensji, ZUS i PIT-4 za ${gap.missing.length === 1 ? 'ten miesiąc' : 'te miesiące'}.`)
+    for (const g of gap.low) parts.push(
+      `Wynagrodzenia za ${monthLabel(g.period)} to ${formatPln(g.salaries)} — dużo mniej niż zwykle (ok. ${formatPln(g.usual)}); koszty pracy mogą być niepełne.`)
+    // Brak wypłat w całym miesiącu zmienia wynik o cały koszt pracy (pensje + ZUS + PIT-4, bez pensji nie ma też
+    // szacunku) — to BŁĄD: status nie może być „dobrze", a pełny raport nie wychodzi sam, dopóki nie ma wyciągu.
+    // Same niższe wypłaty to tylko ostrzeżenie.
+    if (parts.length) checks.push({
+      key: 'payroll_missing', severity: gap.missing.length ? 'error' : 'warn', count: gap.missing.length + gap.low.length, link: '/platnosci',
+      message: `${parts.join(' ')} Wgraj wyciąg z przelewami pensji (wypłaty z 1.–2. dnia są na wyciągu następnego miesiąca) albo sprawdź, czy pensje nie wyszły z innego rachunku.`,
+    })
+  }
 
   if (f.ksef_unallocated > 0) checks.push({
     key: 'ksef_unallocated', severity: 'warn', count: f.ksef_unallocated, link: '/finanse',
@@ -282,6 +413,26 @@ export function buildChecks(f: CheckFacts): HealthCheck[] {
   if (fx > 0) checks.push({
     key: 'manual_costs_foreign_currency', severity: 'warn', count: fx, link: '/rentownosc',
     message: `Koszty w walucie obcej bez kursu: ${fx} — nie ${fx === 1 ? 'jest wliczony' : 'są wliczone'} do wyniku, przelicz ${fx === 1 ? 'go' : 'je'} ręcznie na PLN.`,
+  })
+
+  const est = f.payroll_estimate ?? 0
+  if (est > 0) {
+    const estMonths = [...new Set(f.payroll_estimate_months ?? [])].sort()
+    checks.push({
+      key: 'payroll_estimated', severity: 'info', count: estMonths.length || undefined, link: '/platnosci',
+      message: `W kosztach jest szacunek ${estimateNoun(f.payroll_zus_estimate, f.payroll_pit4_estimate)}: ${formatPln(est)}${estMonths.length ? ` za ${list(estMonths)}` : ''} — ${(f.payroll_zus_estimate ?? 0) > 0 && (f.payroll_pit4_estimate ?? 0) > 0 || (f.payroll_zus_estimate == null && f.payroll_pit4_estimate == null) ? 'tych przelewów' : 'tego przelewu'} nie było jeszcze na wyciągu. `
+        + 'Po wgraniu kolejnego wyciągu szacunek zostanie automatycznie zastąpiony rzeczywistymi kwotami.',
+    })
+  }
+
+  // Wymiana złotówek na walutę bez wyciągu rachunku walutowego: to, co poszło z tego rachunku do dostawców
+  // zagranicznych (kosztów, których nigdy nie ma w KSeF), jest dla systemu niewidoczne.
+  const fxOut = f.fx_exchange_out ?? 0
+  if (fxOut > 0 && !f.has_fx_account) checks.push({
+    key: 'fx_account_missing', severity: 'warn', link: '/platnosci',
+    message: `W tym okresie z rachunku wyszło ${formatPln(fxOut)} w natychmiastowych transakcjach walutowych (wymiana na walutę), `
+      + 'a w systemie nie ma wyciągu rachunku walutowego. Jeśli z tego rachunku płacicie dostawcom zagranicznym, tych kosztów nie ma w wyniku — '
+      + 'wgraj w Płatnościach wyciąg MT940 rachunku EUR / USD.',
   })
 
   const acc = new Set(f.accountant_months)
@@ -341,9 +492,17 @@ export function isPlnCost(c: { currency?: string | null }): boolean {
 }
 
 // ── „Na co idą pieniądze" — top podkategorii ─────────────────────────────────
+/** Klucz pozycji „szacunek ZUS i PIT-4" w podziale kosztów (nie jest podkategorią z taksonomii). */
+export const PAYROLL_ESTIMATE_KEY = 'payroll_estimate'
+
 /** Etykiety podkategorii z obu taksonomii (KSeF ma pierwszeństwo, bez emoji na początku). */
 export function subcategoryLabels(): Record<string, string> {
-  const labels: Record<string, string> = {}
+  // Domyślne etykiety nowych podkategorii i pozycji szacunku — taksonomie poniżej mogą je nadpisać
+  const labels: Record<string, string> = {
+    salary_pit: 'Zaliczki PIT od wynagrodzeń (PIT-4)',
+    internal_transfer: 'Przelew własny / rachunek VAT (nie koszt)',
+    [PAYROLL_ESTIMATE_KEY]: 'ZUS i PIT-4 — szacunek',
+  }
   for (const cat of Object.values(MANUAL_SUBCATEGORIES)) for (const [k, v] of Object.entries(cat)) labels[k] = v
   for (const cat of Object.values(COST_TAXONOMY)) for (const [k, v] of Object.entries(cat.subcategories)) {
     labels[k] = v.replace(/^[^\p{L}\p{N}]+/u, '').trim() || v
@@ -448,10 +607,14 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
   const fromDate = `${range.from}-01`, toDate = lastDayOf(range.to)
   const todayW = warsawToday()
 
+  // Koszty spoza KSeF — JEDNA alokacja (miesiąc memoriałowy, koszty pracy z szacunkiem) dla RZiS obu lat
+  // i dla wszystkiego poniżej (podział kosztów, podatki, koszty pracy), żeby liczby się zgadzały.
+  const manual = await loadManualCosts(todayW.period)
+
   // RZiS bieżącego i poprzedniego roku (porównania + trend 12 mies. + rok temu)
   const [pnlCur, pnlPrev, settings] = await Promise.all([
-    computePnlYear(year),
-    computePnlYear(year - 1),
+    computePnlYear(year, 'all', manual),
+    computePnlYear(year - 1, 'all', manual),
     getCompanySettings().catch(() => null),
   ])
   const monthMap = new Map<string, PnlLines & { period: string }>()
@@ -480,15 +643,14 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
 
   // Źródła do checków, podziału kosztów, podatków i gotówki
   const [
-    allocations, manualCostsYtd, vatGroups, ksefUnallocated, costDocsPending, bankReviewPending,
-    mt940Tx, statements, pzDocs, latestKsef, balanceRows, unpaidRecords, moduleMatched, issuedInvoices, ksefPayables,
+    allocations, vatGroups, ksefUnallocated, costDocsPending, bankReviewPending,
+    mt940Tx, legacyTxAll, statements, pzDocs, latestKsef, balanceRows, unpaidRecords, moduleMatched, issuedInvoices, ksefPayables,
     approvedDocs, ksefIncomingInRange,
   ] = await Promise.all([
     prisma.ksefInvoiceAllocation.findMany({
       where: { invoice: { invoice_direction: 'incoming', invoice_date: { gte: fromDate, lte: toDate } } },
       select: { amount: true, cost_category: true, subcategory: true, invoice: { select: { net_amount: true, gross_amount: true } } },
     }),
-    prisma.manualCost.findMany({ where: { date: { gte: `${year}-01-01`, lte: toDate } } }),
     prisma.ksefInvoice.groupBy({
       by: ['invoice_direction'],
       where: { invoice_date: { gte: fromDate, lte: toDate } },
@@ -497,9 +659,15 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
     prisma.ksefInvoice.count({ where: { invoice_direction: 'incoming', invoice_date: { gte: fromDate, lte: toDate }, allocations: { none: {} } } }),
     prisma.costDocument.count({ where: { status: { in: ['pending', 'error'] } } }),
     prisma.bankTransaction.count({ where: { review_status: 'pending' } }),
+    // Transakcje z wyciągu w okresie (po DACIE OPERACJI): pokrycie miesięcy wyciągiem + wiersze starego importu
     prisma.bankTransaction.findMany({
       where: { source: 'mt940', transaction_date: { gte: fromDate, lte: toDate } },
-      select: { transaction_date: true }, distinct: ['transaction_date'],
+      select: { transaction_date: true, amount: true, description: true, counterparty: true, op_code: true },
+    }),
+    // Obciążenia starego importu w CAŁEJ historii (op_code = NULL ma tylko stary import) — do ostrzeżenia o miesiącach spoza okresu
+    prisma.bankTransaction.findMany({
+      where: { source: 'mt940', op_code: null, amount: { lt: 0 } },
+      select: { transaction_date: true, amount: true, description: true, counterparty: true, op_code: true },
     }),
     prisma.accountantStatement.findMany({ where: { period: { in: months } }, select: { period: true, result: true, costs: true } }),
     prisma.warehouseDoc.count({ where: { type: 'PZ', date: { gte: fromDate, lte: toDate } } }),
@@ -530,10 +698,15 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
   ])
 
   const inRange = (date: string | null | undefined) => !!date && date >= fromDate && date <= toDate
-  const manualInRange = (manualCostsYtd as any[]).filter(c => inRange(c.date))
+  // Koszty spoza KSeF okresu — po miesiącu RZiS z alokacji (ten sam co w silniku), NIE po dacie przelewu
+  const monthSet = new Set(months)
+  const bookedInRange = manual.booked.filter(b => monthSet.has(b.month))
   // Koszt w walucie obcej (brak kursu NBP) nie może być dodany do kwot PLN — pomijamy i liczymy jako ostrzeżenie
-  const countsInPnl = (c: any) => isPlnCost(c) && includeManualCostInPnl(c)
-  const foreignCurrencyCosts = manualInRange.filter(c => !isPlnCost(c)).length
+  const foreignCurrencyCosts = manual.costs.filter(c => !isPlnCost(c) && monthSet.has(effectiveCostMonth(c))).length
+
+  // Koszty pracy: miesiące okresu + trzy poprzedzające (kontrola „miesiąc bez pensji")
+  const payrollMonths = manualLinesByMonth(manual, monthsInRange(addMonths(range.from, -3), range.to))
+  const payroll = payrollSummary(payrollMonths, months)
 
   // Podział kosztów: KSeF (brutto → netto proporcją faktury) + koszty ręczne/MT940/dokumenty
   const breakdownItems: Array<{ subcategory: string; amount: number }> = []
@@ -544,16 +717,19 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
     const netRatio = inv && inv.gross_amount > 0 && inv.net_amount > 0 ? inv.net_amount / inv.gross_amount : 1
     breakdownItems.push({ subcategory: a.subcategory, amount: a.amount * netRatio })
   }
-  for (const c of manualInRange) {
-    if (!countsInPnl(c)) continue
-    const line = costLine(c.cost_category, c.subcategory)
-    if (line === 'excluded' || line === 'cit' || c.subcategory === 'tax_income') continue
-    breakdownItems.push({ subcategory: c.subcategory, amount: c.amount })
+  // booked = tylko koszty, które weszły do RZiS (bez VAT, przelewów własnych i płatności za faktury KSeF)
+  for (const b of bookedInRange) {
+    if (b.line === 'cit') continue
+    breakdownItems.push({ subcategory: b.cost.subcategory, amount: b.cost.amount })
+  }
+  // Szacunek ZUS / PIT-4 jest w kosztach okresu — osobna pozycja, żeby nie udawał zapłaconych składek
+  if (payroll.zus_estimate + payroll.pit4_estimate > 0) {
+    breakdownItems.push({ subcategory: PAYROLL_ESTIMATE_KEY, amount: payroll.zus_estimate + payroll.pit4_estimate })
   }
   const cost_breakdown = costBreakdown(breakdownItems, subcategoryLabels())
 
   // Dokumenty spoza KSeF, których koszt nie wchodzi do RZiS (ManualCost source=document wykluczony) — nie dublują
-  const excludedDocIds = (manualCostsYtd as any[])
+  const excludedDocIds = manual.costs
     .filter(c => c.source === 'document' && c.document_id && !includeManualCostInPnl(c))
     .map(c => String(c.document_id))
   const costDocKsefOverlap = countCostDocKsefOverlap(approvedDocs, ksefIncomingInRange, excludedDocIds)
@@ -565,14 +741,31 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
     vat_output: vatOf('outgoing'), vat_input: vatOf('incoming'),
     cit_rate: settings?.cit_rate ?? 9,
     ytd: ytdMonths,
-    cit_paid_ytd: (manualCostsYtd as any[]).filter(c => c.subcategory === 'tax_income' && countsInPnl(c)).reduce((s, c) => s + c.amount, 0),
-    zus: manualInRange.filter(c => c.subcategory === 'zus_employer' && countsInPnl(c)).reduce((s, c) => s + c.amount, 0),
+    // CIT zapłacony za miesiące od stycznia do końca okresu (okres z tytułu przelewu, inaczej data)
+    cit_paid_ytd: manual.booked
+      .filter(b => b.line === 'cit' && b.month >= `${year}-01` && b.month <= range.to)
+      .reduce((s, b) => s + b.cost.amount, 0),
+    // ZUS rzeczywiście zapłacony ZA miesiące okresu (memoriałowo, bez szacunku) — dokładnie ta sama kwota co
+    // payroll.zus: obie są na jednej stronie „Kondycji firmy" i w jednym e-mailu, nie mogą się różnić
+    zus: payroll.zus,
   })
 
-  // Kontrole
+  // Kontrole. Pokrycie wyciągiem liczymy po PRAWDZIWYCH datach przelewów / transakcji (nie po miesiącu RZiS).
   const mt940Months = new Set<string>()
-  for (const c of manualInRange) if (c.source === 'mt940') mt940Months.add(String(c.date).slice(0, 7))
+  for (const c of manual.costs) if (c.source === 'mt940' && inRange(c.date)) mt940Months.add(String(c.date).slice(0, 7))
   for (const t of mt940Tx) mt940Months.add(String(t.transaction_date).slice(0, 7))
+  // Wiersze starego importu (sam kod operacji zamiast tytułu i kontrahenta): obciążenia w transakcjach bankowych;
+  // wyciąg wgrany tylko jako koszty (bez transakcji bankowych) — wiersze kosztów z wyciągu
+  const legacy = legacyBankFacts(mt940Tx, manual.costs, fromDate, toDate)
+  // te same wiersze w całej historii → miesiące spoza okresu (porównania, trend i CIT od stycznia też są wtedy bez pensji)
+  const legacyAll = legacyBankFacts(legacyTxAll, manual.costs, '0000-00-00', '9999-12-31')
+  // Natychmiastowe transakcje walutowe (mBank: kod A60 = obciążenie rachunku PLN przy kupnie waluty) w okresie
+  const fxExchangeOut = r2(manual.costs
+    .filter(c => c.source === 'mt940' && String(c.op_code ?? '').toUpperCase() === 'A60' && inRange(c.date) && isPlnCost(c))
+    .reduce((s, c) => s + (Number(c.amount) || 0), 0))
+  const hasFxAccount = balanceRows.some(b => (String(b.currency ?? '').trim().toUpperCase() || 'PLN') !== 'PLN')
+  const salariesByMonth: Record<string, number> = {}
+  for (const [m, l] of payrollMonths) salariesByMonth[m] = l.salaries
   const checks = buildChecks({
     months,
     today_month: todayW.period,
@@ -588,6 +781,16 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
     latest_ksef_created_at: latestKsef?.created_at ?? null,
     cost_doc_ksef_overlap: costDocKsefOverlap,
     foreign_currency_costs: foreignCurrencyCosts,
+    legacy_bank_rows: legacy.rows,
+    legacy_bank_months: legacy.months,
+    payroll_estimate: r2(payroll.zus_estimate + payroll.pit4_estimate),
+    payroll_estimate_months: payroll.estimated_months,
+    payroll_zus_estimate: payroll.zus_estimate,
+    payroll_pit4_estimate: payroll.pit4_estimate,
+    legacy_other_months: legacyAll.months.filter(m => !legacy.months.includes(m)),
+    fx_exchange_out: fxExchangeOut,
+    has_fx_account: hasFxAccount,
+    salaries_by_month: salariesByMonth,
   })
   const complete = !checks.some(c => c.severity === 'error')
 
@@ -616,6 +819,7 @@ export async function computeHealth(periodInput?: string | null): Promise<Health
     trend,
     cost_breakdown,
     taxes,
+    payroll,
     checks,
     cash,
     generated_at: new Date().toISOString(),

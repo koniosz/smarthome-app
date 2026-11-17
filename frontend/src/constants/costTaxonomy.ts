@@ -33,10 +33,11 @@ export const COST_SUBCATEGORIES: Record<CostCategory, Record<string, string>> = 
     marketing:             'Marketing ogólny',
   },
   ga: {
-    salary_gross:          'Wynagrodzenia brutto (UoP)',
+    salary_gross:          'Wynagrodzenia (wypłaty na konta)',
     salary_b2b:            'Wynagrodzenia B2B / faktury',
     salary_civil:          'Wynagrodzenia UoD / UoZ',
-    zus_employer:          'ZUS pracodawcy',
+    salary_pit:            'Zaliczki PIT od wynagrodzeń (PIT-4)',
+    zus_employer:          'ZUS (składki pracownika i pracodawcy)',
     rent:                  'Czynsz biuro / magazyn',
     utilities:             'Media (prąd, internet)',
     software:              'Oprogramowanie / licencje',
@@ -60,6 +61,7 @@ export const COST_SUBCATEGORIES: Record<CostCategory, Record<string, string>> = 
     interest:              'Odsetki',
     leasing:               'Leasing',
     fx:                    'Różnice kursowe / przewalutowanie',
+    internal_transfer:     'Przelew własny / rachunek VAT (nie koszt)',
   },
 }
 
@@ -117,6 +119,37 @@ export const PNL_MODE_LABELS: Record<PnlMode, string> = {
   include: 'licz w RZiS',
   exclude: 'pomiń (nie licz)',
 }
+
+// Rodzaj przelewu rozpoznany automatycznie z wyciągu (backend: services/bank-classify.ts KIND_LABELS).
+// Kopia etykiet — używana, gdy odpowiedź niesie tylko `auto_kind` (bez gotowej etykiety).
+export const BANK_KIND_LABELS: Record<string, string> = {
+  zus:              'ZUS',
+  tax_pit4:         'PIT-4 (podatek od wynagrodzeń)',
+  tax_cit:          'Podatek dochodowy',
+  tax_vat:          'VAT',
+  tax_other:        'Inny podatek / opłata urzędowa',
+  salary:           'Wynagrodzenie',
+  bank_fee:         'Opłata bankowa',
+  interest:         'Odsetki bankowe',
+  internal:         'Przelew własny / rachunek VAT',
+  foreign_vendor:   'Dostawca zagraniczny (bez KSeF)',
+  foreign_transfer: 'Przelew zagraniczny',
+  unknown:          'Nierozpoznany',
+}
+
+/**
+ * Etykieta rodzaju przelewu do plakietki: gotowa etykieta z odpowiedzi (`auto_label`), a gdy jej nie ma — z tabeli powyżej.
+ * '' gdy brak rozpoznania (null / 'unknown') — wtedy plakietki nie pokazujemy.
+ */
+export function bankKindLabel(kind: string | null | undefined, label?: string | null): string {
+  if (kind === 'unknown') return ''
+  const ready = (label ?? '').trim()
+  if (ready) return ready
+  return kind ? (BANK_KIND_LABELS[kind] ?? '') : ''
+}
+
+/** Początek notatki dopisywanej przez import, gdy przelew rozpoznał klasyfikator (backend: AUTO_NOTE_PREFIX). */
+export const AUTO_NOTE_PREFIX = 'rozpoznano: '
 
 export const MATCH_FIELD_LABELS: Record<'any' | 'counterparty' | 'description', string> = {
   any:          'kontrahent lub opis',

@@ -5,6 +5,8 @@ import { requireAdmin } from '../middleware/auth'
 import { parseMT940 } from '../utils/mt940Parser'
 import { getPrzelewy24Status, getTransactions as p24GetTransactions } from '../utils/przelewy24Client'
 import db from '../db'
+import { createBankTxPlanner } from './payables'
+import { bankTxDescription, accountInOtherCompanyMessage } from '../services/mt940-costs'
 
 const router = Router()
 const upload = multer({
@@ -33,29 +35,71 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
 
     const parsed = parseMT940(content)
 
-    const now = new Date().toISOString()
-    const saved: any[] = []
+    // Wyciąg rachunku prowadzonego w innej firmie → odmowa, zanim cokolwiek zapiszemy
+    const otherCompany = await accountInOtherCompanyMessage(parsed.map(t => t.account))
+    if (otherCompany) return res.status(409).json({ error: otherCompany, code: 'account_other_company' })
 
-    for (const tx of parsed) {
+    // Ten sam plan importu co w panelu Płatności (/api/payables/import-mt940): transakcja już zapisana
+    // jest pomijana, a wiersz starego importu (opis = sam kod operacji mBanku, bez referencji) dostaje
+    // NA MIEJSCU tytuł, kontrahenta, rachunek, referencję i kod operacji — bez tego ponowne wgranie
+    // wyciągu dublowałoby transakcje i blokowało ich późniejszą naprawę w Płatnościach.
+    const existing = await db.bank_transactions.list({ source: 'mt940' })
+    const planner = createBankTxPlanner(existing)
+
+    const now = new Date().toISOString()
+    // `transactions` w odpowiedzi = wszystkie transakcje z pliku w postaci zapisanej w bazie (nowe, uzupełnione
+    // i te, które już były) — okno weryfikacji płatności pokazuje wyciąg także przy ponownym wgraniu
+    const saved: any[] = []
+    let imported = 0
+    let duplicates = 0
+    let repaired = 0
+
+    for (const rawTx of parsed) {
+      // operacja bez tytułu → opisem jest nazwa operacji (ten sam opis w kluczu deduplikacji i w bazie)
+      const tx = { ...rawTx, description: bankTxDescription(rawTx) }
+      const decision = planner.decide(tx)
+      if (decision.action === 'skip') {
+        saved.push(existing[decision.index])
+        duplicates++
+        continue
+      }
+      if (decision.action === 'repair') {
+        // status sprawdzenia i dopasowanie do faktury zostają bez zmian — uzupełniamy tylko dane przelewu
+        const row = existing[decision.index]
+        const record = await db.bank_transactions.update(row.id, {
+          description:       tx.description,
+          counterparty:      tx.counterparty,
+          counterparty_iban: tx.counterparty_iban,
+          reference:         tx.reference,
+          op_code:           tx.op_code ?? '',
+          currency:          tx.currency || row.currency || 'PLN',
+        })
+        saved.push(record)
+        repaired++
+        continue
+      }
+
       const id = uuidv4()
       const record = await db.bank_transactions.insert({
         id,
         source:           'mt940',
         transaction_date: tx.date,
         amount:           tx.amount,
-        currency:         'PLN',
+        currency:         tx.currency || 'PLN',
         description:      tx.description,
         counterparty:     tx.counterparty,
         counterparty_iban: tx.counterparty_iban,
         reference:        tx.reference,
+        op_code:          tx.op_code ?? '',   // '' = bank bez kodów operacji; NULL zostaje tylko w wierszach starego importu
         matched_invoice_id: null,
         match_confidence:   null,
         created_at:       now,
       })
       saved.push(record)
+      imported++
     }
 
-    return res.json({ imported: saved.length, transactions: saved })
+    return res.json({ imported, duplicates, repaired, transactions: saved })
   } catch (err: any) {
     console.error('[bank/import-mt940]', err)
     return res.status(500).json({ error: err.message })

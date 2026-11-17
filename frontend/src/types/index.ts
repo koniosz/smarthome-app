@@ -447,6 +447,11 @@ export interface ManualCost {
   source:        'manual' | 'mt940'
   created_at:    string
   created_by:    string
+  // Rozpoznanie przelewu z wyciągu (backend: services/bank-classify) — opcjonalne: starsze wiersze i wpisy ręczne ich nie mają
+  pnl_mode?:          string           // auto | include | exclude
+  auto_kind?:         string | null    // zus | tax_pit4 | salary | internal | foreign_vendor | … ; null = nierozpoznany / wpis ręczny
+  op_code?:           string | null    // kod operacji bankowej (np. mBank 152, D95)
+  counterparty_iban?: string | null
 }
 
 export interface PnLReport {
@@ -763,6 +768,10 @@ export interface PnlLines {
   depreciation: number; ebit: number
   financial_costs: number; cit: number; net_result: number
   provisional: boolean
+  // Koszty pracy liczone w opex_ga (wynagrodzenia + PIT-4 + ZUS, RAZEM z szacunkiem) i sama część szacowana
+  // (ZUS/PIT-4 za miesiące, za które przelewu jeszcze nie było). Opcjonalne — starszy backend ich nie zwraca.
+  payroll?: number
+  payroll_estimate?: number
 }
 
 export interface PnlResponse {
@@ -813,6 +822,8 @@ export interface CostDetailsResponse {
   }
   projects: Array<{ project_id: string | null; name: string; total: number; count: number }>
   skipped_mt940_duplicates: { count: number; total: number }
+  /** przelewy z wyciągu, o których nikt jeszcze nie zdecydował — nie są w kosztach (nowsze backendy) */
+  mt940_awaiting_decision?: { count: number; total: number }
   // koszty w walucie obcej bez przeliczenia na PLN — poza RZiS (do ręcznego przeliczenia)
   foreign_currency_costs?: { count: number; items: Array<CostDetailItem & { currency: string }> }
   total: number
@@ -828,6 +839,14 @@ export interface SalesImportResult {
   periods: string[]
 }
 
+/** Jedna grupa „rozpoznano w wyciągu”: rodzaj przelewu (ZUS, wynagrodzenie, PIT-4…), liczba i suma w PLN. */
+export interface Mt940Recognized {
+  kind: string
+  label: string
+  count: number
+  total: number
+}
+
 export interface Mt940ImportResult {
   imported: number
   duplicates: number
@@ -838,4 +857,32 @@ export interface Mt940ImportResult {
     invoice_id: string; invoice_number: string | null; seller_name: string | null
     amount: number; confidence: number; reasons: string[]
   }>
+  // Część kosztowa importu (RZiS) — opcjonalne, zależnie od wersji backendu
+  costs_created?: number
+  costs_skipped?: number
+  rules_applied?: number
+  balances_saved?: number
+  costs_error?: string             // koszty/salda nie zapisały się (płatności tak)
+  // Rozpoznawanie przelewów (ZUS, podatki, pensje, przelewy zagraniczne)
+  repaired?: number                // przelewy starego importu uzupełnione na miejscu (tytuł, kontrahent)
+  costs_repaired?: number          // to samo dla wierszy kosztów
+  auto_dismissed?: number          // przelewy, które nie mogą być zapłatą za fakturę (ZUS, podatki, pensje, opłaty, własne)
+  recognized?: Mt940Recognized[]
+  costs_to_review?: number         // przelewy czekające na decyzję (Koszty spoza KSeF › Reguły bankowe)
+  costs_to_review_from?: string | null   // YYYY-MM — najwcześniejszy miesiąc (data przelewu) wśród czekających; link otwiera listę od niego
+  legacy_duplicates?: number       // zdublowane wpisy starego importu odłożone przy tym imporcie
+}
+
+/** Odpowiedź POST /manual-costs/import-mt940 (strona „Inne koszty”). */
+export interface ManualCostsMt940ImportResult {
+  total_parsed: number
+  outgoing: number
+  saved: number
+  message: string
+  skipped_existing?: number
+  rules_applied?: number
+  balances_saved?: number
+  repaired?: number
+  recognized?: Mt940Recognized[]
+  to_review?: number
 }
