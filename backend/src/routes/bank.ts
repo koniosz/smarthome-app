@@ -7,6 +7,7 @@ import { getPrzelewy24Status, getTransactions as p24GetTransactions } from '../u
 import db from '../db'
 import { createBankTxPlanner } from './payables'
 import { bankTxDescription, accountInOtherCompanyMessage } from '../services/mt940-costs'
+import { decideAutoMatch } from '../services/payment-match'
 
 const router = Router()
 const upload = multer({
@@ -122,10 +123,43 @@ router.post('/match', async (_req: Request, res: Response) => {
     const results: MatchResult[] = []
     let matchedCount = 0
 
+    // Przelewy z wyciągu (MT940) → faktury kosztowe: TA SAMA ścisła reguła co w panelu Płatności
+    // (services/payment-match): ten sam kontrahent + kwota co do grosza + numer faktury z tytułu albo jedyna
+    // taka faktura. Dawna reguła punktowa oznaczała fakturę jako opłaconą przy samej zgodności kwoty (nawet
+    // ±2 %) i kierunku przelewu — bez sprawdzania kontrahenta.
+    const costInvoices = (invoices as any[]).filter(i => (i.invoice_direction ?? 'incoming') === 'incoming')
+    const linkedInvoiceIds = new Set<string>(
+      ((await db.bank_transactions.list({ matched_invoice_id: { not: null } })) as any[]).map(t => t.matched_invoice_id).filter(Boolean))
+    const paidNow = new Set<string>()
+
     for (const tx of unmatched) {
+      if (tx.source === 'mt940') {
+        if (!(tx.amount < 0)) continue
+        const best = decideAutoMatch(tx as any, costInvoices, { taken: paidNow, linkedInvoiceIds })
+        if (best.action === 'none') continue
+        linkedInvoiceIds.add(best.invoice.id)
+        if (best.action === 'pay') {
+          await db.ksef_invoices.updatePayment(best.invoice.id, {
+            payment_status: 'paid', payment_source: 'mt940',
+            paid_amount: Math.abs(tx.amount), paid_at: tx.transaction_date, bank_tx_id: tx.id,
+          })
+          paidNow.add(best.invoice.id)
+          results.push({ tx_id: tx.id, invoice_id: best.invoice.id, confidence: best.confidence, reason: best.reasons })
+          matchedCount++
+        }
+        // 'link': faktura była już opłacona — przelew tylko zostaje z nią powiązany (status faktury bez zmian)
+        await db.bank_transactions.update(tx.id, {
+          matched_invoice_id: best.invoice.id, match_confidence: best.confidence, review_status: 'matched',
+        })
+        continue
+      }
+
+      // Pozostałe źródła (Przelewy24 — wpłaty od klientów): dotychczasowa ocena punktowa
       let bestMatch: { invoiceId: string; confidence: number; reasons: string[] } | null = null
 
       for (const invoice of invoices) {
+        // wpłata od klienta nie może „opłacić" faktury KOSZTOWEJ — te rozlicza wyłącznie ścisła reguła powyżej
+        if (((invoice as any).invoice_direction ?? 'incoming') === 'incoming') continue
         let confidence = 0
         const reasons: string[] = []
 

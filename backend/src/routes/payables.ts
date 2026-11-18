@@ -22,6 +22,7 @@ import {
   type ImportPlannerConfig, type ImportPlanner, type ImportDecision, type Mt940Recognized,
 } from '../services/mt940-costs'
 import { classifyBankTransfer } from '../services/bank-classify'
+import { decideAutoMatch, payableCandidates, titleNamesInvoice, PREPAYMENT_GRACE_DAYS } from '../services/payment-match'
 import db, { prisma } from '../db'
 import { assignInvoiceToProject, AssignError } from './ksef'
 import { getInvoiceXml, getInvoiceDocument, sendKsefXmlError, NO_KSEF_NUMBER_MSG } from '../services/ksef-xml-store'
@@ -29,7 +30,8 @@ import { getInvoiceXml, getInvoiceDocument, sendKsefXmlError, NO_KSEF_NUMBER_MSG
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
 
-const AUTO_MATCH_THRESHOLD = 0.75
+// Próg PODPOWIEDZI na liście „do sprawdzenia". O automatycznym oznaczeniu faktury jako opłaconej decyduje
+// wyłącznie ścisła reguła z services/payment-match (decideAutoMatch) — nie suma punktów.
 const CANDIDATE_THRESHOLD = 0.25
 
 function today() { return new Date().toISOString().slice(0, 10) }
@@ -169,8 +171,8 @@ export function scoreMatch(tx: any, inv: any): { confidence: number; reasons: st
   const desc = `${tx.description || ''} ${tx.counterparty || ''}`
   const descAlnum = alnum(desc)
 
-  // Kwota — najsilniejszy sygnał. Tolerancja na prowizję pośrednika (P24/BLIK):
-  // max(5 zł, 2% brutto). Zgodna kwota + zgodny kontrahent ⇒ automatyczna kwalifikacja.
+  // Punkty służą TYLKO do ułożenia podpowiedzi na liście „do sprawdzenia" (kandydaci do ręcznego przypisania).
+  // Kwota w tolerancji prowizji (max(5 zł, 2 % brutto)) jest podpowiedzią — nigdy podstawą automatu.
   const diff = Math.abs(txAbs - gross)
   const feeTolerance = Math.max(5, gross * 0.02)
   if (diff <= 0.01) {
@@ -179,9 +181,8 @@ export function scoreMatch(tx: any, inv: any): { confidence: number; reasons: st
     confidence += 0.5; reasons.push('kwota ±prowizja')
   }
 
-  // Numer faktury w tytule przelewu (porównanie po znakach alfanumerycznych)
-  const invNum = alnum(inv.invoice_number || '')
-  if (invNum.length >= 5 && descAlnum.includes(invNum)) {
+  // Numer faktury w tytule przelewu — jako CAŁY numer („2/09/2026" nie pasuje do „12/09/2026")
+  if (titleNamesInvoice(tx.description, inv.invoice_number)) {
     confidence += 0.35; reasons.push('nr faktury')
   }
 
@@ -220,44 +221,8 @@ function bestMatches(tx: any, invoices: any[], limit: number) {
     .slice(0, limit)
 }
 
-/**
- * Faktury, które dany przelew W OGÓLE mógł opłacić: wystawione nie później niż PREPAYMENT_GRACE_DAYS po
- * przelewie (przedpłata na podstawie zamówienia / proformy bywa kilka dni przed fakturą). Bez tej granicy
- * historyczny przelew — np. uzupełniany przy ponownym wgraniu starego wyciągu — „opłaciłby" dzisiejszą,
- * jeszcze niezapłaconą fakturę tego samego dostawcy na tę samą kwotę (abonament). Opóźnienie płatności
- * (przelew długo PO fakturze) nadal niczego nie wyklucza. Faktura bez daty zostaje kandydatem.
- */
-export const PREPAYMENT_GRACE_DAYS = 14
-export function payableCandidates<T extends { invoice_date?: string | null }>(
-  tx: { transaction_date?: string | null; date?: string | null },
-  invoices: T[],
-): T[] {
-  const txDate = String(tx.transaction_date ?? tx.date ?? '').slice(0, 10)
-  const t = Date.parse(txDate)
-  if (!Number.isFinite(t)) return invoices
-  const limit = new Date(t + PREPAYMENT_GRACE_DAYS * 86_400_000).toISOString().slice(0, 10)
-  return invoices.filter(i => {
-    const d = String(i.invoice_date ?? '').slice(0, 10)
-    return !/^\d{4}-\d{2}-\d{2}$/.test(d) || d <= limit
-  })
-}
-
-// Wybór faktury do automatycznego oznaczenia — wspólne dla importu i ponownego
-// dopasowania. Zwraca null przy braku kwalifikującego dopasowania lub realnej
-// niejednoznaczności (dwie faktury kwalifikują się jednocześnie). Rozstrzygają: wyraźna przewaga sumy
-// punktów (np. numer faktury w tytule przelewu — także przy dwóch fakturach na tę samą kwotę) albo
-// dokładna kwota przeciw kwocie ±prowizja.
-export function pickAutoMatch(tx: any, candidates: any[]): { invoice: any; confidence: number; reasons: string[] } | null {
-  const [best, second] = bestMatches(tx, candidates, 2)
-  if (!best || best.confidence < AUTO_MATCH_THRESHOLD) return null
-  const bestExact = best.reasons.includes('kwota')
-  const secondExact = !!second && second.reasons.includes('kwota')
-  const ambiguous = !!second
-    && second.confidence >= AUTO_MATCH_THRESHOLD
-    && best.score - second.score < 0.1
-    && !(bestExact && !secondExact)
-  return ambiguous ? null : best
-}
+// Zgodność wsteczna importów: reguły automatu mieszkają w services/payment-match
+export { decideAutoMatch, payableCandidates, PREPAYMENT_GRACE_DAYS }
 
 async function markInvoicePaid(invoiceId: string, opts: { source: string; amount?: number | null; paidAt?: string | null; txId?: string | null }) {
   await db.ksef_invoices.updatePayment(invoiceId, {
@@ -541,8 +506,11 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
     // Kontekst klasyfikatora: rachunki własne (zapisane salda + rachunki wyciągów z tego pliku) i pracownicy
     const context = await loadClassifyContext([...parsed.map(t => t.account), ...balances.map(b => b.account)])
 
-    const unpaidInvoices = (await db.ksef_invoices.listAll()).filter((i: any) => isIncoming(i) && isUnpaid(i))
+    const allInvoices = (await db.ksef_invoices.listAll()).filter(isIncoming)
     const paidNow = new Set<string>() // faktury opłacone w trakcie tego importu
+    // faktury, z którymi jakiś przelew jest już powiązany (także opłacone ręcznie i potem powiązane)
+    const linkedInvoiceIds = new Set<string>((existing as any[]).map(r => r.matched_invoice_id).filter(Boolean))
+    let linkedPaid = 0 // przelewy powiązane z fakturą JUŻ opłaconą (bez zmiany jej statusu)
 
     let imported = 0, duplicates = 0, autoMatched = 0, toReview = 0, credits = 0, repaired = 0, autoDismissed = 0
     const matchedDetails: any[] = []
@@ -550,9 +518,15 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
 
     // Auto-dopasowanie obciążenia do nieopłaconej faktury (wspólne dla nowych i naprawianych wierszy)
     const autoMatch = async (tx: any, txId: string): Promise<{ invoiceId: string; confidence: number } | null> => {
-      const candidates = payableCandidates(tx, unpaidInvoices.filter((i: any) => !paidNow.has(i.id)))
-      const best = pickAutoMatch(tx, candidates)
-      if (!best) return null
+      // Ścisła reguła: ten sam kontrahent + kwota co do grosza + (numer faktury z tytułu albo jedyna taka faktura).
+      // Tytuł wskazujący fakturę już opłaconą tylko WIĄŻE przelew z nią — nigdy nie „opłaca" sąsiedniej.
+      const best = decideAutoMatch(tx, allInvoices as any[], { taken: paidNow, linkedInvoiceIds })
+      if (best.action === 'none') return null
+      linkedInvoiceIds.add(best.invoice.id)
+      if (best.action === 'link') {
+        linkedPaid++
+        return { invoiceId: best.invoice.id, confidence: best.confidence }
+      }
       await markInvoicePaid(best.invoice.id, { source: 'mt940', amount: Math.abs(tx.amount), paidAt: tx.date, txId })
       paidNow.add(best.invoice.id)
       matchedDetails.push({
@@ -718,6 +692,7 @@ router.post('/import-mt940', upload.single('file'), async (req: Request, res: Re
       // naprawa starego importu + rozpoznawanie przelewów (ZUS, podatki, pensje, przelewy własne, zagraniczne)
       repaired, auto_dismissed: autoDismissed, costs_repaired, recognized, costs_to_review, costs_to_review_from,
       legacy_duplicates: orphanIds.length, // zdublowane wpisy starego importu odłożone przy tym imporcie
+      linked_paid: linkedPaid,             // przelewy powiązane z fakturą już wcześniej oznaczoną jako opłacona
       ...(costs_error ? { costs_error } : {}),
     })
   } catch (e: any) {
@@ -820,33 +795,93 @@ router.post('/fetch-due-dates', async (_req: Request, res: Response) => {
   }
 })
 
-// ── POST /api/payables/rematch — przepuść zaległe obciążenia przez aktualne reguły ─
-// Auto-dopasowanie działa przy imporcie; po zmianie reguł (albo po dojściu nowych
-// faktur z KSeF) ten endpoint ponownie ocenia listę "do sprawdzenia".
+/**
+ * Automatyczne dopasowania (review_status = 'matched'), których ścisła reguła by NIE zrobiła — do cofnięcia
+ * (czysta funkcja). Dla każdego odtwarzamy stan „sprzed dopasowania" (faktura opłacona tym przelewem wraca
+ * do nieopłaconych) i pytamy regułę jeszcze raz: dopasowanie zostaje tylko wtedy, gdy reguła wskaże TĘ SAMĄ
+ * fakturę w ten sam sposób (zapłata albo samo powiązanie z fakturą opłaconą wcześniej).
+ * Dopasowań ręcznych ('assigned') nie dotykamy — to decyzje użytkownika.
+ */
+export function invalidAutoMatches(
+  autoRows: any[],
+  invoices: any[],
+  allLinks: Array<{ id: string; matched_invoice_id: string | null }>,
+): Array<{ tx: any; invoice: any | null; paidByThisTx: boolean; why: string }> {
+  const byId = new Map(invoices.map(i => [i.id, i]))
+  const out: Array<{ tx: any; invoice: any | null; paidByThisTx: boolean; why: string }> = []
+  for (const tx of autoRows) {
+    if (!tx.matched_invoice_id) continue
+    const inv = byId.get(tx.matched_invoice_id)
+    if (!inv) { out.push({ tx, invoice: null, paidByThisTx: false, why: 'faktura nie istnieje' }); continue }
+    const paidByThisTx = inv.payment_status === 'paid' && inv.payment_source === 'mt940' && inv.bank_tx_id === tx.id
+    const view = paidByThisTx ? invoices.map(i => (i.id === inv.id ? { ...i, payment_status: 'unpaid', bank_tx_id: null } : i)) : invoices
+    const linkedOther = new Set<string>(allLinks.filter(l => l.id !== tx.id && l.matched_invoice_id).map(l => l.matched_invoice_id as string))
+    const d = decideAutoMatch(tx, view, { linkedInvoiceIds: linkedOther })
+    const valid = d.action !== 'none' && d.invoice.id === inv.id && d.action === (paidByThisTx ? 'pay' : 'link')
+    if (valid) continue
+    out.push({ tx, invoice: inv, paidByThisTx, why: d.action === 'none' ? d.why : `przelew dotyczy faktury ${d.invoice.invoice_number ?? ''}`.trim() })
+  }
+  return out
+}
+
+// ── POST /api/payables/rematch — sprawdź automatyczne dopasowania i dopasuj czekające obciążenia ──
+// 1) Cofa automatyczne dopasowania, które nie spełniają ścisłej reguły (faktura wraca do „do zapłaty",
+//    przelew na listę „do sprawdzenia"). 2) Ponownie ocenia wszystkie czekające obciążenia.
 router.post('/rematch', async (_req: Request, res: Response) => {
   try {
-    const pending = await db.bank_transactions.list({ matched_invoice_id: null, review_status: 'pending', amount: { lt: 0 } })
-    const unpaidInvoices = (await db.ksef_invoices.listAll()).filter((i: any) => isIncoming(i) && isUnpaid(i))
+    const allInvoices: any[] = (await db.ksef_invoices.listAll()).filter(isIncoming)
+    const linkedRows: any[] = await db.bank_transactions.list({ matched_invoice_id: { not: null } })
+
+    // ── 1) weryfikacja dotychczasowych dopasowań automatycznych ──
+    const autoRows = linkedRows.filter(t => t.review_status === 'matched')
+    const invalid = invalidAutoMatches(autoRows, allInvoices, linkedRows)
+    const undoneDetails: any[] = []
+    for (const bad of invalid) {
+      if (bad.invoice && bad.paidByThisTx) {
+        await db.ksef_invoices.updatePayment(bad.invoice.id, {
+          payment_status: 'unpaid', payment_source: null, paid_amount: null, paid_at: null, bank_tx_id: null,
+        })
+        Object.assign(bad.invoice, { payment_status: 'unpaid', payment_source: null, paid_amount: null, paid_at: null, bank_tx_id: null })
+      }
+      await db.bank_transactions.update(bad.tx.id, { matched_invoice_id: null, match_confidence: null, review_status: 'pending' })
+      undoneDetails.push({
+        invoice_id: bad.invoice?.id ?? null, invoice_number: bad.invoice?.invoice_number ?? null,
+        seller_name: bad.invoice?.seller_name ?? null, amount: Math.abs(bad.tx.amount),
+        transaction_date: bad.tx.transaction_date, invoice_unmarked: bad.paidByThisTx, why: bad.why,
+      })
+    }
+    const undoneTx = new Set(invalid.map(b => b.tx.id))
+
+    // ── 2) ponowne dopasowanie czekających obciążeń (w tym właśnie cofniętych) ──
+    const pending: any[] = await db.bank_transactions.list({ matched_invoice_id: null, review_status: 'pending', amount: { lt: 0 } })
+    const linkedInvoiceIds = new Set<string>(linkedRows.filter(t => !undoneTx.has(t.id)).map(t => t.matched_invoice_id).filter(Boolean))
     const paidNow = new Set<string>()
-    let matched = 0
+    let matched = 0, linked = 0
     const details: any[] = []
 
     for (const tx of pending) {
-      const candidates = payableCandidates(tx, unpaidInvoices.filter((i: any) => !paidNow.has(i.id)))
-      const best = pickAutoMatch(tx, candidates)
-      if (!best) continue
-      await markInvoicePaid(best.invoice.id, { source: 'mt940', amount: Math.abs(tx.amount), paidAt: tx.transaction_date, txId: tx.id })
+      const best = decideAutoMatch(tx, allInvoices, { taken: paidNow, linkedInvoiceIds })
+      if (best.action === 'none') continue
+      linkedInvoiceIds.add(best.invoice.id)
+      if (best.action === 'pay') {
+        await markInvoicePaid(best.invoice.id, { source: 'mt940', amount: Math.abs(tx.amount), paidAt: tx.transaction_date, txId: tx.id })
+        paidNow.add(best.invoice.id)
+        matched++
+        details.push({
+          invoice_id: best.invoice.id, invoice_number: best.invoice.invoice_number,
+          seller_name: best.invoice.seller_name, amount: Math.abs(tx.amount),
+          confidence: best.confidence, reasons: best.reasons,
+        })
+      } else {
+        linked++ // faktura była już opłacona — przelew tylko schodzi z listy „do sprawdzenia"
+      }
       await db.bank_transactions.update(tx.id, { matched_invoice_id: best.invoice.id, match_confidence: best.confidence, review_status: 'matched' })
-      paidNow.add(best.invoice.id)
-      matched++
-      details.push({
-        invoice_id: best.invoice.id, invoice_number: best.invoice.invoice_number,
-        seller_name: best.invoice.seller_name, amount: Math.abs(tx.amount),
-        confidence: best.confidence, reasons: best.reasons,
-      })
     }
 
-    res.json({ checked: pending.length, matched, remaining: pending.length - matched, details })
+    res.json({
+      checked: pending.length, matched, linked, undone: invalid.length,
+      remaining: pending.length - matched - linked, details, undone_details: undoneDetails,
+    })
   } catch (e) {
     console.error('[payables/rematch]', e)
     res.status(500).json({ error: 'Błąd serwera' })

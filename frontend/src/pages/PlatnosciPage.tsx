@@ -148,9 +148,15 @@ export default function PlatnosciPage() {
     setRematching(true); setRematchInfo('')
     try {
       const r = await payablesApi.rematch()
-      setRematchInfo(r.matched > 0
-        ? `Automatycznie dopasowano ${r.matched} z ${r.checked} obciążeń — ${r.remaining} zostało do ręcznej decyzji.`
+      const parts: string[] = []
+      // najpierw to, co ważne: cofnięte błędne dopasowania (faktury wróciły do „do zapłaty")
+      if ((r.undone ?? 0) > 0) parts.push(`Cofnięto ${r.undone} ${plural(r.undone ?? 0, 'błędne automatyczne dopasowanie', 'błędne automatyczne dopasowania', 'błędnych automatycznych dopasowań')} — faktury wróciły do „Do zapłaty".`)
+      if (r.matched > 0) parts.push(`Oznaczono jako opłacone: ${r.matched} (ten sam kontrahent i kwota co do grosza).`)
+      if ((r.linked ?? 0) > 0) parts.push(`Powiązano ${r.linked} ${plural(r.linked ?? 0, 'przelew', 'przelewy', 'przelewów')} z fakturami już wcześniej oznaczonymi jako opłacone.`)
+      parts.push(r.matched + (r.linked ?? 0) + (r.undone ?? 0) > 0
+        ? `Do ręcznej decyzji: ${r.remaining}.`
         : `Sprawdzono ${r.checked} obciążeń — żadne nie kwalifikuje się automatycznie.`)
+      setRematchInfo(parts.join(' '))
       await reload(tab, search)
     } catch { setRematchInfo('Nie udało się ponowić dopasowania.') }
     finally { setRematching(false) }
@@ -334,7 +340,7 @@ export default function PlatnosciPage() {
               >
                 {rematching ? 'Dopasowuję…' : '⟳ Dopasuj automatycznie'}
               </button>
-              <span className="text-xs text-gray-400">Ponownie ocenia zaległe obciążenia aktualnymi regułami (kwota + kontrahent)</span>
+              <span className="text-xs text-gray-400">Automat oznacza fakturę jako opłaconą tylko, gdy zgadza się kontrahent i kwota co do grosza; sprawdza też wcześniejsze automatyczne dopasowania</span>
               {rematchInfo && <span className="text-xs font-semibold text-green-700 dark:text-green-400">{rematchInfo}</span>}
             </div>
             {review.map(tx => (
@@ -569,6 +575,11 @@ function Mt940Recognition({ result }: { result: Mt940ImportResult }) {
       {repaired > 0 && (
         <div className="text-xs">
           Uzupełniono <b>{repaired}</b> {plural(repaired, 'wcześniej wgrany przelew', 'wcześniej wgrane przelewy', 'wcześniej wgranych przelewów')} (tytuł, kontrahent) — bez duplikatów.
+        </div>
+      )}
+      {(result.linked_paid ?? 0) > 0 && (
+        <div className="text-xs">
+          <b>{result.linked_paid}</b> {plural(result.linked_paid ?? 0, 'przelew dotyczy faktury', 'przelewy dotyczą faktur', 'przelewów dotyczy faktur')} już wcześniej {plural(result.linked_paid ?? 0, 'oznaczonej jako opłacona', 'oznaczonych jako opłacone', 'oznaczonych jako opłacone')} — tylko je powiązano.
         </div>
       )}
       {(result.legacy_duplicates ?? 0) > 0 && (

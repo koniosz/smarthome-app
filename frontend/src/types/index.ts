@@ -871,6 +871,7 @@ export interface Mt940ImportResult {
   costs_to_review?: number         // przelewy czekające na decyzję (Koszty spoza KSeF › Reguły bankowe)
   costs_to_review_from?: string | null   // YYYY-MM — najwcześniejszy miesiąc (data przelewu) wśród czekających; link otwiera listę od niego
   legacy_duplicates?: number       // zdublowane wpisy starego importu odłożone przy tym imporcie
+  linked_paid?: number             // przelewy powiązane z fakturą już wcześniej oznaczoną jako opłacona (bez zmiany statusu)
 }
 
 /** Odpowiedź POST /manual-costs/import-mt940 (strona „Inne koszty”). */

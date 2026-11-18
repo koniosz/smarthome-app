@@ -173,7 +173,7 @@ export const payablesApi = {
   },
   review: (): Promise<import('../types').PayableReviewItem[]> =>
     api.get('/payables/review').then(r => r.data),
-  rematch: (): Promise<{ checked: number; matched: number; remaining: number }> =>
+  rematch: (): Promise<{ checked: number; matched: number; remaining: number; linked?: number; undone?: number }> =>
     api.post('/payables/rematch').then(r => r.data),
   fetchDueDates: (): Promise<{ checked: number; filled: number; no_date_in_invoice: number; failed: number; remaining: number }> =>
     api.post('/payables/fetch-due-dates').then(r => r.data),
