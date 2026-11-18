@@ -133,8 +133,7 @@ router.post('/match', async (_req: Request, res: Response) => {
     const paidNow = new Set<string>()
 
     for (const tx of unmatched) {
-      if (tx.source === 'mt940') {
-        if (!(tx.amount < 0)) continue
+      if (tx.source === 'mt940' && tx.amount < 0) {
         const best = decideAutoMatch(tx as any, costInvoices, { taken: paidNow, linkedInvoiceIds })
         if (best.action === 'none') continue
         linkedInvoiceIds.add(best.invoice.id)
@@ -154,7 +153,8 @@ router.post('/match', async (_req: Request, res: Response) => {
         continue
       }
 
-      // Pozostałe źródła (Przelewy24 — wpłaty od klientów): dotychczasowa ocena punktowa
+      // Uznania z wyciągu i Przelewy24 (wpłaty od klientów): dotychczasowa ocena punktowa — wyłącznie względem
+      // faktur sprzedażowych (patrz pominięcie faktur kosztowych niżej)
       let bestMatch: { invoiceId: string; confidence: number; reasons: string[] } | null = null
 
       for (const invoice of invoices) {

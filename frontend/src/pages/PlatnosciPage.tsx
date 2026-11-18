@@ -144,8 +144,10 @@ export default function PlatnosciPage() {
 
   const [rematching, setRematching] = useState(false)
   const [rematchInfo, setRematchInfo] = useState('')
+  // faktury, którym cofnięto błędne automatyczne „opłacone" — pokazujemy je imiennie, żeby było widać, co się zmieniło
+  const [rematchUndone, setRematchUndone] = useState<Array<{ invoice_number: string | null; seller_name: string | null; amount: number; transaction_date: string; why: string }>>([])
   const rematch = async () => {
-    setRematching(true); setRematchInfo('')
+    setRematching(true); setRematchInfo(''); setRematchUndone([])
     try {
       const r = await payablesApi.rematch()
       const parts: string[] = []
@@ -157,6 +159,7 @@ export default function PlatnosciPage() {
         ? `Do ręcznej decyzji: ${r.remaining}.`
         : `Sprawdzono ${r.checked} obciążeń — żadne nie kwalifikuje się automatycznie.`)
       setRematchInfo(parts.join(' '))
+      setRematchUndone((r.undone_details ?? []).filter(d => d.invoice_unmarked))
       await reload(tab, search)
     } catch { setRematchInfo('Nie udało się ponowić dopasowania.') }
     finally { setRematching(false) }
@@ -343,6 +346,18 @@ export default function PlatnosciPage() {
               <span className="text-xs text-gray-400">Automat oznacza fakturę jako opłaconą tylko, gdy zgadza się kontrahent i kwota co do grosza; sprawdza też wcześniejsze automatyczne dopasowania</span>
               {rematchInfo && <span className="text-xs font-semibold text-green-700 dark:text-green-400">{rematchInfo}</span>}
             </div>
+            {rematchUndone.length > 0 && (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3.5 py-2.5 text-xs text-amber-900 dark:text-amber-200">
+                <div className="font-semibold mb-1">Te faktury były oznaczone jako opłacone przez pomyłkę — wróciły do „Do zapłaty":</div>
+                <ul className="space-y-0.5">
+                  {rematchUndone.slice(0, 20).map((d, i) => (
+                    <li key={i}>
+                      • <b>{d.seller_name ?? '—'}</b>, faktura <b>{d.invoice_number ?? '—'}</b> — przelew z {d.transaction_date} na {d.amount.toLocaleString('pl-PL', { minimumFractionDigits: 2 })} zł: {d.why}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {review.map(tx => (
               <div key={tx.id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-4 flex-wrap">
